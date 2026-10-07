@@ -20,6 +20,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS timers (id INTEGER PRIMARY KEY, device TEXT, label TEXT, ends_at REAL);
 CREATE TABLE IF NOT EXISTS memory (fact TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS shopping (item TEXT PRIMARY KEY COLLATE NOCASE);
+CREATE TABLE IF NOT EXISTS alarms (id INTEGER PRIMARY KEY, device TEXT, time TEXT, days TEXT, label TEXT,
+                                   enabled INTEGER DEFAULT 1, next_ring REAL);
 """
 
 
@@ -101,6 +103,111 @@ def spoken_duration(seconds: float) -> str:
     return " ".join(parts) or "0 seconds"
 
 
+# --- Alarms ------------------------------------------------------------------------------------
+# time is "HH:MM" (24-hour, local); days is a string of weekday digits, Monday = 0 ("01234" weekdays,
+# "0123456" daily), or "" for a one-time alarm.
+
+WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
+def next_ring(hhmm: str, days: str, now: datetime.datetime) -> datetime.datetime:
+    """The first moment strictly after now when this alarm should ring."""
+    h, m = (int(x) for x in hhmm.split(":"))
+    for offset in range(8):
+        at = (now + datetime.timedelta(days=offset)).replace(hour=h, minute=m, second=0, microsecond=0)
+        if at > now and (not days or str(at.weekday()) in days):
+            return at
+    raise ValueError(f"no ring time for {hhmm!r} on days {days!r}")
+
+
+def day_digits(names: list[str]) -> str:
+    """["monday", "Friday"] -> "04"; understands "weekdays", "weekends", "daily"/"every day"."""
+    out = set()
+    for name in (n.strip().lower() for n in names):
+        if name in ("weekdays", "weekday"):
+            out |= set("01234")
+        elif name in ("weekends", "weekend"):
+            out |= set("56")
+        elif name in ("daily", "every day", "everyday"):
+            out |= set("0123456")
+        elif name[:3] in (w[:3] for w in WEEKDAYS):
+            out.add(str([w[:3] for w in WEEKDAYS].index(name[:3])))
+    return "".join(sorted(out))
+
+
+def spoken_time(hhmm: str) -> str:
+    """"07:30" -> "7:30 AM", "12:00" -> "12 PM"."""
+    h, m = (int(x) for x in hhmm.split(":"))
+    return f"{h % 12 or 12}{f':{m:02d}' if m else ''} {'AM' if h < 12 else 'PM'}"
+
+
+def spoken_days(days: str) -> str:
+    return {"": "once", "01234": "on weekdays", "56": "on weekends", "0123456": "every day"}.get(
+        days, "on " + ", ".join(WEEKDAYS[int(d)].title() for d in days))
+
+
+def alarm_add(device: str, hhmm: str, days: str, label: str, now: datetime.datetime | None = None) -> int:
+    at = next_ring(hhmm, days, now or datetime.datetime.now())
+    return q("INSERT INTO alarms (device, time, days, label, enabled, next_ring) VALUES (?, ?, ?, ?, 1, ?) RETURNING id",
+             device, hhmm, days, label, at.timestamp())[0][0]
+
+
+def alarm_list(device: str) -> list[dict]:
+    return [{"id": i, "time": t, "days": d, "label": label, "enabled": bool(e), "next_ring": n}
+            for i, t, d, label, e, n in q("SELECT id, time, days, label, enabled, next_ring FROM alarms "
+                                          "WHERE device = ? ORDER BY time", device)]
+
+
+def next_alarm(device: str) -> dict | None:
+    """The device's soonest enabled alarm, for the home screen."""
+    upcoming = [a for a in alarm_list(device) if a["enabled"]]
+    return min(upcoming, key=lambda a: a["next_ring"]) if upcoming else None
+
+
+def alarm_delete(device: str, alarm_id: int) -> bool:
+    return bool(q("DELETE FROM alarms WHERE device = ? AND id = ? RETURNING id", device, alarm_id))
+
+
+def alarm_cancel(device: str, match: str) -> int:
+    """Delete alarms whose label contains match or whose time is match ("07:30"); all of them if empty."""
+    return len(q("DELETE FROM alarms WHERE device = ? AND (instr(lower(label), lower(?)) OR time = ?) RETURNING id",
+                 device, match, match))
+
+
+def alarm_toggle(device: str, alarm_id: int, enabled: bool, now: datetime.datetime | None = None) -> bool:
+    """Turn an alarm on or off; turning it on schedules it from now."""
+    row = q("SELECT time, days FROM alarms WHERE device = ? AND id = ?", device, alarm_id)
+    if not row:
+        return False
+    at = next_ring(row[0][0], row[0][1], now or datetime.datetime.now()).timestamp()
+    q("UPDATE alarms SET enabled = ?, next_ring = ? WHERE id = ?", int(enabled), at, alarm_id)
+    return True
+
+
+def alarms_due(now: float) -> list[dict]:
+    """Enabled alarms whose time has come: {id, device, time, days, label, next_ring}. They stay until alarm_done."""
+    return [{"id": i, "device": dev, "time": t, "days": d, "label": label, "next_ring": n} for i, dev, t, d, label, n in
+            q("SELECT id, device, time, days, label, next_ring FROM alarms WHERE enabled = 1 AND next_ring <= ?", now)]
+
+
+def alarm_done(alarm_id: int, now: datetime.datetime | None = None) -> None:
+    """After an alarm has rung: a one-time alarm is removed; a recurring one moves to its next day."""
+    row = q("SELECT time, days FROM alarms WHERE id = ?", alarm_id)
+    if not row:
+        return
+    hhmm, days = row[0]
+    if not days:
+        q("DELETE FROM alarms WHERE id = ?", alarm_id)
+        return
+    now = now or datetime.datetime.now()
+    q("UPDATE alarms SET next_ring = ? WHERE id = ?", next_ring(hhmm, days, now + datetime.timedelta(minutes=1)).timestamp(),
+      alarm_id)  # (+1 minute: never reschedule into the minute that just rang)
+
+
+def alarm_snooze(alarm_id: int, minutes: int, now: float) -> None:
+    q("UPDATE alarms SET next_ring = ? WHERE id = ?", now + minutes * 60, alarm_id)
+
+
 # --- Weather (Open-Meteo: free, no key) ---------------------------------------------------------
 
 WMO = {0: "clear", 1: "mostly clear", 2: "partly cloudy", 3: "overcast", 45: "fog", 48: "freezing fog",
@@ -180,7 +287,7 @@ STRINGS = {"type": "array", "items": {"type": "string"}}
 # --- Cards: what a screen shows after a tool runs, or when someone opens a sheet ------------------
 
 def timers_card(device: str) -> dict:
-    return {"kind": "timers", "timers": timer_list(device), "alarms": []}
+    return {"kind": "timers", "timers": timer_list(device), "alarms": alarm_list(device)}
 
 
 def weather_card(w: dict) -> dict:
@@ -222,6 +329,34 @@ def tool_list(device: str, on_card=_no_screen) -> list:
           _schema(label={"type": "string"}))
     async def cancel_timer(a):
         return _text(f"Cancelled {timer_cancel(device, a['label'])} timer(s).")
+
+    @tool("set_alarm", "Set an alarm that rings on this speaker at a time of day, once or repeating.",
+          _schema(time={"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$",
+                        "description": "24-hour local time, e.g. 07:30 or 18:05"},
+                  days={**STRINGS, "description": "repeat on these days (weekday names, or 'weekdays', 'weekends', "
+                        "'daily'); empty for a one-time alarm"},
+                  label={"type": "string", "description": "optional name, e.g. 'gym'; empty if none given"}))
+    async def set_alarm(a):
+        hhmm = "%02d:%02d" % tuple(int(x) for x in a["time"].split(":"))
+        days = day_digits(a["days"])
+        alarm_add(device, hhmm, days, a["label"])
+        await on_card(timers_card(device))
+        return _text(f"Alarm set for {spoken_time(hhmm)} {spoken_days(days)}.")
+
+    @tool("list_alarms", "List this speaker's alarms.", _schema())
+    async def list_alarms(a):
+        alarms = alarm_list(device)
+        await on_card(timers_card(device))
+        return _text("; ".join(f"{spoken_time(x['time'])} {spoken_days(x['days'])}"
+                               + (f" ({x['label']})" if x["label"] else "") + ("" if x["enabled"] else ", off")
+                               for x in alarms) or "No alarms set.")
+
+    @tool("cancel_alarm", "Delete alarms whose label contains the text or whose time matches (HH:MM, 24-hour); "
+          "all alarms if empty.", _schema(match={"type": "string"}))
+    async def cancel_alarm(a):
+        n = alarm_cancel(device, a["match"])
+        await on_card(timers_card(device))
+        return _text(f"Deleted {n} alarm(s).")
 
     @tool("remember", "Save a fact about the household to remember in future conversations.",
           _schema(fact={"type": "string"}))
@@ -279,7 +414,7 @@ def tool_list(device: str, on_card=_no_screen) -> list:
         await on_card(text_card(a["title"], a["lines"]))
         return _text("Shown on the screen.")
 
-    return [set_timer, list_timers, cancel_timer, remember_tool, forget_tool,
+    return [set_timer, list_timers, cancel_timer, set_alarm, list_alarms, cancel_alarm, remember_tool, forget_tool,
             add_shopping, remove_shopping, get_shopping, clear_shopping, get_weather, show_on_screen]
 
 

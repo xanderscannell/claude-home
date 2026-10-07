@@ -205,6 +205,8 @@ class Device:
         self.busy = False  # a turn is running
         self.stopped = False  # Stop was tapped during this turn
         self.volume: int | None = None  # the speaker's level, as last reported by the satellite
+        self.ringing: dict | None = None  # the alarm ringing right now, as shown on screens
+        self.snoozed = False
         self.displays: set[WebSocket] = set()
         self.state = "idle"  # idle | listening | thinking | speaking
 
@@ -241,11 +243,12 @@ def spawn(coro):
     task.add_done_callback(background.discard)
 
 
-async def announce(dev: Device, text: str):
-    """Speak without being asked, e.g. a finished timer. The lock keeps it from interleaving with a reply."""
+async def announce(dev: Device, text: str | None):
+    """Beeps, then text spoken (none: just the beeps), without being asked: a finished timer, an alarm.
+    The lock keeps it from interleaving with a reply."""
     voice = app.state.voice
     rate = voice.config.sample_rate
-    audio = await asyncio.to_thread(lambda: [c.audio_int16_bytes for c in voice.synthesize(for_speech(text))])
+    audio = await asyncio.to_thread(lambda: [c.audio_int16_bytes for c in voice.synthesize(for_speech(text))]) if text else []
     async with dev.lock:
         if dev.sat is None:
             return
@@ -269,8 +272,52 @@ async def quietly(coro):
         await coro
 
 
+RING_LIMIT_S = 600  # an alarm rings at most this long
+BEEP_EVERY_S = 4  # between bursts of beeps while it rings
+SNOOZE_MIN = 9
+clock = time.time  # alarm timing reads this, so tests can steer it
+
+
+async def ring_alarm(dev: Device, alarm: dict):
+    """Ring until stopped, snoozed, answered (wake word or tap-to-talk), or RING_LIMIT_S runs out."""
+    ringing = {"kind": "alarm", "id": alarm["id"], "label": alarm["label"], "time": alarm["time"]}
+    dev.ringing, dev.snoozed = ringing, False
+    print(f"[{dev.name}] alarm ringing: {alarm['time']} {alarm['label']}")
+    await dev.show({"type": "ringing", "ringing": ringing})
+    start = clock()
+    try:
+        await announce(dev, f"It's {tools.spoken_time(alarm['time'])}." + (f" {alarm['label']}." if alarm["label"] else ""))
+        while dev.ringing is ringing and clock() - start < RING_LIMIT_S:
+            await asyncio.sleep(BEEP_EVERY_S)
+            if dev.ringing is ringing:
+                await announce(dev, None)
+    finally:
+        if dev.ringing is ringing:  # ran out on its own
+            dev.ringing = None
+            await dev.show({"type": "ringing", "ringing": None})
+        if not dev.snoozed:
+            tools.alarm_done(alarm["id"])
+
+
+async def stop_ringing(dev: Device, snooze: bool = False) -> bool:
+    """End a ringing alarm now (optionally snoozing it). Returns whether one was ringing."""
+    if dev.ringing is None:
+        return False
+    if snooze:
+        tools.alarm_snooze(dev.ringing["id"], SNOOZE_MIN, clock())
+        dev.snoozed = True
+    dev.ringing = None
+    await dev.show({"type": "ringing", "ringing": None})
+    if dev.sat is not None:
+        await send(dev.sat, json.dumps({"type": "stop"}))  # drop the beeps still queued
+    return True
+
+
 async def stop(dev: Device):
-    """Stop on the screen: cut the reply short now, or drop whatever the satellite still has queued."""
+    """Stop on the screen: silence a ringing alarm, cut the reply short now, or drop whatever the
+    satellite still has queued."""
+    if await stop_ringing(dev):
+        return
     if dev.busy:
         dev.stopped = True  # the running turn stops speaking at its next sentence
         if dev.client is not None:
@@ -340,7 +387,7 @@ weather_now: dict | None = None  # home weather for the screens, refreshed in th
 def ambient(dev: Device) -> dict:
     """What the home screen shows besides the clock."""
     return {"type": "ambient", "weather": weather_now, "timers": tools.timer_list(dev.name),
-            "next_alarm": None, "agenda": []}
+            "next_alarm": tools.next_alarm(dev.name), "agenda": []}
 
 
 async def refresh_weather():
@@ -360,15 +407,28 @@ async def refresh_weather():
 
 
 async def ring_timers():
-    """Timers live in SQLite, so they survive restarts; overdue ones ring once a satellite connects.
-    Also keeps screens' timer lists current, whatever changed them (Claude's tools, a finish, a cancel)."""
-    shown: dict[str, list] = {}
+    """Timers and alarms live in SQLite, so they survive restarts. Overdue timers ring once a satellite
+    connects; an alarm more than RING_LIMIT_S late (the brain was down) is skipped rather than ringing late.
+    Also keeps screens' timers and next alarm current, whatever changed them (Claude, a finish, a tap)."""
+    shown: dict[str, tuple] = {}
     while True:
         await asyncio.sleep(0.5)
         for dev in list(devices.values()):
-            if dev.displays and (now := tools.timer_list(dev.name)) != shown.get(dev.name, []):
+            if not dev.displays:
+                continue
+            now = (tools.timer_list(dev.name), tools.next_alarm(dev.name))
+            if now != shown.get(dev.name, ([], None)):
                 shown[dev.name] = now
                 await dev.show(ambient(dev))
+        for alarm in tools.alarms_due(clock()):
+            dev = device(alarm["device"])
+            if dev.ringing is not None:
+                continue  # one at a time; it stays due until this one is done
+            if clock() - alarm["next_ring"] > RING_LIMIT_S:
+                print(f"[{dev.name}] skipped an alarm that was due while the brain was down: {alarm['time']}")
+                tools.alarm_done(alarm["id"])
+                continue
+            spawn(ring_alarm(dev, alarm))
         connected = [d for d in devices.values() if d.sat is not None]
         if not connected:
             continue
@@ -429,6 +489,7 @@ async def serve_satellite(ws: WebSocket, dev: Device):
         kind = m.get("type")
         if kind == "wake":
             frames = []
+            await stop_ringing(dev)  # "Hey Jarvis" over a ringing alarm answers it
             await dev.set_state("listening")
             # Reopen the Groq connection while the user talks, so STT never pays for a TLS handshake.
             if not FAKE_LLM:
@@ -475,9 +536,12 @@ async def from_display(dev: Device, m: dict, ws: WebSocket):
     elif kind == "text" and m.get("text"):
         spawn(turn(dev, text=m["text"]))  # spawned, so this screen can still send (e.g. stop) meanwhile
     elif kind == "talk" and dev.sat is not None:
+        await stop_ringing(dev)
         await send(dev.sat, json.dumps({"type": "listen"}))
     elif kind == "stop":
         await stop(dev)
+    elif kind == "snooze":
+        await stop_ringing(dev, snooze=True)
     elif kind == "volume" and dev.sat is not None and isinstance(m.get("level"), (int, float)):
         await send(dev.sat, json.dumps({"type": "volume", "level": max(0, min(100, int(m["level"])))}))
 
@@ -498,6 +562,8 @@ async def display(ws: WebSocket):
         await ws.send_text(json.dumps({"type": "state", "state": dev.state}))
         if dev.volume is not None:
             await ws.send_text(json.dumps({"type": "volume", "level": dev.volume}))
+        if dev.ringing is not None:
+            await ws.send_text(json.dumps({"type": "ringing", "ringing": dev.ringing}))
         while True:
             msg = await ws.receive()
             if msg["type"] == "websocket.disconnect":

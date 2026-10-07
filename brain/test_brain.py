@@ -1,5 +1,6 @@
 """Run: uv run python test_brain.py"""
 import asyncio
+import datetime
 import io
 import json
 import os
@@ -93,6 +94,38 @@ asyncio.run(by_name["show_on_screen"].handler({"title": "Ingredients", "lines": 
 assert [c["kind"] for c in shown_cards] == ["timers", "text"] and shown_cards[0]["timers"][0]["label"] == "toast"
 assert shown_cards[1] == {"kind": "text", "title": "Ingredients", "lines": ["eggs", "flour"]}
 tools.timer_cancel("den", "")
+
+# Alarms: when they ring next (2026-10-07 is a Wednesday; Monday = 0)
+D = datetime.datetime
+wed_8am, fri_8pm = D(2026, 10, 7, 8, 0), D(2026, 10, 9, 20, 0)
+assert tools.next_ring("09:30", "", wed_8am) == D(2026, 10, 7, 9, 30), "one-time, later today"
+assert tools.next_ring("07:00", "", wed_8am) == D(2026, 10, 8, 7, 0), "one-time, already passed: tomorrow"
+assert tools.next_ring("08:00", "", wed_8am) == D(2026, 10, 8, 8, 0), "exactly now doesn't count"
+assert tools.next_ring("07:00", "01234", fri_8pm) == D(2026, 10, 12, 7, 0), "weekdays from Friday night: Monday"
+assert tools.next_ring("00:05", "0123456", D(2026, 10, 7, 23, 59)) == D(2026, 10, 8, 0, 5), "daily across midnight"
+assert tools.next_ring("07:00", "2", wed_8am) == D(2026, 10, 14, 7, 0), "Wednesdays, today's passed: a week away"
+assert tools.next_ring("09:00", "56", wed_8am) == D(2026, 10, 10, 9, 0), "weekends: Saturday"
+assert tools.day_digits(["Weekdays"]) == "01234" and tools.day_digits(["saturday", "Sun"]) == "56"
+assert tools.day_digits([]) == "" and tools.day_digits(["daily"]) == "0123456" and tools.day_digits(["tue", "Thursday"]) == "13"
+assert tools.spoken_time("07:30") == "7:30 AM" and tools.spoken_time("12:00") == "12 PM" and tools.spoken_time("00:15") == "12:15 AM"
+assert tools.spoken_days("01234") == "on weekdays" and tools.spoken_days("") == "once" and tools.spoken_days("13") == "on Tuesday, Thursday"
+
+# Alarm storage: due, done (one-time removed, recurring moved on), snooze, disabled never due
+gym = tools.alarm_add("hall", "06:00", "01234", "gym", now=wed_8am)
+once = tools.alarm_add("hall", "09:30", "", "", now=wed_8am)
+off = tools.alarm_add("hall", "09:00", "", "off one", now=wed_8am)
+assert tools.alarm_toggle("hall", off, False, now=wed_8am)
+assert tools.next_alarm("hall")["id"] == once
+at_930 = D(2026, 10, 7, 9, 30).timestamp()
+assert [a["id"] for a in tools.alarms_due(at_930)] == [once], "the disabled 9:00 alarm must not be due"
+tools.alarm_done(once, now=D(2026, 10, 7, 9, 30))
+assert [a["id"] for a in tools.alarm_list("hall")] == [gym, off], "one-time alarm removed after ringing"
+tools.q("UPDATE alarms SET next_ring = ? WHERE id = ?", D(2026, 10, 8, 6, 0).timestamp(), gym)
+tools.alarm_done(gym, now=D(2026, 10, 8, 6, 0))
+assert tools.alarm_list("hall")[0]["next_ring"] == D(2026, 10, 9, 6, 0).timestamp(), "recurring moves to the next weekday"
+tools.alarm_snooze(gym, 9, now=1000.0)
+assert [a["next_ring"] for a in tools.alarm_list("hall") if a["id"] == gym] == [1540.0]
+assert tools.alarm_cancel("hall", "GYM") == 1 and tools.alarm_cancel("hall", "09:00") == 1 and tools.alarm_list("hall") == []
 
 # Photos: listing, safe lookup, cover-resize with EXIF rotation, caching
 pics = pathlib.Path(tempfile.mkdtemp())

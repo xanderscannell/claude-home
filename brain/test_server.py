@@ -244,6 +244,80 @@ async def display_flow(port: int):
         await ws.close()
 
 
+async def alarm_flow(port: int):
+    """Alarms ring on the device's screens and satellite until stopped, snoozed, answered, or the limit."""
+    brain.BEEP_EVERY_S, brain.RING_LIMIT_S = 0.2, 30
+    screen = await open_display(port, "bedroom")
+    async with websockets.connect(f"ws://127.0.0.1:{port}/satellite?device=bedroom") as sat:
+        await sat.send(json.dumps({"type": "hello", "device": "bedroom"}))
+
+        def due_now(days="", label="wake up"):
+            alarm = brain.tools.alarm_add("bedroom", "06:30", days, label)
+            brain.tools.q("UPDATE alarms SET next_ring = ? WHERE id = ?", time.time() - 0.2, alarm)
+            return alarm
+
+        async def rings() -> dict:
+            m = await until_type(screen, "ringing")
+            assert m["ringing"] and m["ringing"]["kind"] == "alarm", m
+            return m["ringing"]
+
+        async def stops():
+            while (await until_type(screen, "ringing"))["ringing"] is not None:
+                pass
+
+        # Rings: the screen shows it, the satellite gets announcements; Stop ends it and a one-time alarm is gone
+        once = due_now()
+        r = await rings()
+        assert r["id"] == once and r["label"] == "wake up" and r["time"] == "06:30", r
+        m = await recv_json(sat)
+        assert m["type"] == "audio_start" and m.get("announce"), m
+        await screen.send(json.dumps({"type": "stop"}))
+        await stops()
+        while (await recv_json(sat)).get("type") != "stop":  # the satellite drops the queued beeps
+            pass
+        deadline = time.time() + 5
+        while any(a["id"] == once for a in brain.tools.alarm_list("bedroom")):
+            assert time.time() < deadline, "one-time alarm should be removed after it rings"
+            await asyncio.sleep(0.1)
+
+        # Snooze: a weekday alarm stops ringing and comes back in 9 minutes
+        weekday = due_now(days="01234", label="")
+        await rings()
+        await screen.send(json.dumps({"type": "snooze"}))
+        await stops()
+        await asyncio.sleep(0.5)
+        [a] = [a for a in brain.tools.alarm_list("bedroom") if a["id"] == weekday]
+        assert abs(a["next_ring"] - (time.time() + 540)) < 5, a
+        brain.tools.alarm_delete("bedroom", weekday)
+
+        # The wake word answers a ringing alarm
+        due_now()
+        await rings()
+        await sat.send(json.dumps({"type": "wake"}))
+        await stops()
+        await sat.send(json.dumps({"type": "cancel"}))
+
+        # Left alone, it gives up after the limit, and the one-time alarm is done
+        brain.RING_LIMIT_S = 1
+        gives_up = due_now()
+        await rings()
+        await asyncio.wait_for(stops(), 5)
+        await asyncio.sleep(0.3)
+        assert not any(a["id"] == gives_up for a in brain.tools.alarm_list("bedroom"))
+
+        # An alarm missed by more than the limit (the brain was down) is skipped, not rung late
+        late = brain.tools.alarm_add("bedroom", "06:30", "", "late")
+        brain.tools.q("UPDATE alarms SET next_ring = ? WHERE id = ?", time.time() - 3600, late)
+        await asyncio.sleep(1.5)
+        assert not any(a["id"] == late for a in brain.tools.alarm_list("bedroom"))
+        try:
+            stray = await until_type(screen, "ringing")
+            raise AssertionError(f"a missed alarm rang late: {stray}")
+        except TimeoutError:
+            pass
+    await screen.close()
+
+
 def main():
     server, port = start()
     base = f"http://127.0.0.1:{port}"
@@ -289,6 +363,7 @@ def main():
     assert got[-1]["type"] == "audio_end"
     # Displays: the device hub, ordering, isolation between devices, and turns started from a screen
     asyncio.run(display_flow(port))
+    asyncio.run(alarm_flow(port))
     assert not errors.records, [r.getMessage() for r in errors.records]
 
     server.should_exit = True
