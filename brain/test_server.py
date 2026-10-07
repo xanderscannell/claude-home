@@ -70,6 +70,74 @@ async def abrupt_disconnect(port: int):
     ws.transport.abort()
 
 
+async def recv_json(ws, timeout=30):
+    while True:
+        msg = await asyncio.wait_for(ws.recv(), timeout)
+        if isinstance(msg, str):
+            return json.loads(msg)
+
+
+async def open_display(port: int, name: str):
+    """Connect a display and check its greeting: hello, an ambient snapshot, then the current state."""
+    ws = await websockets.connect(f"ws://127.0.0.1:{port}/display?device={name}")
+    hello, ambient, state = [await recv_json(ws) for _ in range(3)]
+    assert hello["type"] == "hello" and hello["device"] == name and hello["night"] == {"start": "22:00", "end": "07:00"}, hello
+    assert ambient["type"] == "ambient" and {"weather", "timers", "next_alarm", "agenda"} <= ambient.keys(), ambient
+    assert state == {"type": "state", "state": "idle"}, state
+    return ws
+
+
+async def until_idle(ws) -> list:
+    """Display messages up to and including the return to idle."""
+    got = []
+    while not got or got[-1] != {"type": "state", "state": "idle"}:
+        got.append(await recv_json(ws))
+    return got
+
+
+async def play_out(sat):
+    """Act as the satellite: take the reply's audio, then report that it finished playing."""
+    while (await recv_json(sat))["type"] != "audio_end":
+        pass
+    await sat.send(json.dumps({"type": "played"}))
+
+
+async def display_flow(port: int):
+    a, b, other = [await open_display(port, n) for n in ("kitchen", "kitchen", "office")]
+    async with websockets.connect(f"ws://127.0.0.1:{port}/satellite?device=kitchen") as sat:
+        await sat.send(json.dumps({"type": "hello", "device": "kitchen"}))
+
+        # A spoken-style request from the satellite: every kitchen display follows the whole turn, in order
+        await sat.send(json.dumps({"type": "text", "text": "hello there"}))
+        await play_out(sat)
+        expected = [{"type": "state", "state": "thinking"}, {"type": "heard", "text": "hello there"},
+                    {"type": "state", "state": "speaking"}, {"type": "reply", "text": "This is a canned reply."},
+                    {"type": "reply", "text": "That is all."}, {"type": "state", "state": "idle"}]
+        assert await until_idle(a) == expected, "display a"
+        assert await until_idle(b) == expected, "display b"
+
+        # The office display heard none of it
+        try:
+            stray = await recv_json(other, timeout=0.5)
+            raise AssertionError(f"office display got {stray}")
+        except TimeoutError:
+            pass
+
+        # A display can start a turn; the reply plays on that device's satellite
+        await a.send(json.dumps({"type": "text", "text": "from the screen"}))
+        await play_out(sat)
+        got = await until_idle(a)
+        assert {"type": "heard", "text": "from the screen"} in got and got[-1]["state"] == "idle", got
+
+        # The wake word shows listening; a cancelled request goes back to idle
+        await sat.send(json.dumps({"type": "wake"}))
+        assert await recv_json(a) == {"type": "state", "state": "listening"}
+        await sat.send(json.dumps({"type": "cancel"}))
+        assert await recv_json(a) == {"type": "state", "state": "idle"}
+    for ws in (a, b, other):
+        await ws.close()
+
+
 def main():
     server, port = start()
     base = f"http://127.0.0.1:{port}"
@@ -97,11 +165,13 @@ def main():
     # A satellite that vanishes mid-reply is cleaned up quietly, and the next one still works
     asyncio.run(abrupt_disconnect(port))
     deadline = time.time() + 15
-    while "rude" in brain.satellites:
+    while brain.devices["rude"].sat is not None:
         assert time.time() < deadline, "vanished satellite never cleaned up"
         time.sleep(0.1)
     got = asyncio.run(satellite_turn(port, "hello again"))
     assert got[-1]["type"] == "audio_end"
+    # Displays: the device hub, ordering, isolation between devices, and turns started from a screen
+    asyncio.run(display_flow(port))
     assert not errors.records, [r.getMessage() for r in errors.records]
 
     server.should_exit = True
