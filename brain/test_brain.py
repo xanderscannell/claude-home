@@ -1,7 +1,6 @@
 """Run: uv run python test_brain.py"""
 import os
 import tempfile
-import time
 
 os.environ["CLAUDE_HOME_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")  # before importing tools
 

@@ -214,6 +214,11 @@ async def main():
     satellites: dict[str, tuple] = {}  # device -> (ws, send lock)
     background = set()  # references to fire-and-forget tasks so they aren't garbage collected
 
+    def spawn(coro):
+        task = asyncio.create_task(coro)
+        background.add(task)
+        task.add_done_callback(background.discard)
+
     async def satellite(ws):
         device = parse_qs(urlparse(ws.request.path).query).get("device", ["unknown"])[0]
         lock = asyncio.Lock()
@@ -230,7 +235,7 @@ async def main():
         print(f"[{device}] disconnected")
 
     async def serve(ws, lock, client, device):
-        frames, warm = [], None  # warm holds the task reference so it isn't garbage collected
+        frames = []
         async for msg in ws:
             if isinstance(msg, bytes):
                 frames.append(msg)
@@ -240,7 +245,7 @@ async def main():
             if kind == "wake":
                 frames = []
                 # Reopen the Groq connection while the user talks, so STT never pays for a TLS handshake.
-                warm = asyncio.create_task(asyncio.to_thread(groq.get, "/models"))
+                spawn(asyncio.to_thread(groq.get, "/models"))
             elif kind == "cancel":
                 frames = []
             elif kind == "speech_end":
@@ -258,10 +263,7 @@ async def main():
             for device, label in tools.timers_due():
                 ws, lock = satellites.get(device) or next(iter(satellites.values()))
                 print(f"[{device}] timer done: {label or 'unnamed'}")
-                task = asyncio.create_task(announce(ws, lock, voice, f"Your {label} timer is done." if label
-                                                    else "Your timer is done."))
-                background.add(task)
-                task.add_done_callback(background.discard)
+                spawn(announce(ws, lock, voice, f"Your {label} timer is done." if label else "Your timer is done."))
 
     host, port = os.environ.get("BRAIN_HOST", "localhost"), int(os.environ.get("BRAIN_PORT", 8765))
     async with websockets.serve(satellite, host, port, max_size=2**20):
