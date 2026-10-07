@@ -96,7 +96,7 @@ body.talking .home { opacity: 0; pointer-events: none; }
   font-size: 18px; text-shadow: var(--on-photo); white-space: nowrap; overflow: hidden;
 }
 .strip .item { display: flex; align-items: baseline; gap: 8px; min-height: 64px; padding: 18px 0; }
-.strip .num {
+.strip .num, .brief-facts .num {
   font: 400 24px/1 var(--far);
   font-variation-settings: "opsz" 24, "SOFT" 100;
   font-feature-settings: "tnum" 1, "lnum" 1;
@@ -308,6 +308,40 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 .event-title { font-size: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .event-cal { font-size: 17px; color: var(--mist); margin-top: 2px; }
 .strip .event .label { max-width: 230px; overflow: hidden; text-overflow: ellipsis; }
+
+/* Briefing: forecast left, today right, the home strip's items along the bottom */
+.brief { height: 100%; display: flex; flex-direction: column; }
+.brief-top { flex: 1; min-height: 0; display: grid; grid-template-columns: 290px 1fr; gap: 36px; }
+.brief-date { font-size: 19px; color: var(--mist); }
+.brief-temp {
+  margin-top: 6px;
+  font: 330 104px/.9 var(--far);
+  font-variation-settings: "opsz" 144, "SOFT" 100;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  letter-spacing: -2px;
+}
+.brief-cond { font-size: 21px; margin-top: 10px; }
+.brief-rain { font-size: 18px; color: var(--accent); margin-top: 4px; }
+.brief-day { min-width: 0; }
+.sheet-body .brief-day .day-title { margin-top: 0; }
+.brief-event { display: flex; align-items: baseline; gap: 16px; padding: 9px 0; border-bottom: 1px solid rgba(238, 243, 247, .1); }
+.brief-when {
+  flex: none; min-width: 112px;
+  font: 340 26px/1.1 var(--far);
+  font-variation-settings: "opsz" 36, "SOFT" 100;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+.brief-when.now { color: var(--accent); }
+.brief-when.all-day { font: 500 17px/1.1 var(--near); color: var(--mist); }
+.brief-title { font-size: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brief-more { font-size: 19px; color: var(--mist); margin-top: 8px; }
+.sheet-body .brief-free { font: 380 26px/1.25 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; margin-top: 8px; }
+.brief-facts {
+  display: flex; gap: 34px; align-items: baseline; flex-wrap: wrap;
+  padding-top: 14px; border-top: 1px solid rgba(238, 243, 247, .14);
+}
+.brief-facts .item { display: flex; align-items: baseline; gap: 8px; }
+.brief-facts .label { font-size: 18px; }
 
 /* Volume: the level as the hero, the slider low and wide where a thumb reaches it */
 .vol { height: 100%; display: flex; flex-direction: column; justify-content: space-between; padding-bottom: 18px; }

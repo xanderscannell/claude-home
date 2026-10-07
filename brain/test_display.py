@@ -508,6 +508,7 @@ def test_navigation_every_screen_gets_home(b):
         "text": {"kind": "text", "title": "Note", "lines": ["Hello"]},
         "volume": {"kind": "volume", "level": 40},
         "agenda": {"kind": "agenda", "events": []},
+        "briefing": briefing()["card"],
     }
     d = Display(b)
     home = lambda: not d.visible("#sheet") and not d.visible("#overlay")  # noqa: E731
@@ -661,6 +662,52 @@ def test_agenda(b):
     d.push({"type": "card", "card": {"kind": "agenda", "events": []}})
     assert d.text(".sheet-body .quiet") == "Nothing on the calendar this week."
     d.shot("agenda-empty", settle=200)
+    d.close()
+
+
+def briefing(**over):
+    at = lambda day, h=0, m=0: dt.datetime(2026, 10, day, h, m)  # noqa: E731
+    card = {"kind": "briefing", "greeting": "Good morning",
+            "weather": dict(WEATHER, days=[dict(WEATHER["days"][0], rain=40), *WEATHER["days"][1:]]),
+            "events": [event("Recycling day", "Personal", at(7), at(8), all_day=True),
+                       event("Standup", "Work", at(7, 9, 30), at(7, 9, 50)),
+                       event("Dentist", "Personal", at(7, 15), at(7, 16)),
+                       event("Swim lessons", "Kids Sports", at(7, 17, 30), at(7, 18, 15))],
+            "next_alarm": alarm(1, "06:30", "01234", "gym", next_ring=at(8, 6, 30).timestamp()),
+            "timers": [{"id": 1, "label": "pasta", "ends_at": START.timestamp() + 252}], "shopping": 3}
+    return {"type": "card", "card": {**card, **over}}
+
+
+def test_briefing(b):
+    d = Display(b)
+    d.push(briefing())
+    assert d.text("#sheet-title") == "Good morning" and d.text(".brief-date") == "Wednesday, October 7"
+    assert d.text(".brief-temp") == "47°" and d.text(".brief-cond") == "Clear, high 65, low 44"
+    assert d.text(".brief-rain") == "40% chance of rain"
+    assert d.page.locator(".brief-title").all_inner_texts() == ["Recycling day", "Standup", "Dentist", "Swim lessons"]
+    assert d.page.locator(".brief-when").all_inner_texts() == ["All day", "Now", "3:00pm", "5:30pm"]
+    assert d.page.locator(".brief-facts .label").all_inner_texts() == ["Gym tomorrow", "Pasta",
+                                                                       "things on the shopping list"]
+    assert d.page.locator(".brief-facts .num").all_inner_texts() == ["6:30am", "4:12", "3"]
+    d.shot("briefing", settle=400)
+
+    # A busy day: four events, then how many more; two timers are counted, one thing is singular
+    at = lambda h: dt.datetime(2026, 10, 7, h)  # noqa: E731
+    busy = [event(f"Meeting {h}", "Work", at(h), at(h + 1)) for h in range(10, 17)]
+    two = [{"id": 1, "label": "pasta", "ends_at": START.timestamp() + 252},
+           {"id": 2, "label": "", "ends_at": START.timestamp() + 600}]
+    d.push(briefing(events=busy, timers=two, shopping=1, next_alarm=None, greeting="Good afternoon"))
+    assert d.text("#sheet-title") == "Good afternoon" and d.page.locator(".brief-event").count() == 4
+    assert d.text(".brief-more") == "and 3 more"
+    assert d.page.locator(".brief-facts .num").all_inner_texts() == ["2", "1"]
+    assert d.page.locator(".brief-facts .label").all_inner_texts() == ["timers running", "thing on the shopping list"]
+    d.shot("briefing-busy", settle=200)
+
+    # Nothing at all: says so plainly, and no empty row of facts
+    d.push(briefing(weather=None, events=[], next_alarm=None, timers=[], shopping=0))
+    assert d.text(".brief-cond") == "No forecast right now." and d.text(".brief-free") == "Nothing on the calendar."
+    assert d.page.locator(".brief-facts").count() == 0
+    d.shot("briefing-empty", settle=200)
     d.close()
 
 

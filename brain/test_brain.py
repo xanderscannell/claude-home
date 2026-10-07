@@ -202,4 +202,33 @@ assert tools.agenda_text(agenda.upcoming(at_330, 3), at_330) == (
     "Today: 3 PM: Dentist (Family); 5:30 PM: Swim lessons (Family). Tomorrow: 10 AM: Call with Sam (Family). "
     "Friday, October 9: all day: Grandma's birthday (Family).")
 assert tools.agenda_text([], at_330) == "Nothing on the calendar."
+
+# Morning briefing: an empty day, then a full one
+at_7 = local(2026, 10, 7, 7, 0)
+assert tools.greeting(at_7) == "Good morning" and tools.greeting(at_330) == "Good afternoon"
+assert tools.greeting(local(2026, 10, 7, 19, 0)) == "Good evening"
+tools.shopping_remove(tools.shopping_items())
+saved_events = list(agenda.events)
+agenda.events.clear()
+empty = tools.briefing_card("brief", None, at_7)
+assert empty == {"kind": "briefing", "greeting": "Good morning", "weather": None, "events": [], "next_alarm": None,
+                 "timers": [], "shopping": 0}, empty
+assert tools.briefing_text(empty, at_7) == ("Good morning. It's Wednesday, October 7. The forecast isn't available "
+                                            "right now. Nothing on the calendar today. The shopping list is empty.")
+agenda.events[:] = saved_events
+wx = tools.parse_forecast("Home", json.loads((pathlib.Path(__file__).parent / "test_data" / "openmeteo.json").read_text()))
+tools.alarm_add("brief", "06:30", "01234", "gym", now=datetime.datetime(2026, 10, 7, 7, 0))
+tools.q("INSERT INTO timers (device, label, ends_at) VALUES (?, ?, ?)", "brief", "pasta", at_7 + 252)
+tools.shopping_add(["milk", "eggs", "bread"])
+full = tools.briefing_card("brief", wx, at_7)
+assert [e["title"] for e in full["events"]] == ["Dentist", "Swim lessons"] and full["shopping"] == 3
+assert full["next_alarm"]["label"] == "gym" and [t["label"] for t in full["timers"]] == ["pasta"]
+day = wx["days"][0]
+rain = f", {day['rain']}% chance of rain" if day["rain"] >= 30 else ""
+assert tools.briefing_text(full, at_7) == (
+    f"Good morning. It's Wednesday, October 7. Now {wx['now']['temp']}F and {wx['now']['condition']}; today a high of "
+    f"{day['high']}F and a low of {day['low']}F{rain}. Today: 3 PM: Dentist (Family); 5:30 PM: Swim lessons (Family). "
+    "Next alarm: 6:30 AM tomorrow (gym). Timers: pasta, 4 minutes 12 seconds left. The shopping list has 3 items."
+), tools.briefing_text(full, at_7)
+tools.shopping_remove(["milk", "eggs", "bread"])
 print("ok")

@@ -330,6 +330,41 @@ def agenda_text(events: list[dict], now: float) -> str:
     return ". ".join(parts) + "."
 
 
+def greeting(now: float) -> str:
+    h = datetime.datetime.fromtimestamp(now).hour
+    return "Good morning" if h < 12 else "Good afternoon" if h < 17 else "Good evening"
+
+
+def briefing_card(device: str, weather: dict | None, now: float | None = None) -> dict:
+    """The day at a glance: the forecast, the rest of today's calendar, the next alarm, timers, the list."""
+    now = time.time() if now is None else now
+    return {"kind": "briefing", "greeting": greeting(now), "weather": weather, "events": agenda.upcoming(now, 1),
+            "next_alarm": next_alarm(device), "timers": [t for t in timer_list(device) if t["ends_at"] > now],
+            "shopping": len(shopping_items())}
+
+
+def briefing_text(card: dict, now: float) -> str:
+    """The briefing as plain sentences for Claude to speak from."""
+    today = datetime.datetime.fromtimestamp(now)
+    parts = [f"{card['greeting']}. It's {today:%A}, {today:%B} {today.day}."]
+    if w := card["weather"]:
+        n, d = w["now"], w["days"][0]
+        rain = f", {d['rain']}% chance of rain" if d["rain"] >= 30 else ""
+        parts.append(f"Now {n['temp']}F and {n['condition']}; today a high of {d['high']}F and a low of {d['low']}F{rain}.")
+    else:
+        parts.append("The forecast isn't available right now.")
+    parts.append(agenda_text(card["events"], now) if card["events"] else "Nothing on the calendar today.")
+    if a := card["next_alarm"]:
+        when = day_name(datetime.date.fromtimestamp(a["next_ring"]), today.date()).lower()
+        parts.append(f"Next alarm: {spoken_time(a['time'])} {when}" + (f" ({a['label']})." if a["label"] else "."))
+    if card["timers"]:
+        parts.append("Timers: " + "; ".join(f"{t['label'] or 'unnamed'}, {spoken_duration(t['ends_at'] - now)} left"
+                                            for t in card["timers"]) + ".")
+    n = card["shopping"]
+    parts.append(f"The shopping list has {n} item{'s' if n != 1 else ''}." if n else "The shopping list is empty.")
+    return " ".join(parts)
+
+
 async def _no_screen(card: dict):
     pass
 
@@ -457,6 +492,18 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker) -> list:
         await on_card(card)
         return _text(agenda_text(card["events"], time.time()))
 
+    @tool("morning_briefing", "A rundown of the day: weather, today's calendar, the next alarm, timers, and the "
+          "shopping list, shown on the screen too. Speak it as a short, friendly summary, not a list.", _schema())
+    async def morning_briefing(a):
+        place = os.environ.get("HOME_LOCATION", "")
+        try:
+            w = await weather_data(place) if place else None
+        except (LookupError, httpx.HTTPError):
+            w = None
+        card = briefing_card(device, w)
+        await on_card(card)
+        return _text(briefing_text(card, time.time()))
+
     @tool("set_volume", "Set this speaker's volume, 0 to 100. For 'turn it up' or 'louder' use relative 10; "
           "for 'turn it down' or 'quieter', relative -10.",
           _schema(level={"type": "integer", "description": "the new level, or the change when relative"},
@@ -467,7 +514,7 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker) -> list:
 
     return [set_timer, list_timers, cancel_timer, set_alarm, list_alarms, cancel_alarm, remember_tool, forget_tool,
             add_shopping, remove_shopping, get_shopping, clear_shopping, get_weather, show_on_screen, get_agenda,
-            set_volume]
+            morning_briefing, set_volume]
 
 
 def make_tools(device: str, on_card=_no_screen, on_volume=_no_speaker):

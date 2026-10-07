@@ -265,6 +265,12 @@ async def display_flow(port: int):
         await a.send(json.dumps({"type": "open", "sheet": "agenda"}))
         assert [e["title"] for e in (await until_card(a, "agenda"))["events"]] == ["Dentist"]
         assert [e["title"] for e in brain.ambient(brain.device("kitchen"))["agenda"]] in (["Dentist"], [])  # [] near midnight
+        # The morning briefing goes up on every kitchen screen (no HOME_LOCATION here, so no forecast)
+        r = await on_server(kitchen_tools["morning_briefing"].handler({}))
+        card = await until_card(a, "briefing")
+        assert card["weather"] is None and [e["title"] for e in card["events"]] in (["Dentist"], [])
+        assert card["greeting"].startswith("Good ") and r["content"][0]["text"].startswith(card["greeting"]), r
+        await until_card(b, "briefing")
         brain.agenda.events.clear()
     for ws in (a, b, other):
         await ws.close()

@@ -252,6 +252,13 @@ function eventTime(epoch, className) {
   return alarmTime(`${at.getHours()}:${String(at.getMinutes()).padStart(2, "0")}`, className);
 }
 
+// When an event happens, for a time column: "All day", "Now" (under way), or its start time
+function eventWhen(e, now, className) {
+  if (e.all_day) return el("span", `${className} all-day`, "All day");
+  if (e.start <= now) return el("span", `${className} now`, "Now");
+  return eventTime(e.start, className);
+}
+
 // "Today", "Tomorrow", or "Friday, October 9"
 function dayTitle(day) {
   const days = Math.round((new Date(day).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86400000);
@@ -488,9 +495,7 @@ const renderers = {
         nodes.push(el("h3", "day-title", dayTitle(day)));
       }
       const row = el("div", "event-row");
-      const when = e.all_day ? el("span", "event-when all-day", "All day")
-        : e.start <= now ? el("span", "event-when now", "Now")
-        : eventTime(e.start, "event-when");
+      const when = eventWhen(e, now, "event-when");
       if (e === nextUp && dayTitle(day) === "Today") when.classList.add("next");
       const what = el("div", "event-what");
       what.append(el("p", "event-title", e.title), el("p", "event-cal", e.calendar));
@@ -498,6 +503,55 @@ const renderers = {
       nodes.push(row);
     }
     return ["Calendar", nodes];
+  },
+
+  // The day at a glance: the forecast on the left, the rest of today's calendar on the right, and along the
+  // bottom the same glanceable items as the home strip (next alarm, timers, the shopping list).
+  briefing: (c) => {
+    const now = Date.now() / 1000;
+    const sky = el("div", "brief-sky");
+    sky.append(el("p", "brief-date", new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })));
+    if (c.weather) {
+      const today = c.weather.days[0];
+      sky.append(el("p", "brief-temp", `${c.weather.now.temp}°`),
+                 el("p", "brief-cond", `${sentence(c.weather.now.condition)}, high ${today.high}, low ${today.low}`));
+      if (today.rain >= 30) sky.append(el("p", "brief-rain", `${today.rain}% chance of rain`));
+    } else {
+      sky.append(el("p", "brief-cond", "No forecast right now."));
+    }
+
+    const day = el("div", "brief-day");
+    day.append(el("p", "day-title", "Today"));
+    const events = c.events.filter((e) => e.end > now);
+    if (!events.length) day.append(el("p", "brief-free", "Nothing on the calendar."));
+    for (const e of events.slice(0, 4)) {
+      const row = el("div", "brief-event");
+      row.append(eventWhen(e, now, "brief-when"), el("span", "brief-title", e.title));
+      day.append(row);
+    }
+    if (events.length > 4) day.append(el("p", "brief-more", `and ${events.length - 4} more`));
+
+    const facts = el("div", "brief-facts");
+    const fact = (num, label) => {
+      const item = el("span", "item");
+      item.append(typeof num === "string" ? el("span", "num", num) : num, el("span", "label", label));
+      facts.append(item);
+    };
+    if (c.next_alarm) fact(alarmTime(c.next_alarm.time, "num"), `${sentence(c.next_alarm.label) || "Alarm"}${dayWord(c.next_alarm.next_ring)}`);
+    const running = c.timers.filter((t) => t.ends_at > now);
+    if (running.length === 1) {
+      const num = el("span", "num", countdown(running[0].ends_at - now));
+      num.dataset.endsAt = running[0].ends_at;  // ticks with the other countdowns
+      fact(num, sentence(running[0].label) || "Timer");
+    } else if (running.length) fact(String(running.length), "timers running");
+    if (c.shopping) fact(String(c.shopping), c.shopping === 1 ? "thing on the shopping list" : "things on the shopping list");
+
+    const top = el("div", "brief-top");
+    top.append(sky, day);
+    const sheet = el("div", "brief");
+    sheet.append(top);
+    if (facts.childElementCount) sheet.append(facts);
+    return [c.greeting, [sheet]];
   },
 
   text: (c) => {
