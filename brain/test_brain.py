@@ -184,9 +184,9 @@ def feed_server(failing: set):
 
 
 env = {"CALENDAR_FAMILY": "https://family/basic.ics", "CALENDAR_WORK": "webcal://work/basic.ics"}
-asyncio.run(agenda.refresh(feed_server(set()), env))
+assert asyncio.run(agenda.refresh(feed_server(set()), env)) == []
 assert {e["calendar"] for e in agenda.events} == {"Family", "Work"} and len(agenda.events) == 8
-asyncio.run(agenda.refresh(feed_server({"work"}), env))  # Work fails: its last good copy stays
+assert asyncio.run(agenda.refresh(feed_server({"work"}), env)) == ["Work"]  # Work fails: its last good copy stays
 assert sum(e["calendar"] == "Work" for e in agenda.events) == 4, agenda.events
 asyncio.run(agenda.refresh(feed_server(set()), {"CALENDAR_FAMILY": "https://family/basic.ics"}))  # Work removed
 assert {e["calendar"] for e in agenda.events} == {"Family"}

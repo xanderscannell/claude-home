@@ -69,11 +69,13 @@ def _rebuild(today: dt.date):
     events[:] = merged
 
 
-async def refresh(client: httpx.AsyncClient | None = None, environ=os.environ):
-    """Fetch every feed (all at once), keep the ones that worked, and re-expand the window."""
+async def refresh(client: httpx.AsyncClient | None = None, environ=os.environ) -> list[str]:
+    """Fetch every feed (all at once), keep the ones that worked, and re-expand the window.
+    Returns the labels that failed, so the caller can try again sooner."""
     sources = feeds(environ)
     own = client is None
     client = client or httpx.AsyncClient(timeout=TIMEOUT_S, follow_redirects=True)
+    failed = []
 
     async def fetch(label: str, url: str):
         try:
@@ -81,7 +83,9 @@ async def refresh(client: httpx.AsyncClient | None = None, environ=os.environ):
             r.raise_for_status()
             feeds_raw[label] = r.content
         except httpx.HTTPError as e:
-            print(f"calendar {label}: fetch failed ({type(e).__name__}); keeping the last copy")
+            failed.append(label)
+            kept = "keeping the last copy" if label in feeds_raw else "nothing to show from it yet"
+            print(f"calendar {label}: fetch failed ({type(e).__name__}); {kept}")
 
     try:
         await asyncio.gather(*(fetch(label, url) for label, url in sources.items()))
@@ -91,6 +95,7 @@ async def refresh(client: httpx.AsyncClient | None = None, environ=os.environ):
     for gone in set(feeds_raw) - set(sources):
         del feeds_raw[gone]
     await asyncio.to_thread(_rebuild, dt.date.today())  # big feeds take a while to parse; keep the loop free
+    return failed
 
 
 def upcoming(now: float, days: int) -> list[dict]:

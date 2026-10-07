@@ -419,12 +419,13 @@ def ambient(dev: Device) -> dict:
 
 
 async def refresh_agenda():
-    """The calendars every 15 minutes, in the background (big feeds take minutes to fetch). Needs CALENDAR_*."""
+    """The calendars every 15 minutes, in the background (big feeds take minutes to fetch), or after 1 minute
+    when one failed (a fresh start has no last copy to fall back on). Needs CALENDAR_*."""
     while agenda.feeds():
-        await agenda.refresh()
+        failed = await agenda.refresh()
         for dev in list(devices.values()):
             await dev.show(ambient(dev))
-        await asyncio.sleep(agenda.REFRESH_S)
+        await asyncio.sleep(60 if failed else agenda.REFRESH_S)
 
 
 async def refresh_weather():
