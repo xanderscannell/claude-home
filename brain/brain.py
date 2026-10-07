@@ -4,19 +4,25 @@ Claude's reply is spoken sentence by sentence while it is still being generated.
 Every turn's timings are appended to turns.jsonl.
 
 Run from brain/:  uv run --env-file ../.env brain.py
-Optional env: BRAIN_HOST (default localhost; set 0.0.0.0 to accept satellites from the LAN).
+Optional env: BRAIN_HOST (default localhost; set 0.0.0.0 to accept satellites from the LAN), BRAIN_PORT (8765),
+              HOME_LOCATION (city name or "lat,lon", for weather), CLAUDE_HOME_DB (default brain/home.db).
 
 Protocol (see docs/architecture.md): satellite sends hello, wake, binary 16 kHz int16 mono mic audio,
-then speech_end (or cancel). Brain replies audio_start {sample_rate}, binary int16 speech, audio_end.
+then speech_end (or cancel), or {type: text, text} to skip speech-to-text. Brain replies
+audio_start {sample_rate}, binary int16 speech, audio_end {follow_up}. Unprompted speech (a finished timer)
+comes as the same messages with announce: true.
 """
 
 import asyncio
 import io
 import json
+import math
 import os
 import re
 import time
 import wave
+from array import array
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -25,6 +31,8 @@ import httpx
 import websockets
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, StreamEvent
 from piper import PiperVoice
+
+import tools
 
 RATE = 16000
 HERE = Path(__file__).parent
@@ -38,14 +46,16 @@ SYSTEM_PROMPT = """You are Claude Home, a voice assistant on a smart speaker. Ev
 - If the request is ambiguous, ask one short clarifying question.
 - Search the web only when you need current information, at most once per question, then answer.
 - After a web search, never list sources or links; the listener cannot see them.
-- Each user message starts with the current local time in brackets; use it when relevant, never read it back unprompted."""
+- Each user message starts with the current local time in brackets; use it when relevant, never read it back unprompted.
+- Use your tools for timers, the shopping list, weather, and remembering things. Confirm what you did in a few words.
+- When you end with a question, the speaker listens for the answer without the wake word, so only ask when you need to."""
 
 OPTIONS = ClaudeAgentOptions(
     system_prompt=SYSTEM_PROMPT,
     model="haiku",
     setting_sources=[],  # ignore ~/.claude and project config (CLAUDE.md, hooks, plugins)
     tools=["WebSearch"],  # no shell or file tools on this machine
-    allowed_tools=["WebSearch"],
+    allowed_tools=["WebSearch", "mcp__home__*"],
     permission_mode="dontAsk",
     include_partial_messages=True,  # text deltas, for speaking sentence by sentence
     # On a subscription login, claude.ai connectors (Gmail, Drive, ...) load into every session.
@@ -110,6 +120,9 @@ async def ask(client: ClaudeSDKClient, text: str):
         ev = msg.event
         if ev.get("type") == "content_block_delta" and ev["delta"].get("type") == "text_delta":
             sentences, buf = pop_sentences(buf + ev["delta"]["text"])
+        elif ev.get("type") == "content_block_start" and ev["content_block"].get("type") in ("tool_use", "server_tool_use"):
+            print(f"  tool: {ev['content_block']['name'].removeprefix('mcp__home__')}")
+            continue
         elif ev.get("type") == "content_block_stop":
             sentences, buf = [buf], ""  # end of a text block (e.g. before a web search) flushes the tail
         else:
@@ -123,26 +136,60 @@ async def ask(client: ClaudeSDKClient, text: str):
         yield MD_LINK.sub(r"\1", buf).strip()
 
 
-async def turn(ws, client: ClaudeSDKClient, groq: httpx.Client, voice: PiperVoice, device: str, pcm: bytes):
-    t0 = time.perf_counter()  # speech_end received (the satellite's VAD silence tail came just before)
-    text = await asyncio.to_thread(transcribe, groq, pcm) if len(pcm) >= RATE else ""  # >= 0.5 s of audio
-    t_stt = time.perf_counter()
-    if len(text.split()) < 2:  # empty, or a Whisper hallucination like "you" / "Thank you."
-        print(f"[{device}] (heard {text!r}, skipped)")
-        await ws.send(json.dumps({"type": "audio_end"}))
-        return
-    print(f"[{device}] you:    {text}")
+# Whisper's usual output for silence or noise, and ways of calling off a request.
+IGNORE = {"", "you", "thank you", "thanks for watching", "bye", "never mind", "nevermind", "cancel", "stop",
+          "nothing", "forget it"}
 
-    await ws.send(json.dumps({"type": "audio_start", "sample_rate": voice.config.sample_rate}))
-    reply, t_first, t_audio = [], None, None
-    async for s in ask(client, text):
-        t_first = t_first or time.perf_counter()
-        reply.append(s)
-        audio = await asyncio.to_thread(lambda: [c.audio_int16_bytes for c in voice.synthesize(for_speech(s))])
-        for chunk in audio:
+
+def options(device: str) -> ClaudeAgentOptions:
+    """Per-satellite session: its own timer tools, and saved facts baked into the prompt."""
+    known = tools.facts()
+    memory = "\n\nThings you remember about this household:\n" + "\n".join(f"- {f}" for f in known) if known else ""
+    return replace(OPTIONS, system_prompt=SYSTEM_PROMPT + memory, mcp_servers={"home": tools.make_tools(device)})
+
+
+def beeps(rate: int) -> bytes:
+    """Three short beeps for a finished timer."""
+    n, fade = int(rate * 0.15), rate * 0.01
+    tone = [int(8000 * math.sin(2 * math.pi * 988 * i / rate) * min(1, i / fade, (n - i) / fade)) for i in range(n)]
+    return array("h", (tone + [0] * int(rate * 0.1)) * 3).tobytes()
+
+
+async def announce(ws, lock: asyncio.Lock, voice: PiperVoice, text: str):
+    """Speak without being asked, e.g. a finished timer. The lock keeps it from interleaving with a reply."""
+    rate = voice.config.sample_rate
+    audio = await asyncio.to_thread(lambda: [c.audio_int16_bytes for c in voice.synthesize(for_speech(text))])
+    async with lock:
+        await ws.send(json.dumps({"type": "audio_start", "sample_rate": rate, "announce": True}))
+        for chunk in [beeps(rate), *audio]:
             await ws.send(chunk)
-        t_audio = t_audio or time.perf_counter()
-    await ws.send(json.dumps({"type": "audio_end"}))
+        await ws.send(json.dumps({"type": "audio_end", "announce": True}))
+
+
+async def turn(ws, lock: asyncio.Lock, client: ClaudeSDKClient, groq: httpx.Client, voice: PiperVoice, device: str,
+               pcm: bytes = b"", text: str | None = None):
+    t0 = time.perf_counter()  # speech_end received (the satellite's VAD silence tail came just before)
+    if text is None:
+        text = await asyncio.to_thread(transcribe, groq, pcm) if len(pcm) >= RATE else ""  # >= 0.5 s of audio
+    t_stt = time.perf_counter()
+    async with lock:
+        if text.lower().strip(" .!?,") in IGNORE:
+            print(f"[{device}] (heard {text!r}, skipped)")
+            await ws.send(json.dumps({"type": "audio_end", "follow_up": False}))
+            return
+        print(f"[{device}] you:    {text}")
+
+        await ws.send(json.dumps({"type": "audio_start", "sample_rate": voice.config.sample_rate}))
+        reply, t_first, t_audio = [], None, None
+        async for s in ask(client, text):
+            t_first = t_first or time.perf_counter()
+            reply.append(s)
+            audio = await asyncio.to_thread(lambda: [c.audio_int16_bytes for c in voice.synthesize(for_speech(s))])
+            for chunk in audio:
+                await ws.send(chunk)
+            t_audio = t_audio or time.perf_counter()
+        follow_up = bool(reply) and reply[-1].endswith("?")
+        await ws.send(json.dumps({"type": "audio_end", "follow_up": follow_up}))
     print(f"[{device}] claude: {' '.join(reply)}")
 
     log = {"ts": datetime.now().isoformat(timespec="seconds"), "device": device, "you": text,
@@ -164,24 +211,32 @@ async def main():
                         headers={"Authorization": f"Bearer {os.environ['GROQ_KEY']}"},
                         limits=httpx.Limits(keepalive_expiry=60))  # httpx default drops idle connections after 5 s
     groq.get("/models").raise_for_status()  # fail fast on a bad key
+    satellites: dict[str, tuple] = {}  # device -> (ws, send lock)
+    background = set()  # references to fire-and-forget tasks so they aren't garbage collected
 
     async def satellite(ws):
         device = parse_qs(urlparse(ws.request.path).query).get("device", ["unknown"])[0]
+        lock = asyncio.Lock()
+        satellites[device] = (ws, lock)
         print(f"[{device}] connected")
-        async with ClaudeSDKClient(options=OPTIONS) as client:  # one conversation per satellite connection
-            try:
-                await serve(ws, client, device)
-            except websockets.ConnectionClosed:
-                pass  # satellite went away without a clean close (killed, network drop)
+        try:
+            async with ClaudeSDKClient(options=options(device)) as client:  # one conversation per connection
+                await serve(ws, lock, client, device)
+        except websockets.ConnectionClosed:
+            pass  # satellite went away without a clean close (killed, network drop)
+        finally:
+            if satellites.get(device, (None,))[0] is ws:
+                del satellites[device]
         print(f"[{device}] disconnected")
 
-    async def serve(ws, client, device):
+    async def serve(ws, lock, client, device):
         frames, warm = [], None  # warm holds the task reference so it isn't garbage collected
         async for msg in ws:
             if isinstance(msg, bytes):
                 frames.append(msg)
                 continue
-            kind = json.loads(msg).get("type")
+            m = json.loads(msg)
+            kind = m.get("type")
             if kind == "wake":
                 frames = []
                 # Reopen the Groq connection while the user talks, so STT never pays for a TLS handshake.
@@ -189,13 +244,29 @@ async def main():
             elif kind == "cancel":
                 frames = []
             elif kind == "speech_end":
-                await turn(ws, client, groq, voice, device, b"".join(frames))
+                await turn(ws, lock, client, groq, voice, device, pcm=b"".join(frames))
                 frames = []
+            elif kind == "text":
+                await turn(ws, lock, client, groq, voice, device, text=m["text"])
 
-    host = os.environ.get("BRAIN_HOST", "localhost")
-    async with websockets.serve(satellite, host, 8765, max_size=2**20):
-        print(f"Claude Home brain listening on ws://{host}:8765")
-        await asyncio.Future()
+    async def ring_timers():
+        """Timers live in SQLite, so they survive restarts; overdue ones ring once a satellite connects."""
+        while True:
+            await asyncio.sleep(0.5)
+            if not satellites:
+                continue
+            for device, label in tools.timers_due():
+                ws, lock = satellites.get(device) or next(iter(satellites.values()))
+                print(f"[{device}] timer done: {label or 'unnamed'}")
+                task = asyncio.create_task(announce(ws, lock, voice, f"Your {label} timer is done." if label
+                                                    else "Your timer is done."))
+                background.add(task)
+                task.add_done_callback(background.discard)
+
+    host, port = os.environ.get("BRAIN_HOST", "localhost"), int(os.environ.get("BRAIN_PORT", 8765))
+    async with websockets.serve(satellite, host, port, max_size=2**20):
+        print(f"Claude Home brain listening on ws://{host}:{port}")
+        await ring_timers()
 
 
 if __name__ == "__main__":

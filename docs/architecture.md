@@ -136,7 +136,8 @@ Satellite -> brain:
 | `wake` | Wake word fired; mic frames follow |
 | *binary* | Mic PCM |
 | `speech_end` | VAD heard the end of the utterance |
-| `cancel` | Button press or mute during a turn |
+| `cancel` | Wake word fired but nobody spoke (also: button press or mute, later) |
+| `text {text}` | A typed request; skips speech-to-text (testing now, the display later) |
 
 Brain -> satellite:
 
@@ -145,7 +146,8 @@ Brain -> satellite:
 | `state {idle\|listening\|thinking\|speaking}` | Drives the LED ring now, the screen later |
 | `audio_start {sample_rate}` | Speech audio follows |
 | *binary* | Speech PCM |
-| `audio_end {follow_up}` | If `follow_up` is true, listen again for about 5 s without the wake word |
+| `audio_end {follow_up}` | If `follow_up` is true (the reply ended with a question), listen again without the wake word |
+| `audio_start` / `audio_end` with `announce: true` | Unprompted speech, such as a finished timer. Can arrive at any time; the satellite always listens for it. |
 | `stop` | Stop playback now |
 | `volume {level}` | Set output volume |
 
@@ -214,13 +216,18 @@ client for Home Assistant.
 
 | Phase | Tools |
 |---|---|
-| 1 | `set_timer` / `list_timers` / `cancel_timer`, `remember` / `forget`, `get_weather` (Open-Meteo, no API key), web search (the SDK's built-in `WebSearch`) |
+| 1 | `set_timer` / `list_timers` / `cancel_timer`, `remember` / `forget`, shopping list (`add_to_` / `remove_from_` / `get_` / `clear_shopping_list`), `get_weather` (Open-Meteo, no API key), web search (the SDK's built-in `WebSearch`) |
 | 2 | Home Assistant MCP tools (automatic), `announce(device \| all, text)` |
 | 3 | `show_card` |
 
-**Timers live in the brain**, not in Claude. Each is an asyncio task backed by a SQLite row,
-so it survives restarts and rings without a network call. Claude only creates and cancels
-them.
+**Adding a tool** is one `@tool` function in `brain/tools.py` (name, a description Claude reads to decide when to use it, and a JSON schema for its arguments), added to the list in `make_tools()`.
+
+**The shopping list** lives in the brain's SQLite file for now. In Phase 2 it should move to a Home Assistant to-do list, so it also shows up in the Home Assistant phone app.
+
+**Timers live in the brain**, not in Claude. Each is a SQLite row, and one loop checks for
+finished timers every half second, so timers survive restarts and ring without a network
+call. A timer that ran out while the brain was down rings as soon as a satellite connects.
+Claude only creates and cancels them.
 
 **Memory** is a list of facts in SQLite, injected whole into the prompt. That is fine for a
 few hundred facts; past that it needs search.

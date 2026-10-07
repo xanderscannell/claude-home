@@ -15,6 +15,8 @@ Wants=network-online.target
 User=claude-pi
 WorkingDirectory=/home/claude-pi/claude-home/satellite
 Environment=BRAIN_URL=ws://192.168.0.172:8765 DEVICE=claude-pi AUDIO_IN=default AUDIO_OUT=default PYTHONUNBUFFERED=1
+# Retry the brain at least every 5 s (library default backs off to 90 s), so a brain restart is picked up quickly.
+Environment=WEBSOCKETS_BACKOFF_MAX_DELAY=5
 ExecStart=/home/claude-pi/.local/bin/uv run --frozen satellite.py
 # Exits on a lost mic or headset are deliberate; come back with whatever is plugged in now.
 Restart=always

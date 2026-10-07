@@ -106,14 +106,31 @@ async def next_frame(mic: asyncio.Queue) -> np.ndarray:
         raise SystemExit("no audio from the mic (unplugged?); exiting so the service restarts")
 
 
-async def session(ws, mic: asyncio.Queue, wake: Model, vad: VAD, player: Player):
+async def receive(ws, player: Player, replies: asyncio.Queue):
+    """Everything the brain sends: replies to our questions, and announcements (timers) at any time."""
+    rate = 22050
+    async for msg in ws:
+        if isinstance(msg, bytes):
+            player.play(rate, np.frombuffer(msg, dtype=np.int16))
+            continue
+        m = json.loads(msg)
+        if m["type"] == "audio_start":
+            rate = m["sample_rate"]
+        elif m["type"] == "audio_end" and not m.get("announce"):
+            replies.put_nowait(m)
+    raise ConnectionError("brain closed the connection")
+
+
+async def listen(ws, mic: asyncio.Queue, wake: Model, vad: VAD, player: Player, replies: asyncio.Queue):
+    follow_up = False
     while True:
-        # 1. Wait for the wake word.
-        while wake.predict(await next_frame(mic))[WAKE_WORD] < WAKE_THRESHOLD:
-            pass
+        # 1. Wait for the wake word, unless Claude just asked a question.
+        if not follow_up:
+            while wake.predict(await next_frame(mic))[WAKE_WORD] < WAKE_THRESHOLD:
+                pass
         player.play(*chime(player.rate))
         await ws.send(json.dumps({"type": "wake"}))
-        print("wake word, listening...")
+        print("listening for the answer..." if follow_up else "wake word, listening...")
 
         # 2. Stream audio until the speaker goes quiet.
         vad.reset_states()
@@ -134,26 +151,26 @@ async def session(ws, mic: asyncio.Queue, wake: Model, vad: VAD, player: Player)
 
         if heard:
             await ws.send(json.dumps({"type": "speech_end"}))
-            # 3. Play the reply. The mic is ignored meanwhile (no barge-in yet).
-            rate = 22050
-            async for msg in ws:
-                if isinstance(msg, bytes):
-                    player.play(rate, np.frombuffer(msg, dtype=np.int16))
-                    continue
-                m = json.loads(msg)
-                if m["type"] == "audio_start":
-                    rate = m["sample_rate"]
-                elif m["type"] == "audio_end":
-                    break
+            # 3. Wait for the reply to finish playing. The mic is ignored meanwhile (no barge-in yet).
+            reply = await replies.get()
             await asyncio.to_thread(player.drain)
+            follow_up = reply.get("follow_up", False)
         else:
             await ws.send(json.dumps({"type": "cancel"}))
             print("(nothing heard)")
+            follow_up = False
 
         # Drop audio captured while busy (including our own voice) and clear the wake word's memory.
         while not mic.empty():
             mic.get_nowait()
         wake.reset()
+
+
+async def session(ws, mic: asyncio.Queue, wake: Model, vad: VAD, player: Player):
+    replies: asyncio.Queue = asyncio.Queue()
+    async with asyncio.TaskGroup() as tasks:  # if either ends (e.g. the brain disconnects), both stop
+        tasks.create_task(receive(ws, player, replies))
+        tasks.create_task(listen(ws, mic, wake, vad, player, replies))
 
 
 async def main():
@@ -174,7 +191,7 @@ async def main():
                 await ws.send(json.dumps({"type": "hello", "device": DEVICE, "capabilities": {"speaker": True}}))
                 print(f"connected to {url}. Say 'hey Jarvis'.")
                 await session(ws, mic, wake, vad, player)
-            except websockets.ConnectionClosed:
+            except* (websockets.ConnectionClosed, ConnectionError):
                 print("brain disconnected, reconnecting...")
 
 
