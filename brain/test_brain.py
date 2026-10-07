@@ -1,5 +1,5 @@
 """Run: uv run python test_proto.py"""
-from proto import for_speech, pop_sentences
+from brain import for_speech, pop_sentences
 
 assert pop_sentences("Hi there. How are") == (["Hi there."], "How are")
 assert pop_sentences("It costs 3.50 dollars! Okay") == (["It costs 3.50 dollars!"], "Okay")

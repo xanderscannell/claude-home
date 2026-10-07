@@ -1,26 +1,28 @@
-"""Phase 1 push-to-talk loop. Mic -> Groq STT -> Claude (Agent SDK) -> Piper -> speaker.
+"""Claude Home brain: WebSocket server for satellites. Speech -> Groq STT -> Claude (Agent SDK) -> Piper -> speech.
 
 Claude's reply is spoken sentence by sentence while it is still being generated.
 Every turn's timings are appended to turns.jsonl.
 
-Run from brain/:  uv run --env-file ../.env proto.py
-Optional env: AUDIO_IN / AUDIO_OUT = sounddevice device index or name (default: system default).
+Run from brain/:  uv run --env-file ../.env brain.py
+Optional env: BRAIN_HOST (default localhost; set 0.0.0.0 to accept satellites from the LAN).
+
+Protocol (see docs/architecture.md): satellite sends hello, wake, binary 16 kHz int16 mono mic audio,
+then speech_end (or cancel). Brain replies audio_start {sample_rate}, binary int16 speech, audio_end.
 """
 
 import asyncio
 import io
 import json
 import os
-import queue
 import re
 import time
 import wave
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import httpx
-import numpy as np
-import sounddevice as sd
+import websockets
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, StreamEvent
 from piper import PiperVoice
 
@@ -84,27 +86,13 @@ def pop_sentences(buf: str) -> tuple[list[str], str]:
     return out, buf[start:]
 
 
-def _device(name):
-    v = os.environ.get(name)
-    return int(v) if v and v.isdigit() else v
-
-
-def record() -> np.ndarray:
-    """Record from Enter to Enter."""
-    frames = []
-    with sd.InputStream(samplerate=RATE, channels=1, dtype="int16", device=_device("AUDIO_IN"),
-                        callback=lambda data, *_: frames.append(data.copy())):
-        input("  recording... press Enter to stop")
-    return np.concatenate(frames) if frames else np.zeros(0, dtype="int16")
-
-
-def transcribe(groq: httpx.Client, pcm: np.ndarray) -> str:
+def transcribe(groq: httpx.Client, pcm: bytes) -> str:
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
         w.setframerate(RATE)
-        w.writeframes(pcm.tobytes())
+        w.writeframes(pcm)
     r = groq.post("/audio/transcriptions",
                   files={"file": ("speech.wav", buf.getvalue(), "audio/wav")},
                   data={"model": "whisper-large-v3-turbo", "language": "en", "response_format": "json"})
@@ -135,14 +123,39 @@ async def ask(client: ClaudeSDKClient, text: str):
         yield MD_LINK.sub(r"\1", buf).strip()
 
 
-def play(voice: PiperVoice, stream: sd.OutputStream, sentences: queue.Queue) -> float | None:
-    """Synthesize and play sentences until None. Returns perf_counter time of first audio."""
-    first = None
-    while (s := sentences.get()) is not None:
-        for chunk in voice.synthesize(for_speech(s)):
-            first = first or time.perf_counter()
-            stream.write(chunk.audio_int16_array)
-    return first
+async def turn(ws, client: ClaudeSDKClient, groq: httpx.Client, voice: PiperVoice, device: str, pcm: bytes):
+    t0 = time.perf_counter()  # speech_end received (the satellite's VAD silence tail came just before)
+    text = await asyncio.to_thread(transcribe, groq, pcm) if len(pcm) >= RATE else ""  # >= 0.5 s of audio
+    t_stt = time.perf_counter()
+    if len(text.split()) < 2:  # empty, or a Whisper hallucination like "you" / "Thank you."
+        print(f"[{device}] (heard {text!r}, skipped)")
+        await ws.send(json.dumps({"type": "audio_end"}))
+        return
+    print(f"[{device}] you:    {text}")
+
+    await ws.send(json.dumps({"type": "audio_start", "sample_rate": voice.config.sample_rate}))
+    reply, t_first, t_audio = [], None, None
+    async for s in ask(client, text):
+        t_first = t_first or time.perf_counter()
+        reply.append(s)
+        audio = await asyncio.to_thread(lambda: [c.audio_int16_bytes for c in voice.synthesize(for_speech(s))])
+        for chunk in audio:
+            await ws.send(chunk)
+        t_audio = t_audio or time.perf_counter()
+    await ws.send(json.dumps({"type": "audio_end"}))
+    print(f"[{device}] claude: {' '.join(reply)}")
+
+    log = {"ts": datetime.now().isoformat(timespec="seconds"), "device": device, "you": text,
+           "claude": " ".join(reply), "audio_s": round(len(pcm) / 2 / RATE, 2),
+           "stt": t_stt - t0,
+           "claude_first_sentence": (t_first or t_stt) - t_stt,
+           "tts_first_audio": (t_audio or t_first or t_stt) - (t_first or t_stt),
+           "end_of_speech_to_audio": (t_audio or t_stt) - t0}
+    log = {k: round(v, 2) if isinstance(v, float) else v for k, v in log.items()}
+    with LOG.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(log) + "\n")
+    print(f"[{device}] timing: stt {log['stt']}s | claude first sentence {log['claude_first_sentence']}s"
+          f" | tts {log['tts_first_audio']}s | end of speech to audio {log['end_of_speech_to_audio']}s")
 
 
 async def main():
@@ -151,49 +164,38 @@ async def main():
                         headers={"Authorization": f"Bearer {os.environ['GROQ_KEY']}"},
                         limits=httpx.Limits(keepalive_expiry=60))  # httpx default drops idle connections after 5 s
     groq.get("/models").raise_for_status()  # fail fast on a bad key
-    with sd.OutputStream(samplerate=voice.config.sample_rate, channels=1, dtype="int16",
-                         device=_device("AUDIO_OUT")) as stream:
-        async with ClaudeSDKClient(options=OPTIONS) as client:
-            print("Claude Home prototype. Enter to talk, Ctrl+C to quit.")
-            while True:
-                await asyncio.to_thread(input, "\n[Enter] to talk ")
+
+    async def satellite(ws):
+        device = parse_qs(urlparse(ws.request.path).query).get("device", ["unknown"])[0]
+        print(f"[{device}] connected")
+        async with ClaudeSDKClient(options=OPTIONS) as client:  # one conversation per satellite connection
+            try:
+                await serve(ws, client, device)
+            except websockets.ConnectionClosed:
+                pass  # satellite went away without a clean close (killed, network drop)
+        print(f"[{device}] disconnected")
+
+    async def serve(ws, client, device):
+        frames, warm = [], None  # warm holds the task reference so it isn't garbage collected
+        async for msg in ws:
+            if isinstance(msg, bytes):
+                frames.append(msg)
+                continue
+            kind = json.loads(msg).get("type")
+            if kind == "wake":
+                frames = []
                 # Reopen the Groq connection while the user talks, so STT never pays for a TLS handshake.
                 warm = asyncio.create_task(asyncio.to_thread(groq.get, "/models"))
-                pcm = await asyncio.to_thread(record)
-                await asyncio.gather(warm, return_exceptions=True)
-                if len(pcm) < RATE // 2:
-                    print("  (too short, skipped)")
-                    continue
+            elif kind == "cancel":
+                frames = []
+            elif kind == "speech_end":
+                await turn(ws, client, groq, voice, device, b"".join(frames))
+                frames = []
 
-                t0 = time.perf_counter()  # end of speech
-                text = await asyncio.to_thread(transcribe, groq, pcm)
-                t_stt = time.perf_counter()
-                if len(text.split()) < 2:  # empty, or a Whisper hallucination like "you" / "Thank you."
-                    print(f"  (heard {text!r}, skipped)")
-                    continue
-                print(f"  you:    {text}")
-
-                sentences, reply, t_first = queue.Queue(), [], None
-                player = asyncio.create_task(asyncio.to_thread(play, voice, stream, sentences))
-                async for s in ask(client, text):
-                    t_first = t_first or time.perf_counter()
-                    reply.append(s)
-                    sentences.put(s)
-                sentences.put(None)
-                t_audio = await player
-                print(f"  claude: {' '.join(reply)}")
-
-                turn = {"ts": datetime.now().isoformat(timespec="seconds"), "you": text,
-                        "claude": " ".join(reply), "audio_s": round(len(pcm) / RATE, 2),
-                        "stt": t_stt - t0,
-                        "claude_first_sentence": (t_first or t_stt) - t_stt,
-                        "tts_first_audio": (t_audio or t_first or t_stt) - (t_first or t_stt),
-                        "end_of_speech_to_audio": (t_audio or t_stt) - t0}
-                turn = {k: round(v, 2) if isinstance(v, float) else v for k, v in turn.items()}
-                with LOG.open("a", encoding="utf-8") as f:
-                    f.write(json.dumps(turn) + "\n")
-                print(f"  timing: stt {turn['stt']}s | claude first sentence {turn['claude_first_sentence']}s"
-                      f" | tts {turn['tts_first_audio']}s | end of speech to audio {turn['end_of_speech_to_audio']}s")
+    host = os.environ.get("BRAIN_HOST", "localhost")
+    async with websockets.serve(satellite, host, 8765, max_size=2**20):
+        print(f"Claude Home brain listening on ws://{host}:8765")
+        await asyncio.Future()
 
 
 if __name__ == "__main__":
