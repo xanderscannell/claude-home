@@ -258,4 +258,129 @@ tools.recipe_open("other", "Toast", ["bread"], [])  # no steps: stays on the ing
 assert tools.recipe_move("other", "next") and tools.recipe_move("other", "first") and tools.recipes["other"]["step"] == -1
 assert tools.recipes["kitchen"]["title"] == "Pancakes", "recipes are per device"
 assert not tools.recipe_move("nobody", "next")
+
+# Spotify, all through a mock: PKCE, refresh only when due, search then play, a missing speaker, 429 back-off
+import string  # noqa: E402
+import urllib.parse  # noqa: E402
+
+import spotify  # noqa: E402
+
+v = spotify.verifier()
+assert 43 <= len(v) <= 128 and set(v) <= set(string.ascii_letters + string.digits + "-._~"), v
+# RFC 7636 appendix B
+assert spotify.challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+login = urllib.parse.parse_qs(urllib.parse.urlparse(spotify.login_url("cid", v, "st8")).query)
+assert login["code_challenge"] == [spotify.challenge(v)] and login["code_challenge_method"] == ["S256"]
+assert login["redirect_uri"] == ["http://127.0.0.1:8765/spotify/callback"] and login["state"] == ["st8"]
+assert set(login["scope"][0].split()) == {"user-read-playback-state", "user-modify-playback-state",
+                                         "user-read-currently-playing"}
+
+world = {"devices": [], "limit": False, "revoked": False}
+calls = []
+clock = [1000.0]
+
+
+def spotify_api(request):
+    path = request.url.path
+    body = json.loads(request.content) if request.content and path.startswith("/v1") else None
+    calls.append((request.method, path, dict(request.url.params), body))
+    if path == "/api/token":
+        form = urllib.parse.parse_qs(request.content.decode())
+        assert form["grant_type"] == ["refresh_token"] and form["client_id"] == ["cid"], form
+        return httpx.Response(200, json={"access_token": "fresh", "expires_in": 3600})
+    if world["limit"]:
+        return httpx.Response(429, headers={"Retry-After": "30"})
+    if world["revoked"]:
+        world["revoked"] = False
+        return httpx.Response(401, json={"error": {"status": 401, "message": "The access token expired"}})
+    if path == "/v1/search":
+        kind = request.url.params["type"]
+        return httpx.Response(200, json={f"{kind}s": {"items": [
+            {"uri": f"spotify:{kind}:1", "name": "Blue", "artists": [{"name": "Joni Mitchell"}]}]}})
+    if path == "/v1/me/player/devices":
+        return httpx.Response(200, json={"devices": world["devices"]})
+    return httpx.Response(204)
+
+
+async def spotify_checks():
+    tok = pathlib.Path(tempfile.mkdtemp()) / "token.json"
+    tok.write_text(json.dumps({"access_token": "stale-ok", "refresh_token": "keep", "expires_at": 1000 + 3600}))
+    s = spotify.Spotify("cid", tok, transport=httpx.MockTransport(spotify_api), clock=lambda: clock[0])
+
+    # Not due: no refresh. Due within a minute: one refresh, saved, refresh token kept
+    await s.devices()
+    assert [c[1] for c in calls] == ["/v1/me/player/devices"]
+    clock[0] = 1000 + 3600 - 30
+    await s.devices()
+    await s.devices()
+    assert [c[1] for c in calls].count("/api/token") == 1
+    saved = json.loads(tok.read_text())
+    assert saved["access_token"] == "fresh" and saved["refresh_token"] == "keep" and saved["expires_at"] == clock[0] + 3600
+
+    # Play a track on the speaker while it's idle: search, find it, move playback there, then play that URI
+    world["devices"] = [{"id": "phone1", "name": "Pixel", "is_active": True},
+                        {"id": "pi1", "name": "Claude Home", "is_active": False}]
+    calls.clear()
+    found = await s.play("blue joni mitchell", "track")
+    assert found == {"uri": "spotify:track:1", "name": "Blue", "by": "Joni Mitchell"}
+    assert calls == [("GET", "/v1/search", {"q": "blue joni mitchell", "type": "track", "limit": "1"}, None),
+                     ("GET", "/v1/me/player/devices", {}, None),
+                     ("PUT", "/v1/me/player", {}, {"device_ids": ["pi1"], "play": False}),
+                     ("PUT", "/v1/me/player/play", {"device_id": "pi1"}, {"uris": ["spotify:track:1"]})], calls
+
+    # Already active: no transfer; an album plays as a context
+    world["devices"][1]["is_active"] = True
+    calls.clear()
+    await s.play("blue", "album")
+    assert [c[:2] for c in calls] == [("GET", "/v1/search"), ("GET", "/v1/me/player/devices"), ("PUT", "/v1/me/player/play")]
+    assert calls[-1][3] == {"context_uri": "spotify:album:1"}
+
+    # Controls hit the right endpoints
+    calls.clear()
+    await s.pause()
+    await s.resume()
+    await s.next()
+    await s.previous()
+    assert [c[:2] for c in calls] == [("PUT", "/v1/me/player/pause"), ("PUT", "/v1/me/player/play"),
+                                      ("POST", "/v1/me/player/next"), ("POST", "/v1/me/player/previous")]
+
+    # The speaker isn't listed: a clear error, and nothing gets played
+    world["devices"] = [{"id": "phone1", "name": "Pixel", "is_active": True}]
+    calls.clear()
+    try:
+        await s.play("blue")
+        raise AssertionError("should have failed")
+    except spotify.SpotifyError as e:
+        assert "Claude Home speaker isn't showing up" in str(e), e
+    assert not any(c[1] == "/v1/me/player/play" for c in calls)
+
+    # A revoked token: one 401, a refresh, and the request goes through
+    world["revoked"] = True
+    calls.clear()
+    await s.devices()
+    assert [c[1] for c in calls] == ["/v1/me/player/devices", "/api/token", "/v1/me/player/devices"], calls
+
+    # 429: no more requests until Retry-After has passed
+    world["limit"] = True
+    for _ in range(2):
+        try:
+            await s.playback()
+            raise AssertionError("should have backed off")
+        except spotify.SpotifyError as e:
+            assert "slow down" in str(e), e
+    assert [c[1] for c in calls].count("/v1/me/player") == 1, "the second call must not reach Spotify"
+    world["limit"] = False
+    clock[0] += 31
+    assert await s.playback() is None  # 204: nothing playing
+
+    # Never connected
+    try:
+        await spotify.Spotify("cid", tok.with_name("missing.json"), transport=httpx.MockTransport(spotify_api)).devices()
+        raise AssertionError("should need a login")
+    except spotify.SpotifyError as e:
+        assert "/spotify/login" in str(e), e
+    await s.close()
+
+
+asyncio.run(spotify_checks())
 print("ok")

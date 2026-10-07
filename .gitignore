@@ -6,3 +6,4 @@ turns.jsonl
 home.db
 spotify_token.json
 .cache/
+spotify_token.json.tmp

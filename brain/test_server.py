@@ -11,6 +11,7 @@ import socket
 import tempfile
 import threading
 import time
+import urllib.parse
 
 TMP = tempfile.mkdtemp()
 PICS = os.path.join(TMP, "photos")
@@ -398,6 +399,20 @@ def main():
     assert Image.open(io.BytesIO(r.content)).size == (800, 480)
     for bad in ("..%2Fsecret.jpg", "missing.jpg", "%2E%2E%2Fsecret.jpg"):
         assert httpx.get(f"{base}/photos/{bad}").status_code == 404, bad
+
+    # Spotify login: needs a client id; sends the browser to Spotify with PKCE; a stray callback is refused
+    os.environ.pop("SPOTIFY_CLIENT_ID", None)
+    assert httpx.get(f"{base}/spotify/login").status_code == 503
+    os.environ["SPOTIFY_CLIENT_ID"] = "test-client"
+    r = httpx.get(f"{base}/spotify/login", follow_redirects=False)
+    to = urllib.parse.urlparse(r.headers["location"])
+    sent = urllib.parse.parse_qs(to.query)
+    assert r.status_code == 307 and to.netloc == "accounts.spotify.com" and sent["client_id"] == ["test-client"], r.headers
+    assert sent["state"][0] in brain.spotify_logins and sent["code_challenge_method"] == ["S256"]
+    assert httpx.get(f"{base}/spotify/callback", params={"state": "made-up", "code": "x"}).status_code == 400
+    assert httpx.get(f"{base}/spotify/callback", params={"state": sent["state"][0], "error": "access_denied"}).status_code == 400
+    assert sent["state"][0] not in brain.spotify_logins, "a used login is forgotten"
+    del os.environ["SPOTIFY_CLIENT_ID"]
 
     # A text turn: audio_start, speech audio, audio_end with follow_up
     got = asyncio.run(satellite_turn(port, "hello there"))

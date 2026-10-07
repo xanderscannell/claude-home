@@ -7,7 +7,8 @@ Run from brain/:  uv run --env-file ../.env brain.py
 Optional env: BRAIN_HOST (default localhost; set 0.0.0.0 to accept satellites from the LAN), BRAIN_PORT (8765),
               HOME_LOCATION (city name or "lat,lon", for weather), CLAUDE_HOME_DB (default brain/home.db),
               NIGHT_START / NIGHT_END (display night mode, default 22:00 / 07:00),
-              CALENDAR_<LABEL> (one secret iCal address per calendar, e.g. CALENDAR_WORK), PHOTOS_DIR.
+              CALENDAR_<LABEL> (one secret iCal address per calendar, e.g. CALENDAR_WORK), PHOTOS_DIR,
+              SPOTIFY_CLIENT_ID / SPOTIFY_DEVICE (see spotify.py).
 
 Displays connect to /display?device=<name> and follow that device's conversation (see docs/architecture.md).
 
@@ -24,6 +25,7 @@ import json
 import math
 import os
 import re
+import secrets
 import time
 import wave
 from array import array
@@ -41,6 +43,7 @@ from piper import PiperVoice
 
 import agenda
 import photos
+import spotify
 import tools
 
 RATE = 16000
@@ -480,12 +483,14 @@ async def lifespan(app: FastAPI):
                                   limits=httpx.Limits(keepalive_expiry=60))  # httpx default drops idle connections after 5 s
     if not FAKE_LLM:
         app.state.groq.get("/models").raise_for_status()  # fail fast on a bad key
+    app.state.spotify = spotify.Spotify(os.environ.get("SPOTIFY_CLIENT_ID", ""))
     loops = [asyncio.create_task(ring_timers()), asyncio.create_task(refresh_weather()),
              asyncio.create_task(refresh_agenda())]
     yield
     for task in loops:
         task.cancel()
     app.state.groq.close()
+    await app.state.spotify.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -625,6 +630,32 @@ async def display(ws: WebSocket):
 @app.get("/")
 async def root():
     return RedirectResponse("/display/")
+
+
+spotify_logins: dict[str, str] = {}  # state -> PKCE verifier, for logins in progress
+
+
+@app.get("/spotify/login")
+async def spotify_login():
+    """Open on this machine (Spotify only redirects to 127.0.0.1) to connect the household's account."""
+    if not os.environ.get("SPOTIFY_CLIENT_ID"):
+        return Response("Set SPOTIFY_CLIENT_ID in .env first.", status_code=503)
+    state, code_verifier = secrets.token_urlsafe(16), spotify.verifier()
+    spotify_logins[state] = code_verifier
+    return RedirectResponse(spotify.login_url(os.environ["SPOTIFY_CLIENT_ID"], code_verifier, state))
+
+
+@app.get("/spotify/callback")
+async def spotify_callback(state: str = "", code: str = "", error: str = ""):
+    code_verifier = spotify_logins.pop(state, None)
+    if error or not code or code_verifier is None:
+        return Response(f"Spotify login didn't finish ({error or 'unknown or expired login'}). "
+                        "Open /spotify/login to try again.", status_code=400)
+    try:
+        await app.state.spotify.exchange(code, code_verifier)
+    except spotify.SpotifyError as e:
+        return Response(str(e), status_code=502)
+    return Response("Spotify is connected. You can close this tab.")
 
 
 @app.get("/photos")
