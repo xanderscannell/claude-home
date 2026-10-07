@@ -1,0 +1,36 @@
+# systemd unit for the display on a Raspberry Pi: Chromium in kiosk mode under the cage compositor, on tty1.
+# Install:  copy kiosk.html to ~/claude-home/satellite/, then
+#           sudo cp claude-home-display.service /etc/systemd/system/
+#           sudo systemctl disable --now getty@tty1
+#           sudo systemctl enable --now claude-home-display
+# Logs:     journalctl -u claude-home-display -f
+# Screenshot (as claude-pi): XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 grim shot.png
+#
+# It starts on kiosk.html, which waits for the brain and then opens the display page, so the Pi can boot
+# before the brain PC is up. Change the brain address after the '#' (and the device name) as needed.
+[Unit]
+Description=Claude Home display (Chromium kiosk)
+After=network-online.target systemd-user-sessions.service getty@tty1.service
+Wants=network-online.target
+Conflicts=getty@tty1.service
+
+[Service]
+User=claude-pi
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty-force
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+UtmpMode=user
+# Clock and date format: Raspberry Pi OS defaults to en-GB (24-hour, day before month).
+Environment=LANG=en_US.UTF-8 LANGUAGE=en_US
+ExecStart=/usr/bin/cage -- /usr/bin/chromium --kiosk --noerrdialogs --no-first-run --disable-infobars \
+    --ozone-platform=wayland --password-store=basic --disable-features=Translate \
+    --check-for-update-interval=31536000 \
+    "file:///home/claude-pi/claude-home/satellite/kiosk.html#http://192.168.0.172:8765/display/?device=claude-pi"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

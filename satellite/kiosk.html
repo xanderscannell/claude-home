@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- Kiosk start page, loaded from the Pi itself. Waits until the brain answers, then opens the display.
+     Chromium shows a dead error page if the brain is down when it starts; this page keeps retrying instead.
+     Usage: file:///home/claude-pi/claude-home/satellite/kiosk.html#<display URL> -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Claude Home</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #13202E; color: #EEF3F7; cursor: none; }
+    body { display: grid; place-items: center; font: 20px "Inter", system-ui, sans-serif; }
+    p { opacity: .7; }
+  </style>
+</head>
+<body>
+  <p id="note">Starting Claude Home…</p>
+  <script>
+    const target = decodeURIComponent(location.hash.slice(1));
+    async function tryBrain() {
+      try {
+        // Resolves once anything answers. The timeout matters: with the brain down, the PC may drop the
+        // connection attempt silently instead of refusing it, and a fetch would hang for minutes.
+        await fetch(target, { mode: "no-cors", cache: "no-store", signal: AbortSignal.timeout(4000) });
+        location.replace(target);
+      } catch {
+        document.getElementById("note").textContent = "Waiting for Claude Home…";
+        setTimeout(tryBrain, 3000);
+      }
+    }
+    tryBrain();
+  </script>
+</body>
+</html>
