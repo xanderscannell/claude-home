@@ -89,6 +89,7 @@ function renderClock() {
   els.date.textContent = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
   els.nightTime.textContent = els.time.textContent;
   applyNight();
+  renderStrip();  // calendar events drop off the strip when they end
 }
 
 // --- Night ------------------------------------------------------------------------------------
@@ -245,6 +246,20 @@ function alarmTime(hhmm, className) {
   return out;
 }
 
+// An event's start (epoch seconds) the same way: 3:00 with a small "pm"
+function eventTime(epoch, className) {
+  const at = new Date(epoch * 1000);
+  return alarmTime(`${at.getHours()}:${String(at.getMinutes()).padStart(2, "0")}`, className);
+}
+
+// "Today", "Tomorrow", or "Friday, October 9"
+function dayTitle(day) {
+  const days = Math.round((new Date(day).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86400000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  return day.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+}
+
 // "" today, " tomorrow", or " Monday" for when an alarm next rings
 function dayWord(epoch) {
   const at = new Date(epoch * 1000), today = new Date();
@@ -287,6 +302,17 @@ function renderStrip() {
     item.type = "button";
     item.append(alarmTime(a.time, "num"), el("span", "label", `${sentence(a.label) || "Alarm"}${dayWord(a.next_ring)}`));
     item.addEventListener("click", () => send({ type: "open", sheet: "timers" }));
+    els.strip.append(item);
+  }
+  // The next thing on the calendar today: the next timed event (or the one under way), else an all-day one
+  const today = (ambient.agenda || []).filter((e) => e.end > now);
+  const next = today.find((e) => !e.all_day) || today[0];
+  if (next) {
+    const item = el("button", "item event");
+    item.type = "button";
+    if (!next.all_day) item.append(next.start <= now ? el("span", "num", "Now") : eventTime(next.start, "num"));
+    item.append(el("span", "label", next.title));
+    item.addEventListener("click", () => send({ type: "open", sheet: "agenda" }));
     els.strip.append(item);
   }
   // Tick once a second only while something is counting down (the Pi's CPU is better spent idle).
@@ -441,6 +467,37 @@ const renderers = {
     const sheet = el("div", "vol");
     sheet.append(level, row);
     return ["Volume", [sheet]];
+  },
+
+  // The days ahead in order: a heading per day, then each event at its time with the calendar it's on.
+  // Something under way says "Now"; the next thing coming up today has its time in the accent.
+  agenda: (c) => {
+    const now = Date.now() / 1000;
+    const events = c.events.filter((e) => e.end > now);
+    if (!events.length) {
+      return ["Calendar", [el("p", "quiet", "Nothing on the calendar this week."),
+                           el("p", "hint", "Events from the household's calendars show up here.")]];
+    }
+    const nextUp = events.find((e) => !e.all_day && e.start > now);
+    const nodes = [];
+    let shownDay = null;
+    for (const e of events) {
+      const day = new Date(Math.max(e.start, now) * 1000);  // under way since yesterday: today's
+      if (day.toDateString() !== shownDay) {
+        shownDay = day.toDateString();
+        nodes.push(el("h3", "day-title", dayTitle(day)));
+      }
+      const row = el("div", "event-row");
+      const when = e.all_day ? el("span", "event-when all-day", "All day")
+        : e.start <= now ? el("span", "event-when now", "Now")
+        : eventTime(e.start, "event-when");
+      if (e === nextUp && dayTitle(day) === "Today") when.classList.add("next");
+      const what = el("div", "event-what");
+      what.append(el("p", "event-title", e.title), el("p", "event-cal", e.calendar));
+      row.append(when, what);
+      nodes.push(row);
+    }
+    return ["Calendar", nodes];
   },
 
   text: (c) => {

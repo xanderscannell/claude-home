@@ -6,7 +6,8 @@ Every turn's timings are appended to turns.jsonl (CLAUDE_HOME_LOG overrides the 
 Run from brain/:  uv run --env-file ../.env brain.py
 Optional env: BRAIN_HOST (default localhost; set 0.0.0.0 to accept satellites from the LAN), BRAIN_PORT (8765),
               HOME_LOCATION (city name or "lat,lon", for weather), CLAUDE_HOME_DB (default brain/home.db),
-              NIGHT_START / NIGHT_END (display night mode, default 22:00 / 07:00).
+              NIGHT_START / NIGHT_END (display night mode, default 22:00 / 07:00),
+              CALENDAR_<LABEL> (one secret iCal address per calendar, e.g. CALENDAR_WORK), PHOTOS_DIR.
 
 Displays connect to /display?device=<name> and follow that device's conversation (see docs/architecture.md).
 
@@ -38,6 +39,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from piper import PiperVoice
 
+import agenda
 import photos
 import tools
 
@@ -54,7 +56,7 @@ SYSTEM_PROMPT = """You are Claude Home, a voice assistant on a smart speaker. Ev
 - Search the web only when you need current information, at most once per question, then answer.
 - After a web search, never list sources or links; the listener cannot see them.
 - Each user message starts with the current local time in brackets; use it when relevant, never read it back unprompted.
-- Use your tools for timers, alarms, the shopping list, weather, the speaker's volume, and remembering things. Confirm what you did in a few words.
+- Use your tools for timers, alarms, the shopping list, weather, the calendar, the speaker's volume, and remembering things. Confirm what you did in a few words.
 - When you end with a question, the speaker listens for the answer without the wake word, so only ask when you need to."""
 
 OPTIONS = ClaudeAgentOptions(
@@ -409,7 +411,16 @@ weather_now: dict | None = None  # home weather for the screens, refreshed in th
 def ambient(dev: Device) -> dict:
     """What the home screen shows besides the clock."""
     return {"type": "ambient", "weather": weather_now, "timers": tools.timer_list(dev.name),
-            "next_alarm": tools.next_alarm(dev.name), "agenda": []}
+            "next_alarm": tools.next_alarm(dev.name), "agenda": agenda.today()}
+
+
+async def refresh_agenda():
+    """The calendars every 15 minutes, in the background (big feeds take minutes to fetch). Needs CALENDAR_*."""
+    while agenda.feeds():
+        await agenda.refresh()
+        for dev in list(devices.values()):
+            await dev.show(ambient(dev))
+        await asyncio.sleep(agenda.REFRESH_S)
 
 
 async def refresh_weather():
@@ -469,7 +480,8 @@ async def lifespan(app: FastAPI):
                                   limits=httpx.Limits(keepalive_expiry=60))  # httpx default drops idle connections after 5 s
     if not FAKE_LLM:
         app.state.groq.get("/models").raise_for_status()  # fail fast on a bad key
-    loops = [asyncio.create_task(ring_timers()), asyncio.create_task(refresh_weather())]
+    loops = [asyncio.create_task(ring_timers()), asyncio.create_task(refresh_weather()),
+             asyncio.create_task(refresh_agenda())]
     yield
     for task in loops:
         task.cancel()
@@ -540,6 +552,8 @@ def sheet_card(dev: Device, sheet: str) -> dict | None:
         return tools.timers_card(dev.name)
     if sheet == "shopping":
         return tools.shopping_card()
+    if sheet == "agenda":
+        return tools.agenda_card()
     return None
 
 

@@ -1,4 +1,4 @@
-"""Claude's tools: timers, memory, shopping list, weather.
+"""Claude's tools: timers, alarms, memory, shopping list, weather, calendar, volume.
 
 To add a tool: write an async function with @tool (name, description for Claude, JSON schema of its
 arguments) inside make_tools(), and add it to the list at the bottom. Storage helpers are plain functions
@@ -10,10 +10,13 @@ import os
 import sqlite3
 import time
 from contextlib import closing
+from itertools import groupby
 from pathlib import Path
 
 import httpx
 from claude_agent_sdk import create_sdk_mcp_server, tool
+
+import agenda
 
 DB_PATH = Path(os.environ.get("CLAUDE_HOME_DB", Path(__file__).parent / "home.db"))
 SCHEMA = """
@@ -302,6 +305,31 @@ def text_card(title: str, lines: list[str]) -> dict:
     return {"kind": "text", "title": title, "lines": lines}
 
 
+def agenda_card(days: int = agenda.DAYS, now: float | None = None) -> dict:
+    return {"kind": "agenda", "events": agenda.upcoming(time.time() if now is None else now, days)}
+
+
+def day_name(day: datetime.date, today: datetime.date) -> str:
+    if day == today:
+        return "Today"
+    if day == today + datetime.timedelta(days=1):
+        return "Tomorrow"
+    return f"{day:%A}, {day:%B} {day.day}"
+
+
+def agenda_text(events: list[dict], now: float) -> str:
+    """Events grouped by day, for Claude to read out. An event already under way counts as today's."""
+    if not events:
+        return "Nothing on the calendar."
+    today = datetime.date.fromtimestamp(now)
+    parts = []
+    for day, group in groupby(events, key=lambda e: datetime.date.fromtimestamp(max(e["start"], now))):
+        items = [("all day" if e["all_day"] else spoken_time(f"{datetime.datetime.fromtimestamp(e['start']):%H:%M}"))
+                 + f": {e['title']} ({e['calendar']})" for e in group]
+        parts.append(f"{day_name(day, today)}: " + "; ".join(items))
+    return ". ".join(parts) + "."
+
+
 async def _no_screen(card: dict):
     pass
 
@@ -419,6 +447,16 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker) -> list:
         await on_card(text_card(a["title"], a["lines"]))
         return _text("Shown on the screen.")
 
+    @tool("get_agenda", "The household's calendar events (each with the calendar it's on), shown on the screen too.",
+          _schema(days={"type": "integer", "minimum": 1, "maximum": agenda.DAYS + 1,
+                        "description": "1 for the rest of today, 2 for today and tomorrow, and so on"}))
+    async def get_agenda(a):
+        if not agenda.feeds():
+            return _text("No calendars are set up.")
+        card = agenda_card(a["days"])
+        await on_card(card)
+        return _text(agenda_text(card["events"], time.time()))
+
     @tool("set_volume", "Set this speaker's volume, 0 to 100. For 'turn it up' or 'louder' use relative 10; "
           "for 'turn it down' or 'quieter', relative -10.",
           _schema(level={"type": "integer", "description": "the new level, or the change when relative"},
@@ -428,7 +466,8 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker) -> list:
         return _text("The speaker isn't connected." if level is None else f"Volume is now {level}.")
 
     return [set_timer, list_timers, cancel_timer, set_alarm, list_alarms, cancel_alarm, remember_tool, forget_tool,
-            add_shopping, remove_shopping, get_shopping, clear_shopping, get_weather, show_on_screen, set_volume]
+            add_shopping, remove_shopping, get_shopping, clear_shopping, get_weather, show_on_screen, get_agenda,
+            set_volume]
 
 
 def make_tools(device: str, on_card=_no_screen, on_volume=_no_speaker):

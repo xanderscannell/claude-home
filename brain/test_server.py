@@ -258,6 +258,14 @@ async def display_flow(port: int):
         await b.send(json.dumps({"type": "open", "sheet": "shopping"}))
         assert (await until_card(b, "shopping"))["items"] == ["Milk", "Bread"], "b sees the change when it opens"
         brain.tools.shopping_remove(["Milk", "Bread"])
+
+        # The agenda sheet opens with whatever the calendars have (no feeds here, so nothing)
+        brain.agenda.events[:] = [{"title": "Dentist", "calendar": "Family", "start": time.time() + 3600,
+                                   "end": time.time() + 7200, "all_day": False}]
+        await a.send(json.dumps({"type": "open", "sheet": "agenda"}))
+        assert [e["title"] for e in (await until_card(a, "agenda"))["events"]] == ["Dentist"]
+        assert [e["title"] for e in brain.ambient(brain.device("kitchen"))["agenda"]] in (["Dentist"], [])  # [] near midnight
+        brain.agenda.events.clear()
     for ws in (a, b, other):
         await ws.close()
 

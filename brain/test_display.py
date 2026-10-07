@@ -507,6 +507,7 @@ def test_navigation_every_screen_gets_home(b):
         "shopping": {"kind": "shopping", "items": ["Milk"]},
         "text": {"kind": "text", "title": "Note", "lines": ["Hello"]},
         "volume": {"kind": "volume", "level": 40},
+        "agenda": {"kind": "agenda", "events": []},
     }
     d = Display(b)
     home = lambda: not d.visible("#sheet") and not d.visible("#overlay")  # noqa: E731
@@ -604,6 +605,62 @@ def test_alarms_on_screen(b):
     d.push({"type": "ringing", "ringing": {"kind": "alarm", "id": 2, "label": "time for the gym", "time": "07:00"}})
     assert d.text("#ringing-label") == "Time for the gym"
     d.shot("ringing-label", settle=400)
+    d.close()
+
+
+def event(title, calendar, start, end, all_day=False):
+    return {"title": title, "calendar": calendar, "start": start.timestamp(), "end": end.timestamp(), "all_day": all_day}
+
+
+def test_agenda(b):
+    d = Display(b)
+    at = lambda day, h=0, m=0: dt.datetime(2026, 10, day, h, m)  # noqa: E731
+    recycling = event("Recycling day", "Personal", at(7), at(8), all_day=True)
+    standup = event("Standup", "Work", at(7, 9, 30), at(7, 9, 50))  # under way at 9:41
+    dentist = event("Dentist", "Personal", at(7, 15), at(7, 16))
+    swim = event("Swim lessons", "Kids Sports", at(7, 17, 30), at(7, 18, 15))
+    call = event("Call with Sam", "Work", at(8, 10), at(8, 11))
+    bday = event("Grandma's birthday", "Family", at(9), at(10), all_day=True)
+
+    # Home strip: the event under way says Now; when it ends, the next one takes its place with its time
+    timers = [{"id": 1, "label": "pasta", "ends_at": START.timestamp() + 252}]
+    alarm_next = alarm(1, "06:30", next_ring=dt.datetime(2026, 10, 8, 6, 30).timestamp())
+    d.push(dict(ambient(timers), next_alarm=alarm_next, agenda=[recycling, standup, dentist]))
+    assert d.text(".strip .event .num") == "Now" and d.text(".strip .event .label") == "Standup"
+    assert big(d.page.locator(".strip .event").bounding_box(), w=0)
+    d.shot("agenda-strip")
+    d.page.clock.run_for(10 * 60_000)  # 9:51: standup is over
+    assert d.text(".strip .event .num") == "3:00pm" and d.text(".strip .event .label") == "Dentist"
+    d.tap(".strip .event")
+    assert {"type": "open", "sheet": "agenda"} in d.sent, d.sent
+
+    # Only an all-day event left today: it shows by name alone
+    d.push(dict(ambient([], weather=None), agenda=[recycling]))
+    assert d.page.locator(".strip .event .num").count() == 0 and d.text(".strip .event .label") == "Recycling day"
+
+    # The sheet: a heading per day, times in one column, the calendar under each title
+    d.push({"type": "card", "card": {"kind": "agenda", "events": [recycling, standup, dentist, swim, call, bday]}})
+    assert d.text("#sheet-title") == "Calendar"
+    assert d.page.locator(".day-title").all_inner_texts() == ["Today", "Tomorrow", "Friday, October 9"]
+    assert d.page.locator(".event-title").all_inner_texts() == ["Recycling day", "Dentist", "Swim lessons",
+                                                                 "Call with Sam", "Grandma's birthday"], "ended events drop"
+    assert d.page.locator(".event-when").all_inner_texts() == ["All day", "3:00pm", "5:30pm", "10:00am", "All day"]
+    assert d.page.locator(".event-cal").all_inner_texts() == ["Personal", "Personal", "Kids Sports", "Work", "Family"]
+    assert d.page.locator(".event-when.next").all_inner_texts() == ["3:00pm"], "the next thing today stands out"
+    d.shot("agenda-sheet", settle=400)
+    d.page.locator(".sheet-body").evaluate("e => e.scrollTop = e.scrollHeight")
+    d.shot("agenda-sheet-scrolled", settle=100)
+
+    # Under way: Now, in the accent
+    d.page.clock.run_for(int((at(7, 15, 5) - at(7, 9, 51)).total_seconds() * 1000))
+    d.push({"type": "card", "card": {"kind": "agenda", "events": [dentist, swim]}})
+    assert d.page.locator(".event-when").all_inner_texts() == ["Now", "5:30pm"]
+    assert d.page.locator(".event-when.next").all_inner_texts() == ["5:30pm"]
+
+    # Nothing coming up
+    d.push({"type": "card", "card": {"kind": "agenda", "events": []}})
+    assert d.text(".sheet-body .quiet") == "Nothing on the calendar this week."
+    d.shot("agenda-empty", settle=200)
     d.close()
 
 

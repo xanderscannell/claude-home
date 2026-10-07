@@ -150,4 +150,56 @@ cache = pathlib.Path(tempfile.mkdtemp())
 first = photos.cached(pics / "land.jpg", cache)
 stamp = first.stat().st_mtime_ns
 assert photos.cached(pics / "land.jpg", cache) == first and first.stat().st_mtime_ns == stamp  # not re-rendered
+
+# Calendar: feeds from CALENDAR_* variables, recurrence, cancellations, all-day, another time zone
+import agenda  # noqa: E402
+import httpx  # noqa: E402
+
+assert agenda.feeds({"CALENDAR_WORK": "https://a", "CALENDAR_KIDS_SPORTS": "https://b", "CALENDAR_EMPTY": " ",
+                     "HOME_LOCATION": "x"}) == {"Kids Sports": "https://b", "Work": "https://a"}
+ICS = (pathlib.Path(__file__).parent / "test_data" / "calendar.ics").read_bytes()
+WED = datetime.date(2026, 10, 7)
+local = lambda *a: datetime.datetime(*a).timestamp()  # noqa: E731  (naive = this machine's local time)
+week = agenda.expand("Family", ICS, WED)
+got = sorted((e["title"], e["start"]) for e in week)
+assert got == sorted([
+    ("Swim lessons", local(2026, 10, 7, 17, 30)),  # weekly from September; Oct 12 is an EXDATE, Oct 14 is CANCELLED
+    ("Grandma's birthday", local(2026, 10, 9)),  # all day: local midnight
+    ("Call with Sam", datetime.datetime(2026, 10, 8, 14, 0, tzinfo=datetime.UTC).timestamp()),  # 15:00 London (BST)
+    ("Dentist", local(2026, 10, 7, 15, 0)),  # floating time: local
+]), got
+[bday] = [e for e in week if e["all_day"]]
+assert bday["title"] == "Grandma's birthday" and bday["end"] == local(2026, 10, 10) and bday["calendar"] == "Family"
+two_weeks = [e["start"] for e in agenda.expand("Family", ICS, WED, 14) if e["title"] == "Swim lessons"]
+assert two_weeks == [local(2026, 10, 7, 17, 30), local(2026, 10, 19, 17, 30), local(2026, 10, 21, 17, 30)], two_weeks
+
+
+def feed_server(failing: set):
+    def handle(request):
+        if request.url.host in failing:
+            return httpx.Response(500)
+        return httpx.Response(200, content=ICS if request.url.host == "family" else
+                              ICS.replace(b"Dentist", b"Standup").replace(b"Family", b"Work"))
+    return httpx.AsyncClient(transport=httpx.MockTransport(handle))
+
+
+env = {"CALENDAR_FAMILY": "https://family/basic.ics", "CALENDAR_WORK": "webcal://work/basic.ics"}
+asyncio.run(agenda.refresh(feed_server(set()), env))
+assert {e["calendar"] for e in agenda.events} == {"Family", "Work"} and len(agenda.events) == 8
+asyncio.run(agenda.refresh(feed_server({"work"}), env))  # Work fails: its last good copy stays
+assert sum(e["calendar"] == "Work" for e in agenda.events) == 4, agenda.events
+asyncio.run(agenda.refresh(feed_server(set()), {"CALENDAR_FAMILY": "https://family/basic.ics"}))  # Work removed
+assert {e["calendar"] for e in agenda.events} == {"Family"}
+
+# Today, upcoming, and how they're read out. At 3:30 pm: the dentist is under way, swim is next.
+agenda.events[:] = sorted(agenda.expand("Family", ICS, WED), key=lambda e: e["start"])
+at_330 = local(2026, 10, 7, 15, 30)
+assert [e["title"] for e in agenda.today(at_330)] == ["Dentist", "Swim lessons"]
+assert [e["title"] for e in agenda.today(local(2026, 10, 9, 9, 0))] == ["Grandma's birthday"]
+assert [e["title"] for e in agenda.upcoming(at_330, 2)] == ["Dentist", "Swim lessons", "Call with Sam"]
+assert tools.agenda_card(2, at_330)["events"] == agenda.upcoming(at_330, 2)
+assert tools.agenda_text(agenda.upcoming(at_330, 3), at_330) == (
+    "Today: 3 PM: Dentist (Family); 5:30 PM: Swim lessons (Family). Tomorrow: 10 AM: Call with Sam (Family). "
+    "Friday, October 9: all day: Grandma's birthday (Family).")
+assert tools.agenda_text([], at_330) == "Nothing on the calendar."
 print("ok")
