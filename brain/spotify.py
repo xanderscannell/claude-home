@@ -147,7 +147,10 @@ class Spotify:
             except (ValueError, KeyError, TypeError):
                 why = r.reason_phrase
             raise SpotifyError(f"Spotify said: {why} ({r.status_code}).")
-        return r.json()
+        try:
+            return r.json()
+        except ValueError:
+            return None  # the player commands can answer 200 with a body that isn't JSON
 
     async def devices(self) -> list[dict]:
         return (await self.call("GET", "/me/player/devices") or {}).get("devices", [])

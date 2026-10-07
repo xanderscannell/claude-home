@@ -292,6 +292,8 @@ def spotify_api(request):
         return httpx.Response(200, json={"access_token": "fresh", "expires_in": 3600})
     if world["limit"]:
         return httpx.Response(429, headers={"Retry-After": "30"})
+    if path == "/v1/me/player/pause":  # seen for real: 200 with a body that isn't JSON
+        return httpx.Response(200, content=b"\x01not json")
     if world["revoked"]:
         world["revoked"] = False
         return httpx.Response(401, json={"error": {"status": 401, "message": "The access token expired"}})
