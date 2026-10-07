@@ -5,6 +5,7 @@ arguments) inside make_tools(), and add it to the list at the bottom. Storage he
 so they can be tested without Claude.
 """
 
+import datetime
 import os
 import sqlite3
 import time
@@ -72,6 +73,12 @@ def timers(device: str) -> list[tuple[str, float]]:
             q("SELECT label, ends_at FROM timers WHERE device = ? ORDER BY ends_at", device)]
 
 
+def timer_list(device: str) -> list[dict]:
+    """A device's running timers for the screen, soonest first; the screen counts down from ends_at."""
+    return [{"id": i, "label": label, "ends_at": ends} for i, label, ends in
+            q("SELECT id, label, ends_at FROM timers WHERE device = ? ORDER BY ends_at", device)]
+
+
 def timer_cancel(device: str, label: str) -> int:
     """Cancel timers whose label contains label (all of the device's timers if empty). Returns how many."""
     return len(q("DELETE FROM timers WHERE device = ? AND instr(lower(label), lower(?)) RETURNING id", device, label))
@@ -114,7 +121,32 @@ async def locate(http: httpx.AsyncClient, place: str) -> tuple[str, float, float
     return ", ".join(x for x in (h["name"], h.get("admin1"), h.get("country")) if x), h["latitude"], h["longitude"]
 
 
-async def weather(place: str) -> str:
+def parse_forecast(name: str, d: dict) -> dict:
+    """An Open-Meteo response as the weather the screen and Claude use (Fahrenheit, mph, rounded)."""
+    c, day = d["current"], d["daily"]
+    labels = ["Today", "Tomorrow", datetime.date.fromisoformat(day["time"][2]).strftime("%A")]
+    return {
+        "place": name,
+        "now": {"temp": round(c["temperature_2m"]), "feels": round(c["apparent_temperature"]),
+                "condition": WMO.get(c["weather_code"], "unknown"), "code": c["weather_code"],
+                "wind": round(c["wind_speed_10m"])},
+        "days": [{"label": label, "condition": WMO.get(day["weather_code"][i], "unknown"),
+                  "code": day["weather_code"][i], "high": round(day["temperature_2m_max"][i]),
+                  "low": round(day["temperature_2m_min"][i]), "rain": day["precipitation_probability_max"][i] or 0}
+                 for i, label in enumerate(labels)],
+    }
+
+
+def weather_text(w: dict) -> str:
+    """The weather as plain lines for Claude to speak from."""
+    n = w["now"]
+    lines = [f"{w['place']}, now: {n['temp']}F (feels {n['feels']}F), {n['condition']}, wind {n['wind']} mph"]
+    lines += [f"{d['label'].lower()}: {d['condition']}, high {d['high']}F, low {d['low']}F, "
+              f"{d['rain']}% chance of rain" for d in w["days"]]
+    return "\n".join(lines)
+
+
+async def weather_data(place: str) -> dict:
     async with httpx.AsyncClient(timeout=10) as http:
         name, lat, lon = await locate(http, place)
         r = await http.get("https://api.open-meteo.com/v1/forecast", params={
@@ -122,14 +154,7 @@ async def weather(place: str) -> str:
             "temperature_unit": "fahrenheit", "wind_speed_unit": "mph",
             "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m",
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"})
-        d = r.raise_for_status().json()
-    c, day = d["current"], d["daily"]
-    lines = [f"{name}, now: {c['temperature_2m']:.0f}F (feels {c['apparent_temperature']:.0f}F), "
-             f"{WMO.get(c['weather_code'], 'unknown')}, wind {c['wind_speed_10m']:.0f} mph"]
-    for i, label in enumerate(["today", "tomorrow", day["time"][2]]):
-        lines.append(f"{label}: {WMO.get(day['weather_code'][i], 'unknown')}, high {day['temperature_2m_max'][i]:.0f}F, "
-                     f"low {day['temperature_2m_min'][i]:.0f}F, {day['precipitation_probability_max'][i]}% chance of rain")
-    return "\n".join(lines)
+        return parse_forecast(name, r.raise_for_status().json())
 
 
 # --- Tools Claude can call ----------------------------------------------------------------------
@@ -204,7 +229,7 @@ def make_tools(device: str):
         if not place:
             return _text("Home location isn't configured (HOME_LOCATION). Ask which city.")
         try:
-            return _text(await weather(place))
+            return _text(weather_text(await weather_data(place)))
         except (LookupError, httpx.HTTPError) as e:
             return _text(f"Weather lookup failed: {e}")
 

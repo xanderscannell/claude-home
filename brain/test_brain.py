@@ -1,5 +1,7 @@
 """Run: uv run python test_brain.py"""
+import json
 import os
+import pathlib
 import tempfile
 
 os.environ["CLAUDE_HOME_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")  # before importing tools
@@ -45,4 +47,26 @@ assert tools.timer_cancel("kitchen", "PAS") == 1 and tools.timers("kitchen") == 
 assert tools.timer_cancel("office", "") == 1
 assert tools.spoken_duration(3725) == "1 hour 2 minutes 5 seconds"
 assert tools.spoken_duration(60) == "1 minute"
+
+# Timers for the screen: ids, labels, end times, soonest first, per device
+tools.timer_add("hall", "tea", 300)
+tools.timer_add("hall", "", 60)
+listed = tools.timer_list("hall")
+assert [t["label"] for t in listed] == ["", "tea"] and all({"id", "label", "ends_at"} == t.keys() for t in listed)
+assert listed[0]["ends_at"] < listed[1]["ends_at"] and tools.timer_list("nowhere") == []
+tools.timer_cancel("hall", "")
+
+# Weather: a real Open-Meteo response (New York, captured 2026-10-07) parsed for the screen and for Claude
+raw = json.load(open(pathlib.Path(__file__).parent / "test_data" / "openmeteo.json"))
+w = tools.parse_forecast("New York", raw)
+assert w["now"] == {"temp": 47, "feels": 43, "condition": "clear", "code": 0, "wind": 3}, w["now"]
+assert [d["label"] for d in w["days"]] == ["Today", "Tomorrow", "Friday"], w["days"]
+assert w["days"][1] == {"label": "Tomorrow", "condition": "overcast", "code": 3, "high": 76, "low": 56, "rain": 2}
+assert tools.weather_text(w).splitlines() == [
+    "New York, now: 47F (feels 43F), clear, wind 3 mph",
+    "today: clear, high 65F, low 44F, 1% chance of rain",
+    "tomorrow: overcast, high 76F, low 56F, 2% chance of rain",
+    "friday: overcast, high 74F, low 61F, 0% chance of rain"]
+raw["daily"]["precipitation_probability_max"][0] = None  # Open-Meteo sends null when it has no estimate
+assert tools.parse_forecast("X", raw)["days"][0]["rain"] == 0
 print("ok")

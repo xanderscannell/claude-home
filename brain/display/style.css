@@ -54,7 +54,15 @@ body.talking .home { opacity: 0; pointer-events: none; }
 }
 .menu svg { width: 22px; height: 22px; fill: currentColor; stroke: none; }
 
-.weather { position: absolute; top: 22px; right: var(--edge); text-align: right; text-shadow: var(--on-photo); }
+.weather { position: absolute; top: 14px; right: calc(var(--edge) - 8px); text-shadow: var(--on-photo); }
+.weather-button { display: block; text-align: right; padding: 8px; min-width: 64px; min-height: 64px; }
+.weather .temp {
+  display: block;
+  font: 380 54px/1 var(--far);
+  font-variation-settings: "opsz" 72, "SOFT" 100;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+.weather .condition { display: block; font-size: 17px; margin-top: 4px; opacity: .92; }
 
 .clock { position: absolute; left: var(--edge); bottom: 92px; text-shadow: var(--on-photo); }
 .time {
@@ -66,11 +74,21 @@ body.talking .home { opacity: 0; pointer-events: none; }
 }
 .date { font-size: 22px; opacity: .88; margin-top: 10px; padding-left: 4px; }
 
+/* Glanceable items under the date. Each is a full-height (64 px) tap target; the text sits where the
+   design puts it, 30 px off the bottom edge. */
 .strip {
-  position: absolute; left: calc(var(--edge) + 4px); right: 130px; bottom: 30px;
+  position: absolute; left: calc(var(--edge) + 4px); right: 130px; bottom: 12px;
   display: flex; gap: 34px; align-items: baseline;
   font-size: 18px; text-shadow: var(--on-photo); white-space: nowrap; overflow: hidden;
 }
+.strip .item { display: flex; align-items: baseline; gap: 8px; min-height: 64px; padding: 18px 0; }
+.strip .num {
+  font: 400 24px/1 var(--far);
+  font-variation-settings: "opsz" 24, "SOFT" 100;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  color: var(--accent);
+}
+.strip .label { font-size: 18px; }
 
 .mic {
   position: absolute; right: 26px; bottom: 22px;

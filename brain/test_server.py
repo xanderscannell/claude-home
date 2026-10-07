@@ -82,6 +82,7 @@ async def open_display(port: int, name: str):
     ws = await websockets.connect(f"ws://127.0.0.1:{port}/display?device={name}")
     hello, ambient, state = [await recv_json(ws) for _ in range(3)]
     assert hello["type"] == "hello" and hello["device"] == name and hello["night"] == {"start": "22:00", "end": "07:00"}, hello
+    assert hello["version"] == brain.DISPLAY_VERSION and hello["version"].isdigit(), hello
     assert ambient["type"] == "ambient" and {"weather", "timers", "next_alarm", "agenda"} <= ambient.keys(), ambient
     assert state == {"type": "state", "state": "idle"}, state
     return ws
@@ -166,6 +167,14 @@ async def display_flow(port: int):
         await a.send(json.dumps({"type": "text", "text": "hello again"}))
         await play_out(sat)
         assert {"type": "reply", "text": "That is all."} in await until_idle(a)
+        # A timer set (as Claude's tool would) shows up on the kitchen screens within a second, and goes away
+        brain.tools.timer_add("kitchen", "pasta", 600)
+        m = await recv_json(a, timeout=3)
+        assert m["type"] == "ambient" and [t["label"] for t in m["timers"]] == ["pasta"], m
+        assert abs(m["timers"][0]["ends_at"] - (time.time() + 600)) < 5, m["timers"]
+        brain.tools.timer_cancel("kitchen", "pasta")
+        m = await recv_json(a, timeout=3)
+        assert m["type"] == "ambient" and m["timers"] == [], m
     for ws in (a, b, other):
         await ws.close()
 

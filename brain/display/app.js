@@ -7,7 +7,7 @@ const wsUrl = params.get("ws") || `${location.protocol === "https:" ? "wss" : "w
 
 const $ = (id) => document.getElementById(id);
 const els = {
-  time: $("time"), date: $("date"), mic: $("mic"), menu: $("menu"),
+  time: $("time"), date: $("date"), mic: $("mic"), menu: $("menu"), weather: $("weather"), strip: $("strip"),
   overlay: $("overlay"), heard: $("heard"), reply: $("reply"), stop: $("stop"), close: $("close-overlay"),
   offline: $("offline"),
 };
@@ -46,12 +46,18 @@ function send(msg) {
 
 // --- Messages from the brain ------------------------------------------------------------------
 
+let pageVersion = null;
+
 const handlers = {
-  hello: () => {},
+  // A brain restarted with different display code: load it (the kiosk would otherwise keep the old page).
+  hello: (m) => {
+    if (pageVersion === null) pageVersion = m.version;
+    else if (m.version !== pageVersion) location.reload();
+  },
   state: (m) => setState(m.state),
   heard: (m) => { els.heard.textContent = m.text; },
   reply: (m) => addReply(m.text),
-  ambient: () => {},
+  ambient: (m) => { ambient = m; renderWeather(); renderStrip(); },
 };
 
 function handle(msg) {
@@ -72,6 +78,66 @@ function startClock() {
   const now = new Date();
   const toNextMinute = 60000 - (now.getSeconds() * 1000 + now.getMilliseconds());
   setTimeout(() => { renderClock(); setInterval(renderClock, 60000); }, toNextMinute + 50);
+}
+
+// --- Home: weather and the glanceable strip ---------------------------------------------------
+
+let ambient = { weather: null, timers: [] };
+let ticker = null;
+
+function el(tag, className, text) {
+  const e = document.createElement(tag);
+  if (className) e.className = className;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+const sentence = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
+function renderWeather() {
+  const w = ambient.weather;
+  els.weather.replaceChildren();
+  if (!w) return;
+  const button = el("button", "weather-button");
+  button.type = "button";
+  button.setAttribute("aria-label", `Weather: ${w.now.temp} degrees, ${w.now.condition}`);
+  button.append(el("span", "temp", `${w.now.temp}°`),
+                el("span", "condition", `${sentence(w.now.condition)}, high ${w.days[0].high}`));
+  button.addEventListener("click", () => send({ type: "open", sheet: "weather" }));
+  els.weather.append(button);
+}
+
+// m:ss under an hour, h:mm:ss over
+function countdown(seconds) {
+  const s = Math.max(0, Math.ceil(seconds));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
+}
+
+function renderStrip() {
+  els.strip.replaceChildren();
+  const now = Date.now() / 1000;
+  const running = ambient.timers.filter((t) => t.ends_at > now);
+  for (const t of running) {
+    const item = el("button", "item timer");
+    item.type = "button";
+    item.dataset.endsAt = t.ends_at;
+    item.append(el("span", "num", countdown(t.ends_at - now)), el("span", "label", sentence(t.label) || "Timer"));
+    item.addEventListener("click", () => send({ type: "open", sheet: "timers" }));
+    els.strip.append(item);
+  }
+  // Tick once a second only while something is counting down (the Pi's CPU is better spent idle).
+  if (running.length && !ticker) ticker = setInterval(tick, 1000);
+  if (!running.length && ticker) { clearInterval(ticker); ticker = null; }
+}
+
+function tick() {
+  const now = Date.now() / 1000;
+  for (const item of els.strip.querySelectorAll(".timer")) {
+    const left = Number(item.dataset.endsAt) - now;
+    if (left <= 0) { renderStrip(); return; }  // finished: drop it (the brain rings and confirms)
+    item.querySelector(".num").textContent = countdown(left);
+  }
 }
 
 // --- Conversation overlay ---------------------------------------------------------------------

@@ -148,6 +148,44 @@ def test_long_reply_fits(b):
     d.close()
 
 
+WEATHER = {"place": "New York", "now": {"temp": 47, "feels": 43, "condition": "clear", "code": 0, "wind": 3},
+           "days": [{"label": "Today", "condition": "clear", "code": 0, "high": 65, "low": 44, "rain": 1},
+                    {"label": "Tomorrow", "condition": "overcast", "code": 3, "high": 76, "low": 56, "rain": 2},
+                    {"label": "Friday", "condition": "overcast", "code": 3, "high": 74, "low": 61, "rain": 0}]}
+
+
+def ambient(timers=(), weather=WEATHER):
+    return {"type": "ambient", "weather": weather, "timers": list(timers), "next_alarm": None, "agenda": []}
+
+
+def test_weather_and_timers(b):
+    d = Display(b)
+    t0 = START.timestamp()
+    d.push(ambient([{"id": 2, "label": "", "ends_at": t0 + 75}, {"id": 1, "label": "pasta", "ends_at": t0 + 252}]))
+    assert d.text(".weather .temp") == "47°" and d.text(".weather .condition") == "Clear, high 65"
+    nums, labels = d.page.locator(".strip .num").all_inner_texts(), d.page.locator(".strip .label").all_inner_texts()
+    assert labels == ["Timer", "Pasta"] and nums == ["1:15", "4:12"], (labels, nums)
+    for selector in (".weather-button", ".strip .item"):
+        box = d.page.locator(selector).first.bounding_box()
+        assert box["height"] >= 64 and box["width"] >= 64, (selector, box)
+    d.shot("weather-timers")
+
+    d.page.clock.run_for(60_000)
+    assert d.page.locator(".strip .num").all_inner_texts() == ["0:15", "3:12"]
+    d.page.clock.run_for(20_000)  # the unnamed timer finishes and leaves the strip
+    assert d.page.locator(".strip .label").all_inner_texts() == ["Pasta"]
+
+    d.tap(".weather-button")
+    d.tap(".strip .item")
+    assert {"type": "open", "sheet": "weather"} in d.sent and {"type": "open", "sheet": "timers"} in d.sent, d.sent
+
+    # Long timers read as h:mm:ss; no weather yet means no weather block at all
+    d.push(ambient([{"id": 3, "label": "roast", "ends_at": t0 + 80 + 3725}], weather=None))
+    assert d.page.locator(".strip .num").all_inner_texts() == ["1:02:05"]
+    assert d.page.locator(".weather-button").count() == 0
+    d.close()
+
+
 def test_touch_controls(b):
     d = Display(b)
     d.tap("#mic")
@@ -157,6 +195,17 @@ def test_touch_controls(b):
     d.push({"type": "state", "state": "speaking"})
     d.tap("#close-overlay")
     assert not d.visible("#overlay"), "close didn't dismiss the overlay"
+    d.close()
+
+
+def test_reloads_for_new_display_code(b):
+    d = Display(b)
+    d.push({"type": "hello", "device": "test", "version": "100", "night": {"start": "22:00", "end": "07:00"}})
+    d.page.evaluate("window.__sameDocument = true")
+    d.push({"type": "hello", "device": "test", "version": "100", "night": {"start": "22:00", "end": "07:00"}})
+    assert d.page.evaluate("window.__sameDocument === true"), "reloaded although the version didn't change"
+    d.push({"type": "hello", "device": "test", "version": "101", "night": {"start": "22:00", "end": "07:00"}})
+    d.wait_until(lambda: d.page.evaluate("window.__sameDocument !== true"), "didn't reload for new display code")
     d.close()
 
 

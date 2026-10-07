@@ -321,10 +321,41 @@ async def _turn(dev: Device, pcm: bytes, text: str | None):
 
 # --- Server --------------------------------------------------------------------------------------
 
+weather_now: dict | None = None  # home weather for the screens, refreshed in the background
+
+
+def ambient(dev: Device) -> dict:
+    """What the home screen shows besides the clock."""
+    return {"type": "ambient", "weather": weather_now, "timers": tools.timer_list(dev.name),
+            "next_alarm": None, "agenda": []}
+
+
+async def refresh_weather():
+    """Home weather every 15 minutes (2 after a failure). Needs HOME_LOCATION; screens get it as it arrives."""
+    global weather_now
+    place = os.environ.get("HOME_LOCATION")
+    while place:
+        try:
+            weather_now = await tools.weather_data(place)
+        except (httpx.HTTPError, LookupError, KeyError, ValueError) as e:
+            print(f"weather refresh failed ({type(e).__name__}); retrying in 2 minutes")
+            await asyncio.sleep(120)
+            continue
+        for dev in list(devices.values()):
+            await dev.show(ambient(dev))
+        await asyncio.sleep(900)
+
+
 async def ring_timers():
-    """Timers live in SQLite, so they survive restarts; overdue ones ring once a satellite connects."""
+    """Timers live in SQLite, so they survive restarts; overdue ones ring once a satellite connects.
+    Also keeps screens' timer lists current, whatever changed them (Claude's tools, a finish, a cancel)."""
+    shown: dict[str, list] = {}
     while True:
         await asyncio.sleep(0.5)
+        for dev in list(devices.values()):
+            if dev.displays and (now := tools.timer_list(dev.name)) != shown.get(dev.name, []):
+                shown[dev.name] = now
+                await dev.show(ambient(dev))
         connected = [d for d in devices.values() if d.sat is not None]
         if not connected:
             continue
@@ -342,9 +373,10 @@ async def lifespan(app: FastAPI):
                                   limits=httpx.Limits(keepalive_expiry=60))  # httpx default drops idle connections after 5 s
     if not FAKE_LLM:
         app.state.groq.get("/models").raise_for_status()  # fail fast on a bad key
-    timers = asyncio.create_task(ring_timers())
+    loops = [asyncio.create_task(ring_timers()), asyncio.create_task(refresh_weather())]
     yield
-    timers.cancel()
+    for task in loops:
+        task.cancel()
     app.state.groq.close()
 
 
@@ -414,16 +446,19 @@ async def from_display(dev: Device, m: dict):
         await send(dev.sat, json.dumps({"type": "volume", "level": max(0, min(100, int(m["level"])))}))
 
 
+# Screens reload themselves when this changes, so a kiosk picks up new display code after a brain restart.
+DISPLAY_VERSION = str(int(max(f.stat().st_mtime for f in (HERE / "display").rglob("*") if f.is_file())))
+
+
 @app.websocket("/display")
 async def display(ws: WebSocket):
     await ws.accept()
     dev = device(ws.query_params.get("device", "unknown"))
     dev.displays.add(ws)
     try:
-        await ws.send_text(json.dumps({"type": "hello", "device": dev.name, "night": {
+        await ws.send_text(json.dumps({"type": "hello", "device": dev.name, "version": DISPLAY_VERSION, "night": {
             "start": os.environ.get("NIGHT_START", "22:00"), "end": os.environ.get("NIGHT_END", "07:00")}}))
-        await ws.send_text(json.dumps({"type": "ambient", "weather": None, "timers": [], "next_alarm": None,
-                                       "agenda": []}))
+        await ws.send_text(json.dumps(ambient(dev)))
         await ws.send_text(json.dumps({"type": "state", "state": dev.state}))
         if dev.volume is not None:
             await ws.send_text(json.dumps({"type": "volume", "level": dev.volume}))
