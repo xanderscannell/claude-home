@@ -26,7 +26,7 @@ from piper import PiperVoice
 
 RATE = 16000
 HERE = Path(__file__).parent
-VOICE = HERE / "voices" / "en_US-lessac-medium.onnx"
+VOICE = HERE / "voices" / "en_GB-northern_english_male-medium.onnx"
 LOG = HERE / "turns.jsonl"
 
 SYSTEM_PROMPT = """You are Claude Home, a voice assistant on a smart speaker. Everything you write is spoken aloud.
