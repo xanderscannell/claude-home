@@ -62,6 +62,16 @@ SENTENCE_END = re.compile(r"[.!?]+[\"')\]]*\s+|\n+")
 ABBREV = re.compile(r"(?:\b(?:Dr|Mr|Mrs|Ms|Jr|Sr|St|Mt|vs|etc|approx|e\.g|i\.e)|\b[A-HJ-Z])\.\s+$")
 
 
+# Piper reads these literally ("Jr." -> "jay are") and treats their period as a sentence end (a pause).
+SPOKEN = {"Dr.": "Doctor", "Mr.": "Mister", "Mrs.": "Missus", "Ms.": "Miz", "Jr.": "Junior", "Sr.": "Senior",
+          "Mt.": "Mount", "vs.": "versus", "etc.": "et cetera", "e.g.": "for example", "i.e.": "that is"}
+SPOKEN_RE = re.compile(r"(?<!\w)(" + "|".join(map(re.escape, SPOKEN)) + r")(?!\w)")
+
+
+def for_speech(s: str) -> str:
+    return SPOKEN_RE.sub(lambda m: SPOKEN[m.group(1)], s)
+
+
 def pop_sentences(buf: str) -> tuple[list[str], str]:
     """Split complete sentences off the front of buf. Returns (sentences, remainder)."""
     out, start = [], 0
@@ -129,7 +139,7 @@ def play(voice: PiperVoice, stream: sd.OutputStream, sentences: queue.Queue) -> 
     """Synthesize and play sentences until None. Returns perf_counter time of first audio."""
     first = None
     while (s := sentences.get()) is not None:
-        for chunk in voice.synthesize(s):
+        for chunk in voice.synthesize(for_speech(s)):
             first = first or time.perf_counter()
             stream.write(chunk.audio_int16_array)
     return first
