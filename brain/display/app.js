@@ -80,6 +80,82 @@ function startClock() {
   setTimeout(() => { renderClock(); setInterval(renderClock, 60000); }, toNextMinute + 50);
 }
 
+// --- Photos -----------------------------------------------------------------------------------
+
+const PHOTO_SECONDS = 30;
+let photoList = [];
+let photoIndex = 0;
+let frontLayer = $("photo-a");
+
+async function loadPhotoList() {
+  try {
+    const r = await fetch("/photos", { cache: "no-store" });
+    photoList = r.ok ? await r.json() : [];
+  } catch {
+    photoList = [];
+  }
+  photoIndex = 0;
+}
+
+// Load the next photo off-screen, then crossfade to it and take its accent color.
+async function nextPhoto() {
+  if (photoIndex >= photoList.length) await loadPhotoList();  // each lap reshuffles and picks up new photos
+  if (!photoList.length) return;
+  const img = new Image();
+  img.onload = () => {
+    const back = frontLayer === $("photo-a") ? $("photo-b") : $("photo-a");
+    back.style.backgroundImage = `url("${img.src}")`;
+    back.classList.add("shown");
+    frontLayer.classList.remove("shown");
+    frontLayer = back;
+    setAccent(photoAccent(img));
+  };
+  img.src = `/photos/${encodeURIComponent(photoList[photoIndex++])}`;
+}
+
+function setAccent(color) {
+  if (color) document.documentElement.style.setProperty("--accent", color);
+  else document.documentElement.style.removeProperty("--accent");
+}
+
+// The photo's most colorful mid-tone, clamped so it always reads as an accent against night and frost.
+function photoAccent(img) {
+  let px;
+  try {
+    const c = document.createElement("canvas");
+    c.width = c.height = 8;
+    const g = c.getContext("2d", { willReadFrequently: true });
+    g.drawImage(img, 0, 0, 8, 8);
+    px = g.getImageData(0, 0, 8, 8).data;
+  } catch {
+    return null;
+  }
+  let best = null;
+  for (let i = 0; i < px.length; i += 4) {
+    const [h, s, l] = hsl(px[i], px[i + 1], px[i + 2]);
+    if (l < 0.18 || l > 0.88) continue;
+    const score = s * (1 - Math.abs(l - 0.55));
+    if (!best || score > best.score) best = { h, s, l, score };
+  }
+  if (!best || best.s < 0.15) return null;  // a grey photo: keep marigold
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  return `hsl(${Math.round(best.h)} ${Math.round(clamp(best.s, 0.45, 0.75) * 100)}% ${Math.round(clamp(best.l, 0.55, 0.7) * 100)}%)`;
+}
+
+function hsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+  if (!d) return [0, 0, l];
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [(h * 60 + 360) % 360, s, l];
+}
+
+function startPhotos() {
+  nextPhoto();
+  setInterval(nextPhoto, PHOTO_SECONDS * 1000);
+}
+
 // --- Home: weather and the glanceable strip ---------------------------------------------------
 
 let ambient = { weather: null, timers: [] };
@@ -196,4 +272,5 @@ els.stop.addEventListener("click", () => send({ type: "stop" }));
 els.close.addEventListener("click", hideOverlay);
 
 startClock();
+startPhotos();
 connect();

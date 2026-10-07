@@ -33,7 +33,19 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
 svg { display: block; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 [hidden] { display: none !important; }
 
-/* The room: until photos arrive (item 7), a calm night gradient. */
+/* The room: the family's photos, crossfading, over a calm night gradient (all you see with no photos).
+   The scrim keeps the clock and strip legible: dark at the bottom, a light touch at the top for the weather. */
+.photo {
+  position: fixed; inset: 0;
+  background: center / cover no-repeat;
+  opacity: 0; transition: opacity 2s ease;
+}
+.photo.shown { opacity: 1; }
+.scrim {
+  position: fixed; inset: 0;
+  background: linear-gradient(180deg, rgba(19, 32, 46, .38) 0%, rgba(19, 32, 46, 0) 28%,
+                              rgba(19, 32, 46, 0) 40%, rgba(19, 32, 46, .88) 100%);
+}
 .backdrop {
   position: fixed; inset: 0;
   background:
@@ -50,7 +62,7 @@ body.talking .home { opacity: 0; pointer-events: none; }
 .menu {
   position: absolute; top: 14px; left: 14px;
   width: 64px; height: 64px; display: grid; place-items: center;
-  color: var(--frost); opacity: .55;
+  color: var(--frost); opacity: .8;  /* quiet, but it must survive a busy photo behind it */
 }
 .menu svg { width: 22px; height: 22px; fill: currentColor; stroke: none; }
 

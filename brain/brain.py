@@ -34,10 +34,11 @@ import httpx
 import uvicorn
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, StreamEvent
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from piper import PiperVoice
 
+import photos
 import tools
 
 RATE = 16000
@@ -476,6 +477,23 @@ async def display(ws: WebSocket):
 @app.get("/")
 async def root():
     return RedirectResponse("/display/")
+
+
+@app.get("/photos")
+async def photo_list():
+    return JSONResponse(photos.names())
+
+
+@app.get("/photos/{name}")
+async def photo(name: str):
+    src = photos.find(name)
+    if src is None:
+        return Response(status_code=404)
+    try:
+        return FileResponse(await asyncio.to_thread(photos.cached, src), media_type="image/jpeg",
+                            headers={"Cache-Control": "max-age=86400"})
+    except OSError:  # unreadable or not really an image
+        return Response(status_code=404)
 
 
 # Mounted last: routes above (including the WebSocket ones) match first.

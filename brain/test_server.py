@@ -3,6 +3,7 @@
 Run: uv run python test_server.py
 """
 import asyncio
+import io
 import json
 import logging
 import os
@@ -12,12 +13,14 @@ import threading
 import time
 
 TMP = tempfile.mkdtemp()
+PICS = os.path.join(TMP, "photos")
 os.environ.update(CLAUDE_HOME_FAKE_LLM="1", CLAUDE_HOME_DB=os.path.join(TMP, "test.db"),
-                  CLAUDE_HOME_LOG=os.path.join(TMP, "turns.jsonl"))  # before importing the brain
+                  CLAUDE_HOME_LOG=os.path.join(TMP, "turns.jsonl"), PHOTOS_DIR=PICS)  # before importing the brain
 
 import httpx  # noqa: E402
 import uvicorn  # noqa: E402
 import websockets  # noqa: E402
+from PIL import Image  # noqa: E402
 
 import brain  # noqa: E402
 
@@ -188,6 +191,17 @@ def main():
     assert r.status_code == 200 and "Claude Home" in r.text, r.status_code
     r = httpx.get(f"{base}/", follow_redirects=False)
     assert r.status_code in (302, 307) and r.headers["location"] == "/display/", (r.status_code, r.headers)
+
+    # Photos: the list, a screen-sized JPEG, and nothing outside the folder
+    os.makedirs(PICS)
+    Image.new("RGB", (1200, 900), "teal").save(os.path.join(PICS, "beach day.jpg"))
+    open(os.path.join(TMP, "secret.jpg"), "wb").write(b"not yours")
+    assert httpx.get(f"{base}/photos").json() == ["beach day.jpg"]
+    r = httpx.get(f"{base}/photos/beach%20day.jpg")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg", r.status_code
+    assert Image.open(io.BytesIO(r.content)).size == (800, 480)
+    for bad in ("..%2Fsecret.jpg", "missing.jpg", "%2E%2E%2Fsecret.jpg"):
+        assert httpx.get(f"{base}/photos/{bad}").status_code == 404, bad
 
     # A text turn: audio_start, speech audio, audio_end with follow_up
     got = asyncio.run(satellite_turn(port, "hello there"))

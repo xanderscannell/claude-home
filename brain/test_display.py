@@ -4,12 +4,15 @@ Run: uv run python test_display.py
 Screenshots: set SCREENS_DIR (and optionally SCREENS_PREFIX) to save one PNG per state.
 """
 import datetime as dt
+import io
 import json
 import mimetypes
 import os
 import pathlib
 import time
+import urllib.parse
 
+from PIL import Image, ImageDraw
 from playwright.sync_api import sync_playwright
 
 DISPLAY = pathlib.Path(__file__).parent / "display"
@@ -22,10 +25,12 @@ START = dt.datetime(2026, 10, 7, 9, 41, 0)  # a Wednesday morning, local time
 class Display:
     """One page with a fake brain on the other end of its socket."""
 
-    def __init__(self, browser, start=START, ws=None):
+    def __init__(self, browser, start=START, ws=None, photos=None):
         """ws: point the page's socket at this URL instead of the fake brain (e.g. a port nobody listens on).
-        Refusing a mocked socket from inside its handler deadlocks Playwright's sync API, so offline is real."""
+        Refusing a mocked socket from inside its handler deadlocks Playwright's sync API, so offline is real.
+        photos: {name: JPEG bytes} served at /photos, in this order (default: none)."""
         self.sent, self.sockets, self.errors = [], [], []
+        self.photos = photos or {}
         self.ctx = browser.new_context(viewport={"width": 800, "height": 480}, has_touch=True,
                                        locale="en-US", timezone_id="America/New_York")
         self.page = self.ctx.new_page()
@@ -44,7 +49,13 @@ class Display:
             self.page.wait_for_timeout(500)  # real time for the first refusal to arrive before fast-forwarding
 
     def _serve(self, route):
-        path = route.request.url.split("?")[0].removeprefix(f"{ORIGIN}/display/")
+        rel = route.request.url.split("?")[0].removeprefix(ORIGIN)
+        if rel == "/photos":
+            return route.fulfill(json=list(self.photos))
+        if rel.startswith("/photos/"):
+            name = urllib.parse.unquote(rel.removeprefix("/photos/"))
+            return route.fulfill(body=self.photos[name], content_type="image/jpeg")
+        path = rel.removeprefix("/display/")
         file = (DISPLAY / path).resolve()
         if DISPLAY.resolve() not in file.parents or not file.is_file():
             return route.fulfill(status=404, body="not found")
@@ -75,9 +86,10 @@ class Display:
     def text(self, selector) -> str:
         return self.page.inner_text(selector)
 
-    def shot(self, name):
+    def shot(self, name, settle=300):
+        """settle: real milliseconds for CSS transitions to finish (they don't follow page.clock)."""
         if SHOTS:
-            self.page.wait_for_timeout(300)  # let fades finish
+            self.page.wait_for_timeout(settle)
             self.page.screenshot(path=os.path.join(SHOTS, f"{PREFIX}-{name}.png"))
 
     def close(self):
@@ -184,6 +196,57 @@ def test_weather_and_timers(b):
     assert d.page.locator(".strip .num").all_inner_texts() == ["1:02:05"]
     assert d.page.locator(".weather-button").count() == 0
     d.close()
+
+
+def photo(top, bottom) -> bytes:
+    """A screen-sized JPEG fading from one color to another, like a sky over ground."""
+    im = Image.new("RGB", (800, 480))
+    draw = ImageDraw.Draw(im)
+    for y in range(480):
+        t = y / 479
+        draw.line([(0, y), (800, y)], fill=tuple(round(a + (b - a) * t) for a, b in zip(top, bottom)))
+    out = io.BytesIO()
+    im.save(out, "JPEG", quality=85)
+    return out.getvalue()
+
+
+def accent(d) -> str:
+    return d.page.evaluate("getComputedStyle(document.getElementById('mic')).backgroundColor")
+
+
+MARIGOLD = "rgb(242, 181, 68)"
+
+
+def test_slideshow_and_accent(b):
+    # No photos: the night gradient, marigold, no photo layer shown
+    d = Display(b)
+    d.page.wait_for_timeout(300)
+    assert d.page.locator(".photo.shown").count() == 0 and accent(d) == MARIGOLD
+    d.close()
+
+    sunset = photo((236, 120, 60), (60, 30, 50))
+    lake = photo((90, 150, 220), (20, 40, 70))
+    d = Display(b, photos={"sunset.jpg": sunset, "lake.jpg": lake})
+    d.wait_until(lambda: d.page.locator(".photo.shown").count() == 1, "first photo never appeared")
+    assert "sunset.jpg" in d.page.get_attribute(".photo.shown", "style")
+    warm = accent(d)
+    assert warm != MARIGOLD, "accent didn't follow the photo"
+    r, g, bl = (int(x) for x in warm[4:-1].split(","))
+    assert r > bl, f"a sunset should give a warm accent, got {warm}"
+    d.push(ambient([{"id": 1, "label": "pasta", "ends_at": START.timestamp() + 252}]))
+    d.shot("photo-home", settle=2300)
+
+    d.page.clock.run_for(PHOTO_SECONDS * 1000 + 100)
+    d.wait_until(lambda: "lake.jpg" in (d.page.get_attribute(".photo.shown", "style") or ""), "slideshow didn't advance")
+    assert d.page.locator(".photo.shown").count() == 1, "crossfade should leave exactly one photo shown"
+    cool = accent(d)
+    r, g, bl = (int(x) for x in cool[4:-1].split(","))
+    assert bl > r, f"a lake should give a cool accent, got {cool}"
+    d.shot("photo-lake", settle=2300)
+    d.close()
+
+
+PHOTO_SECONDS = 30
 
 
 def test_touch_controls(b):

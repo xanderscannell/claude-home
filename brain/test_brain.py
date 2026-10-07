@@ -1,4 +1,5 @@
 """Run: uv run python test_brain.py"""
+import io
 import json
 import os
 import pathlib
@@ -6,6 +7,9 @@ import tempfile
 
 os.environ["CLAUDE_HOME_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")  # before importing tools
 
+from PIL import Image
+
+import photos
 import tools
 from brain import for_speech, pop_sentences
 
@@ -69,4 +73,28 @@ assert tools.weather_text(w).splitlines() == [
     "friday: overcast, high 74F, low 61F, 0% chance of rain"]
 raw["daily"]["precipitation_probability_max"][0] = None  # Open-Meteo sends null when it has no estimate
 assert tools.parse_forecast("X", raw)["days"][0]["rain"] == 0
+
+# Photos: listing, safe lookup, cover-resize with EXIF rotation, caching
+pics = pathlib.Path(tempfile.mkdtemp())
+Image.new("RGB", (1600, 900), "green").save(pics / "land.jpg")
+Image.new("RGB", (900, 1600), "green").save(pics / "tall.png")
+sideways = Image.new("RGB", (1600, 900), "red")
+sideways.paste(Image.new("RGB", (800, 900), "blue"), (800, 0))  # stored: red left half, blue right half
+exif = Image.Exif()
+exif[0x0112] = 6  # orientation 6: rotate 90 degrees clockwise to view, so the stored left becomes the top
+sideways.save(pics / "phone.jpg", exif=exif)
+(pics / "notes.txt").write_text("not a photo")
+(pics / "live.heic").write_bytes(b"\0")
+assert sorted(photos.names(pics)) == ["land.jpg", "phone.jpg", "tall.png"]
+assert photos.find("land.jpg", pics) and photos.find("../land.jpg", pics) is None
+assert photos.find("notes.txt", pics) is None and photos.find("missing.jpg", pics) is None
+for name in ("land.jpg", "tall.png", "phone.jpg"):
+    assert Image.open(io.BytesIO(photos.render(pics / name))).size == (800, 480), name
+upright = Image.open(io.BytesIO(photos.render(pics / "phone.jpg")))
+top, bottom = upright.getpixel((400, 20)), upright.getpixel((400, 460))
+assert top[0] > 200 and top[2] < 60 and bottom[2] > 200 and bottom[0] < 60, (top, bottom)  # red over blue
+cache = pathlib.Path(tempfile.mkdtemp())
+first = photos.cached(pics / "land.jpg", cache)
+stamp = first.stat().st_mtime_ns
+assert photos.cached(pics / "land.jpg", cache) == first and first.stat().st_mtime_ns == stamp  # not re-rendered
 print("ok")
