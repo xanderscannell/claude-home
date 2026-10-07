@@ -69,9 +69,10 @@ keys and contains no Claude logic. It is dumb on purpose.
 **Brain:** owns everything else: STT, Claude, tools, TTS, timers, memory, conversation
 sessions. One Python process on asyncio.
 
-In Phase 1 both run on the same Pi. They still talk over a localhost WebSocket, so adding a
-second room, adding a display, or moving the brain to a bigger machine is a config change
-rather than a refactor.
+They talk over WebSockets, so adding a second room, adding a display, or moving the brain to a
+bigger machine is a config change rather than a refactor. Today the brain runs on a Windows PC
+(the Agent SDK is too heavy for a 1 GB Pi 3), and the Pi 3 runs the satellite, the display kiosk,
+and raspotify.
 
 ## A voice turn
 
@@ -109,17 +110,17 @@ sequenceDiagram
 | Satellite hardware, P3 | Pi 5, Raspberry Pi Touch Display 2 (or any DSI/HDMI touchscreen), ReSpeaker XVF3800 mic array, amp and speakers | XVF3800 does echo cancellation and beamforming on-chip. Playback must be routed through it so it has the echo reference. | A repurposed Android tablet showing the display UI: cheap, but weaker mics and no control over echo cancellation |
 | Wake word | openWakeWord | Open source, runs on the Pi CPU, custom words trainable from synthetic speech, so "Hey Claude" is possible. Use a stock model ("hey jarvis") during development. | Porcupine (commercial) if false triggers are bad; microWakeWord if moving to ESP32 |
 | End-of-speech detection | Silero VAD | Small, accurate, CPU-only | |
-| Audio I/O | `sounddevice` (PortAudio) over PipeWire | Simple Python API; PipeWire handles per-stream volume for ducking | |
+| Audio I/O | `sounddevice` (PortAudio) on plain ALSA, configured by `satellite/asound.conf` | Simple Python API. ALSA's dmix lets the voice and music play at once; a `softvol` device named `music` (control `Music`) gives music its own volume, so the satellite can duck it with `amixer`. | PipeWire, if per-stream routing gets more complicated |
 | Language (satellite and brain) | Python with asyncio and `uv`: 3.13 for the brain, 3.11 for the satellite (openWakeWord requires `tflite-runtime` on Linux, which has no builds past 3.11; uv installs 3.11 even though Raspberry Pi OS Trixie ships 3.13) | The voice ecosystem (openWakeWord, Silero, Piper, Whisper) and Home Assistant are all Python | |
-| Brain server | `websockets` now; FastAPI + uvicorn once HTTP endpoints arrive (Phase 2 `/announce`) | The satellite link is the only endpoint today. FastAPI later serves WebSockets, HTTP for Home Assistant, and the display UI in one process. | |
+| Brain server | FastAPI + uvicorn | One process serves the satellite and display WebSockets, the display page, photos, and the Spotify login; Phase 2's `/announce` joins them. | |
 | LLM | Claude Agent SDK (`claude-agent-sdk`), one `ClaudeSDKClient` per device | The same code runs on a Claude subscription or an API key; switching is one environment variable. It also handles the tool loop, MCP, streaming, and prompt caching. | Direct Messages API (`anthropic` SDK) if the Claude Code runtime's overhead shows up in latency logs. See [LLM backend](#llm-backend). |
 | Default model | Claude Haiku 4.5 (`model="haiku"`) | Voice turns are latency-bound; Haiku is the fastest | Sonnet 5.5 if answers are too shallow. Routing between the two comes later, if ever. |
 | STT | Groq Whisper (`whisper-large-v3-turbo`), one request after end of speech | Fast, accurate, very cheap, one HTTP call | Deepgram streaming if STT dominates latency; local `faster-whisper` on a GPU box for privacy and offline |
 | TTS | Piper (local) | Free, faster than real time on a Pi, no network hop, still works offline | Cartesia or ElevenLabs streaming for a better voice; Kokoro on a server for good-and-local. Known Piper limit: each sentence is synthesized independently, so pitch and tone can shift between sentences (very noticeable with the Northern English voice). |
 | Home control, P2 | Home Assistant's MCP Server integration, passed to the Agent SDK as an HTTP MCP server | Claude gets Home Assistant's Assist tools for exactly the entities exposed to Assist. Scripts exposed to Assist appear as tools automatically, so most new abilities are Home Assistant config, not code. | Direct calls to Home Assistant's WebSocket/REST API for anything MCP doesn't cover |
-| Music, P2-3 | Music Assistant (Home Assistant add-on); the satellite runs a player it supports (e.g. Squeezelite) | Spotify, local library, and radio in one place, controllable through Home Assistant, so Claude gets music control for free | Spotify Connect (raspotify) if Spotify is all that matters |
-| Storage | SQLite (Python stdlib) | Timers, memory, turn log; one file | |
-| Display UI, P3 | Svelte 5 + Vite, served by the brain, shown in Chromium kiosk under `cage` | Small bundles that stay fast on a Pi | |
+| Music | Spotify Connect: raspotify (librespot) on the Pi, controlled by the brain through the Spotify Web API | Spotify is what the household uses, and it needed no Home Assistant. Auth is PKCE, so there's no client secret. | Music Assistant (Home Assistant add-on) for a local library and radio, once Phase 2 is in |
+| Storage | SQLite (Python stdlib) | Timers, alarms, memory, shopping list; one file. The turn log is `turns.jsonl`. | |
+| Display UI, P3 | Plain HTML, CSS, and ES modules (`brain/display/`), no build step, served by the brain, shown in Chromium kiosk under `cage`. Fraunces and Inter are bundled. | One page with a handful of screens didn't need a framework, and nothing to build means the Pi gets changes on the next brain restart | Svelte 5 + Vite if the page outgrows one script |
 | Deployment | systemd units | Simplest thing on a Pi | Docker, if the brain moves next to a Docker-based Home Assistant install |
 
 ## Satellite <-> brain protocol
@@ -132,30 +133,73 @@ Satellite -> brain:
 
 | Message | Meaning |
 |---|---|
-| `hello {device, capabilities}` | Sent on connect. Capabilities: `speaker`, `display`. |
-| `wake` | Wake word fired; mic frames follow |
+| `hello {device, capabilities}` | Sent on connect. Capabilities: `speaker`. |
+| `wake` | Wake word fired (or `listen` arrived); mic frames follow |
 | *binary* | Mic PCM |
 | `speech_end` | VAD heard the end of the utterance |
-| `cancel` | Wake word fired but nobody spoke (also: button press or mute, later) |
-| `text {text}` | A typed request; skips speech-to-text (testing now, the display later) |
+| `cancel` | Wake word fired but nobody spoke |
+| `text {text}` | A typed request; skips speech-to-text (testing) |
+| `played` | A reply finished playing (not sent for announcements, so a timer ending mid-conversation doesn't end it on screen) |
+| `volume {level}` | The headset's playback level (0-100), on connect and after every change |
 
 Brain -> satellite:
 
 | Message | Meaning |
 |---|---|
-| `state {idle\|listening\|thinking\|speaking}` | Drives the LED ring now, the screen later |
 | `audio_start {sample_rate}` | Speech audio follows |
 | *binary* | Speech PCM |
 | `audio_end {follow_up}` | If `follow_up` is true (the reply ended with a question), listen again without the wake word |
-| `audio_start` / `audio_end` with `announce: true` | Unprompted speech, such as a finished timer. Can arrive at any time; the satellite always listens for it. |
-| `stop` | Stop playback now |
-| `volume {level}` | Set output volume |
+| `audio_start` / `audio_end` with `announce: true` | Unprompted speech, such as a finished timer or an alarm. Can arrive at any time; the satellite always listens for it. |
+| `listen` | Start listening as if the wake word fired (tap-to-talk on a screen) |
+| `stop` | Drop all queued audio now (Stop on a screen, a stopped reply, a silenced alarm) |
+| `volume {level}` | Set the headset's playback level (`amixer -c 2 sset PCM`) |
 
-In Phase 3 the display UI opens a second socket, `ws://brain:8765/display?device=kitchen`.
-It receives `state` and `card` messages and sends `tap` and `text` events. The shared
-device id ties the two sockets together.
+**Ducking is the satellite's job:** on wake or `listen` it sets the ALSA `Music` control to 20%,
+and back to 100% once the reply has played or the request was cancelled. Music players
+(raspotify) play through the `music` device that control belongs to.
 
-That is the whole protocol, about ten message types. Keep it that small.
+### Display protocol
+
+Each screen opens `ws://brain:8765/display?device=kitchen`. The device id ties it to that
+room's satellite: everything the satellite's conversation does shows on every screen of the
+device. Messages are JSON.
+
+Brain -> display:
+
+| Message | Meaning |
+|---|---|
+| `hello {device, version, night: {start, end}}` | On connect. `version` changes when the display code does; a screen that sees a new one reloads itself. |
+| `state {state}` | `idle`, `listening`, `thinking`, or `speaking` |
+| `heard {text}` | What the person said |
+| `reply {text}` | One more sentence of Claude's reply, sent just before its audio |
+| `card {card}` | Open a sheet (kinds below) |
+| `ambient {weather, timers, next_alarm, agenda}` | Home screen data: on connect, when timers or the next alarm change, and on each weather or calendar refresh |
+| `now_playing {track}` | `null`, or `{title, artist, album, art, uri, is_playing, progress_ms, duration_ms}`; sent when the track, play state, or position really changes (screens advance the position themselves) |
+| `ringing {ringing}` | `null`, or the ringing alarm `{kind, id, label, time}` |
+| `volume {level}` | The speaker's level |
+
+Card kinds: `weather` (the forecast), `timers` (timers with `ends_at` epoch seconds, and alarms),
+`shopping {items}`, `agenda {events}`, `briefing` (forecast, today's events, next alarm, timers,
+shopping count), `recipe {title, ingredients, steps, step}` (step -1 is the ingredients),
+`text {title, lines}` (Claude's `show_on_screen`), `volume {level}`, and `music` (no data; the
+screen shows what it knows is playing).
+
+Display -> brain:
+
+| Message | Effect |
+|---|---|
+| `talk` | The satellite starts listening (and a ringing alarm stops) |
+| `stop` | Silence a ringing alarm, else cut the reply short, else drop queued audio |
+| `snooze` | Snooze the ringing alarm 9 minutes |
+| `open {sheet}` | Reply (to this screen only) with the card for `weather`, `timers`, `shopping`, or `agenda` |
+| `shopping_remove {item}` | Remove it; this screen gets the updated list |
+| `timer_cancel {id}`, `alarm_toggle {id, enabled}`, `alarm_delete {id}` | From the timers sheet |
+| `media {action}` | `play`, `pause`, `next`, or `previous` on Spotify |
+| `volume {level}` | Set the speaker's level |
+| `recipe {action}` | `next` or `previous` (every screen of the device follows), or `close` (ends recipe mode) |
+| `text {text}` | Run a turn as if it had been spoken |
+
+Keep both protocols small: a screen shows what the brain tells it and sends what was touched.
 
 ## Brain internals
 
@@ -182,10 +226,10 @@ Out of the box it behaves like a coding agent, so it gets locked down:
 The CLI's `--bare` mode does a similar lockdown but never reads subscription credentials,
 which is why the options above are set explicitly.
 
-All LLM code lives in one file, `llm.py`, behind one function:
-`reply(device, text) -> async iterator of text`. Tools are plain async functions wrapped
-with `@tool`. Moving to the direct Messages API later changes only that file, plus an `mcp`
-client for Home Assistant.
+The Claude call lives in one function, `ask(client, text)` in `brain/brain.py`, which yields the
+reply a sentence at a time. Tools are plain async functions wrapped with `@tool` in
+`brain/tools.py`. Moving to the direct Messages API later changes `ask()` and how tools are
+registered, plus an `mcp` client for Home Assistant.
 
 **Subscription caveats:**
 
@@ -196,31 +240,35 @@ client for Home Assistant.
 ### Turn loop
 
 1. Transcript arrives. If it is empty or only a word or two of noise (a false wake), drop it without calling Claude.
-2. **Instant commands.** "stop", "cancel", "never mind", and "volume up/down" are matched exactly and handled without Claude.
+2. **Instant commands.** "stop", "cancel", "never mind", and Whisper's usual noise transcripts ("you", "thank you") are dropped without calling Claude. Volume changes go through Claude's `set_volume` tool for now.
 3. **Home fast path (Phase 2).** Send the transcript to Home Assistant's built-in conversation agent (`POST /api/conversation/process`, agent `conversation.home_assistant`). If it matched an intent, speak its reply and stop. Otherwise fall through to Claude. Fast-path commands are appended to the session history so Claude knows they happened.
 4. **Claude.** Send the transcript to the device's `ClaudeSDKClient`. The SDK holds the history and runs the tool loop; the brain consumes the text deltas.
 5. **Speech.** Split the text stream at sentence boundaries and send each sentence to TTS as soon as it completes. Playing sentence one while sentence two generates is the biggest single latency win.
 
 ### Sessions and follow-ups
 
-- One conversation per device, kept in memory. It resets (the device's client is closed and reopened) after 5 minutes idle, so "what about tomorrow?" works without remembering yesterday's chat.
+- One conversation per device, kept in memory for as long as its satellite stays connected, so "what about tomorrow?" works. (Planned: reset it after a few minutes idle, so it doesn't carry yesterday's chat.)
 - If Claude's reply ends with a question mark, the brain sets `follow_up: true` and the satellite listens again without the wake word. Crude, but it covers the common case.
 
 ### Prompt and caching
 
 - **System prompt:** written for speech. Short answers, no markdown, lists, or URLs; numbers and times said the way a person would say them; at most one clarifying question.
 - **Caching** is handled by the Agent SDK.
-- **Dynamic context** (current time, room, location, memory facts) is prefixed to each user message rather than baked into the system prompt, so the cached prefix stays stable.
+- **Dynamic context:** the current time is prefixed to each user message rather than baked into the system prompt, so the cached prefix stays stable. Saved memory facts are added to the system prompt when the device's session starts.
 
 ### Tools
 
 | Phase | Tools |
 |---|---|
 | 1 | `set_timer` / `list_timers` / `cancel_timer`, `remember` / `forget`, shopping list (`add_to_` / `remove_from_` / `get_` / `clear_shopping_list`), `get_weather` (Open-Meteo, no API key), web search (the SDK's built-in `WebSearch`) |
-| 2 | Home Assistant MCP tools (automatic), `announce(device \| all, text)` |
-| 3 | `show_card` |
+| 2 | Home Assistant MCP tools (automatic), `announce(device \| all, text)` (not started) |
+| 3 | `set_alarm` / `list_alarms` / `cancel_alarm`, `show_on_screen(title, lines)`, `get_agenda(days)`, `morning_briefing`, `show_recipe` / `recipe_step(direction)`, `play_music(query, kind)` / `pause_music` / `resume_music` / `skip_track` / `previous_track` / `whats_playing`, `set_volume(level, relative)` |
 
-**Adding a tool** is one `@tool` function in `brain/tools.py` (name, a description Claude reads to decide when to use it, and a JSON schema for its arguments), added to the list in `make_tools()`.
+Tools whose result belongs on the screen (timers, alarms, weather, the shopping list, the
+calendar, the briefing, recipes, volume) push the matching card to the device's screens as they
+run, so the picture arrives with or before the spoken answer.
+
+**Adding a tool** is one `@tool` function inside `tool_list()` in `brain/tools.py` (name, a description Claude reads to decide when to use it, and a JSON schema for its arguments), added to the list it returns.
 
 **The shopping list** lives in the brain's SQLite file for now. In Phase 2 it should move to a Home Assistant to-do list, so it also shows up in the Home Assistant phone app.
 
@@ -228,6 +276,14 @@ client for Home Assistant.
 finished timers every half second, so timers survive restarts and ring without a network
 call. A timer that ran out while the brain was down rings as soon as a satellite connects.
 Claude only creates and cancels them.
+
+**Alarms live in the brain too:** a SQLite row with a time (`"HH:MM"`), repeat days (weekday
+digits, Monday = 0: `"01234"` is weekdays, `""` is once), a label, an on/off flag, and the next
+ring time, computed by one pure function (`next_ring`). The same half-second loop rings them: the
+screens turn marigold, the time and label are spoken once, then beeps every 4 s until Stop, Snooze
+(9 minutes), the wake word, tap-to-talk, or 10 minutes pass. One-time alarms are deleted after;
+repeating ones get their next time. An alarm more than 10 minutes overdue (the brain was down) is
+skipped rather than rung late.
 
 **Memory** is a list of facts in SQLite, injected whole into the prompt. That is fine for a
 few hundred facts; past that it needs search.
@@ -239,14 +295,24 @@ in the brain.
 
 ## Phase 3: the display
 
-- The display UI is a web app served by the brain, running fullscreen in Chromium under the `cage` kiosk compositor on the satellite.
-- It is driven by pushed events from the brain, never by polling.
-- **Views:** ambient (clock, weather, photos), conversation (transcript plus card), timers, now playing, home tiles, camera popup.
-- **Cards:** Claude calls `show_card({type, ...})` with a fixed set of types: weather, list, timer, media, entity controls, image, text. Voice gives the short answer and the card gives the detail. Fixed types keep rendering predictable; a sandboxed free-form HTML card can come later if they feel limiting.
-- **Touch on a home tile calls Home Assistant directly** through the brain, never through Claude. Flipping a light switch must not cost an API call or a second of waiting.
-- **Cameras:** Home Assistant streams them over WebRTC (go2rtc is built in). A doorbell automation calls `/show` and the feed pops up.
-- **Screen wake and brightness:** scheduled from Home Assistant (sun position, time of day); an optional mmWave presence sensor can wake the screen.
-- **Photos:** Immich or a plain folder.
+Built so far on the Pi 3 with a 5" 800x480 HDMI touchscreen (USB touch), with the brain on the PC.
+
+- **The page** (`brain/display/`: `index.html`, `style.css`, `app.js`) is served by the brain and runs fullscreen in Chromium under the `cage` kiosk compositor. It is driven by pushed messages (the [display protocol](#display-protocol)), never by polling the brain, and reconnects by itself; after 5 s offline it says so.
+- **Screens:** home (clock, date, weather, and a strip of timers, the next alarm, the next event, and the song playing, over the photo slideshow); the conversation overlay (one "state light" for listening, thinking, and speaking; what was heard; the reply growing sentence by sentence; Stop); sheets that slide up for weather, timers and alarms, shopping list, calendar, briefing, recipe, music, volume, the menu, and Claude's `show_on_screen` text; the ringing screen; and night mode.
+- **Navigation:** every screen has a visible close control, and every sheet returns home after 45 s untouched (a recipe after 30 minutes, since a step can simmer that long; ringing never times out on its own).
+- **Touch never goes through Claude:** checking off a shopping item, cancelling a timer, toggling an alarm, the media buttons, and the volume slider are messages straight to the brain. Flipping a switch must not cost an API call or a second of waiting.
+- **Night mode** is computed in the page from `hello.night` (`NIGHT_START` / `NIGHT_END`): pure black with a dim clock in the day clock's place, no photos fetched; a tap brings the home screen back for 30 s. Ringing, conversations, and sheets still come up over it.
+- **Photos:** `PHOTOS_DIR` (default `~/Pictures/Claude Home`). `GET /photos` lists JPEG, PNG, and WebP files (shuffled; HEIC is skipped); `GET /photos/{name}` returns one cover-resized to 800x480 with EXIF rotation applied, cached in `brain/.cache/photos/`. Names that would leave the folder are refused. The page crossfades to the next photo every 30 s and takes its accent color from it (the most colorful mid-tone, clamped so it always reads), falling back to marigold.
+- **Calendar** (`brain/agenda.py`): every `CALENDAR_<LABEL>` variable is one secret iCal address (never logged), fetched in the background every 15 minutes, or after a minute when one failed. A failed feed keeps its last good copy. Each refresh expands today through the next 7 days in local time with `recurring-ical-events`, dropping cancelled occurrences and flagging all-day events.
+- **Spotify** (`brain/spotify.py`): the PKCE authorization code flow (no client secret) through `/spotify/login` and `/spotify/callback`; tokens in `brain/spotify_token.json`, refreshed within a minute of expiry. `play` finds the speaker named `SPOTIFY_DEVICE` (default "Claude Home"), moves playback to it if it isn't active, then plays. A 429 stops all requests until its `Retry-After` has passed. The brain polls `GET /me/player` every 5 s while playing and 20 s otherwise, and a control makes it look again a second later.
+- **Performance on the Pi 3's GPU:** only `opacity` and `transform` animate; no blur, `backdrop-filter`, or large shadows; at most two photo layers; nothing runs while idle except the once-a-minute clock and the slideshow timer.
+- **Later:** Home Assistant tiles, camera popups (Home Assistant streams over WebRTC; a doorbell automation calls `/show`), screen brightness from Home Assistant, and the Pi 5 hardware with the mic array.
+
+### On the Pi
+
+- **Kiosk:** `satellite/claude-home-display.service` runs `cage` + Chromium on tty1 as the desktop user (`getty@tty1` disabled). It opens `satellite/kiosk.html` first, a local page that waits for the brain and then switches to the display, because Chromium shows a dead error page if the brain is down when it starts. `LANG=en_US.UTF-8` in the unit gives the page US clock and date formats. Screens reload themselves when the brain restarts with new display code, so deploying the page is just restarting the brain.
+- **Audio:** `satellite/asound.conf` as `/etc/asound.conf` makes the USB headset (card 2) the default for every user, shares it through ALSA's dmix (with `ipc_perm 0666`, because raspotify runs as its own user and would otherwise lock the satellite out), and adds the `music` device with its `Music` volume control.
+- **raspotify** (librespot) runs as `raspotify.service`. Its settings are appended to `/etc/raspotify/conf` (the original is kept as `conf.orig`): `LIBRESPOT_NAME="Claude Home"`, `LIBRESPOT_DEVICE=music`, `LIBRESPOT_DEVICE_TYPE=speaker`, `LIBRESPOT_INITIAL_VOLUME=70`. With the stock `LIBRESPOT_DISABLE_CREDENTIAL_CACHE` line in place, it forgets its Spotify login on every restart and only appears to the Web API after someone picks it in a Spotify app; removing that line lets it sign itself back in.
 
 ## Latency budget
 
@@ -279,9 +345,11 @@ Perceived latency also matters: chime on wake, a short sound at end of speech, a
 
 | Failure | Behavior |
 |---|---|
-| Internet down | Wake word, timers, and instant commands still work. Piper says "I can't reach Claude right now." The home fast path also needs STT, so it only works offline if STT is local (`faster-whisper`). |
-| Claude API error or timeout | One retry, then a spoken apology |
-| Brain down | Satellite plays an error tone and reconnects with backoff |
+| Internet down | Wake word, timers, and alarms still work. Planned: Piper says "I can't reach Claude right now." The home fast path also needs STT, so it only works offline if STT is local (`faster-whisper`). |
+| Claude API error or timeout | Planned: one retry, then a spoken apology |
+| Brain down | The satellite reconnects every few seconds (no error tone yet). Screens say "Can't reach Claude Home" after 5 s and reconnect on their own; the kiosk waits on its start page if the brain is down when the Pi boots. |
+| A calendar feed or the weather fails | The last good copy stays on screen; calendars retry after 1 minute, weather after 2 |
+| Spotify unreachable or the speaker missing | Claude says what Spotify reported (for example, that the Claude Home speaker isn't showing up); the rest works |
 | Home Assistant down | Claude is told the home tools failed and says so; everything else works |
 
 ## Cost estimate
@@ -337,13 +405,14 @@ run up a bill.
 | ESP32 satellites (Voice PE) | Good hardware, but they speak ESPHome's API to Home Assistant, not to our brain. Revisit for cheap audio-only rooms. |
 | Node/TypeScript brain | The voice and ML libraries are Python. TypeScript is used only for the display UI. |
 
-## Repo layout (once code starts)
+## Repo layout
 
 ```
 claude-home/
   README.md
   docs/architecture.md
-  brain/       Python service
-  satellite/   Python audio client
-  display/     Svelte app (phase 3)
+  brain/          Python service: brain.py (server, turns, alarms, pollers), tools.py, agenda.py,
+                  photos.py, spotify.py, tests, test_data/
+    display/      the display page: index.html, style.css, app.js, fonts/
+  satellite/      Python audio client, its systemd unit, the kiosk unit and kiosk.html, asound.conf
 ```

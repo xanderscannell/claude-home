@@ -3,8 +3,52 @@
 A self-hosted smart speaker, and later a smart display, built on the Claude API and
 Home Assistant. It replaces a Google Home / Nest Hub.
 
-**Status:** planning. No code yet. See [docs/architecture.md](docs/architecture.md) for the
-tech stack and system design.
+**Status:** Phase 1 works on a Raspberry Pi 3 with a USB headset, talking to a brain on a
+Windows PC. Most of Phase 3's display runs on the same Pi's 5" touchscreen (see
+[Phase 3 progress](#phase-3-progress)). Phase 2 (Home Assistant) hasn't started. See
+[docs/architecture.md](docs/architecture.md) for the system design.
+
+## Running it
+
+**Brain** (the PC): Python 3.13 with [uv](https://docs.astral.sh/uv/).
+
+```
+cd brain
+uv run --env-file ../.env brain.py
+```
+
+It serves the satellite and display WebSockets and the display page on port 8765. Set
+`BRAIN_HOST=0.0.0.0` so the Pi can reach it, and allow inbound TCP 8765 from the LAN only.
+Claude runs through the Agent SDK on the Claude Code login of this machine (or an API key).
+
+**Satellite and display** (the Pi): `satellite/claude-home-satellite.service` runs the mic,
+wake word, and playback; `satellite/claude-home-display.service` runs Chromium in kiosk mode on
+the touchscreen. Install steps are in each unit file's header. `satellite/asound.conf` goes to
+`/etc/asound.conf` (shared playback, and a `Music` volume control for ducking).
+
+**Music:** [raspotify](https://github.com/dtcooper/raspotify) on the Pi makes it a Spotify
+Connect speaker; the brain controls it through the Spotify Web API. Open
+`http://127.0.0.1:8765/spotify/login` on the brain's machine once to connect an account.
+
+**Settings** go in `.env` at the repo root (never committed):
+
+| Setting | What it's for |
+|---|---|
+| `GROQ_KEY` | Speech to text (Groq Whisper) |
+| `ANTHROPIC_API_KEY` | Optional: bill the Claude API instead of the Claude Code subscription |
+| `BRAIN_HOST`, `BRAIN_PORT` | Where the brain listens (default `localhost`, `8765`) |
+| `HOME_LOCATION` | City name or `lat,lon`, for weather |
+| `CALENDAR_<LABEL>` | One secret iCal address per calendar, e.g. `CALENDAR_WORK`; the label is shown with its events |
+| `PHOTOS_DIR` | Folder of photos for the display (default `~/Pictures/Claude Home`) |
+| `NIGHT_START`, `NIGHT_END` | When the display becomes a dim night clock (default `22:00`, `07:00`) |
+| `SPOTIFY_CLIENT_ID`, `SPOTIFY_DEVICE` | A Spotify app's client ID, and the speaker's name in Spotify (default `Claude Home`) |
+| `CLAUDE_HOME_DB` | Where the SQLite file lives (default `brain/home.db`) |
+
+On the Pi, the satellite's unit file sets `BRAIN_URL`, `DEVICE`, `AUDIO_IN`, and `AUDIO_OUT`;
+`MIXER_CARD` (default `2`) and `WAKE_THRESHOLD` (default `0.5`) are optional.
+
+**Tests** (from `brain/`): `uv run python test_brain.py`, `test_server.py`, and `test_display.py`
+(Playwright, 800x480 with touch); from `satellite/`: `uv run python test_satellite.py`.
 
 ## Roadmap
 
@@ -62,15 +106,36 @@ Build order:
 
 Done when it does everything above and can hear the wake word over its own music at a normal volume.
 
+#### Phase 3 progress
+
+Built on the hardware at hand (the Pi 3, a 5" 800x480 HDMI touchscreen, a USB headset) rather
+than the Pi 5 build, with the brain on the PC:
+
+- **Home screen:** a large clock over a slideshow of the household's photos (the accent color
+  follows each photo), weather, and a strip of what's next: timers, the next alarm, the next
+  calendar event, and the song playing.
+- **Conversation:** listening, thinking, and speaking states, what you said, and Claude's reply as
+  it's spoken, with a Stop button. Tap the mic to talk without the wake word.
+- **Screens Claude or a tap can open:** weather, timers and alarms, shopping list (tap to check
+  off), calendar, morning briefing, recipe steps, music with controls, volume, and anything else
+  Claude wants to show.
+- **Alarms** that ring until stopped or snoozed, by touch or by voice.
+- **Spotify:** voice control of the Pi as a Spotify Connect speaker, now playing on screen, and
+  music that dips while Claude listens or talks.
+- **Night mode:** a dim clock on black overnight; a tap brings the home screen back for 30 s.
+
+Not done yet: the Pi 5 hardware with the mic array, Home Assistant tiles, the doorbell camera,
+and hearing the wake word over loud music.
+
 ### Later (not committed)
 
-Multi-room announcements and intercom, routines ("good morning" briefing), calendar and
-shopping list via Home Assistant, recipe step-through mode, speaker identification,
-cheaper audio-only satellites for other rooms.
+Multi-room announcements and intercom, routines beyond the morning briefing, calendar and
+shopping list via Home Assistant, speaker identification, cheaper audio-only satellites for
+other rooms.
 
 ## Open questions
 
-These change the plan, so they need answers before Phase 1 starts:
+These were written before Phase 1; the ones still open change the plan:
 
 1. **Where does Home Assistant run today, and on what hardware?** Decides whether the brain can live next to it.
 2. **Is there an always-on machine with a GPU?** If yes, local STT and a better local TTS become viable, which also improves offline behavior.
