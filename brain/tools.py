@@ -306,9 +306,14 @@ async def _no_screen(card: dict):
     pass
 
 
-def tool_list(device: str, on_card=_no_screen) -> list:
+async def _no_speaker(level: int, relative: bool) -> None:
+    return None
+
+
+def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker) -> list:
     """Claude's tools for one satellite. Timers belong to the device they were set on.
-    on_card(card) is awaited to put a result on that device's screens."""
+    on_card(card) is awaited to put a result on that device's screens.
+    on_volume(level, relative) sets the speaker's volume and returns the new level (None: no speaker)."""
 
     @tool("set_timer", "Start a countdown timer that rings on this speaker.",
           _schema(seconds={"type": "integer", "minimum": 1},
@@ -414,10 +419,18 @@ def tool_list(device: str, on_card=_no_screen) -> list:
         await on_card(text_card(a["title"], a["lines"]))
         return _text("Shown on the screen.")
 
+    @tool("set_volume", "Set this speaker's volume, 0 to 100. For 'turn it up' or 'louder' use relative 10; "
+          "for 'turn it down' or 'quieter', relative -10.",
+          _schema(level={"type": "integer", "description": "the new level, or the change when relative"},
+                  relative={"type": "boolean"}))
+    async def set_volume(a):
+        level = await on_volume(a["level"], a["relative"])
+        return _text("The speaker isn't connected." if level is None else f"Volume is now {level}.")
+
     return [set_timer, list_timers, cancel_timer, set_alarm, list_alarms, cancel_alarm, remember_tool, forget_tool,
-            add_shopping, remove_shopping, get_shopping, clear_shopping, get_weather, show_on_screen]
+            add_shopping, remove_shopping, get_shopping, clear_shopping, get_weather, show_on_screen, set_volume]
 
 
-def make_tools(device: str, on_card=_no_screen):
+def make_tools(device: str, on_card=_no_screen, on_volume=_no_speaker):
     """The MCP tool server Claude's session uses for one satellite."""
-    return create_sdk_mcp_server("home", tools=tool_list(device, on_card))
+    return create_sdk_mcp_server("home", tools=tool_list(device, on_card, on_volume))

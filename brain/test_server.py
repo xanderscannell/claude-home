@@ -170,6 +170,24 @@ async def display_flow(port: int):
         assert await recv_json(a) == {"type": "volume", "level": 82}
         await a.send(json.dumps({"type": "volume", "level": 140}))
         assert await recv_json(sat) == {"type": "volume", "level": 100}, "volume should be clamped"
+        assert await until_type(b, "volume") == {"type": "volume", "level": 82}
+        assert await until_type(b, "volume") == {"type": "volume", "level": 100}, "every screen follows the slider"
+        await sat.send(json.dumps({"type": "volume", "level": 70}))  # what the satellite actually set
+        assert await until_type(a, "volume") == {"type": "volume", "level": 100}
+        assert await until_type(a, "volume") == {"type": "volume", "level": 70}
+
+        # Claude's volume tool: "turn it up" is relative to the reported level; the screens show the new level
+        volume_tools = {t.name: t for t in brain.tools.tool_list("kitchen", brain.show_card("kitchen"),
+                                                                  brain.speaker("kitchen"))}
+        r = await on_server(volume_tools["set_volume"].handler({"level": 10, "relative": True}))
+        assert r["content"][0]["text"] == "Volume is now 80.", r
+        assert await recv_json(sat) == {"type": "volume", "level": 80}
+        assert await until_card(b, "volume") == {"kind": "volume", "level": 80}
+        await on_server(volume_tools["set_volume"].handler({"level": -30, "relative": False}))
+        assert await recv_json(sat) == {"type": "volume", "level": 0}
+        r = await brain.tools.tool_list("nowhere", on_volume=brain.speaker("nowhere"))[-1].handler(
+            {"level": 50, "relative": False})
+        assert r["content"][0]["text"] == "The speaker isn't connected.", r
 
         # Stop while idle drops whatever the satellite still has queued
         await a.send(json.dumps({"type": "stop"}))
@@ -204,9 +222,9 @@ async def display_flow(port: int):
         # Claude's tools put their results on the device's screens: a timer, a weather lookup, a list
         kitchen_tools = {t.name: t for t in brain.tools.tool_list("kitchen", brain.show_card("kitchen"))}
         await on_server(kitchen_tools["set_timer"].handler({"seconds": 300, "label": "eggs"}))
-        m = await until_type(a, "card")
-        assert m["card"]["kind"] == "timers" and [t["label"] for t in m["card"]["timers"]] == ["eggs"], m
-        assert (await until_type(b, "card"))["card"]["kind"] == "timers", "every kitchen screen gets the card"
+        card = await until_card(a, "timers")  # (volume cards from above may still be queued)
+        assert [t["label"] for t in card["timers"]] == ["eggs"], card
+        await until_card(b, "timers")  # every kitchen screen gets the card
         # (the timer watcher polls every 0.5 s; wait until it has seen this timer, or a quick cancel goes unnoticed)
         while [t["label"] for t in (await until_type(a, "ambient"))["timers"]] != ["eggs"]:
             pass

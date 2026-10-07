@@ -367,7 +367,53 @@ def test_menu(b):
     before = len(d.sent)
     d.page.locator(".menu-row").nth(2).tap(force=True)  # not built yet: does nothing
     d.page.wait_for_timeout(50)
-    assert len(d.sent) == before and d.page.locator(".menu-row:disabled").count() == 2
+    assert len(d.sent) == before and d.page.locator(".menu-row:disabled").count() == 1
+    d.close()
+
+
+def test_volume(b):
+    d = Display(b)
+    volumes = lambda: [m["level"] for m in d.sent if m.get("type") == "volume"]  # noqa: E731
+
+    # From the menu, before the speaker has reported a level: say so
+    d.tap("#menu")
+    d.page.locator(".menu-row").nth(3).tap()
+    d.page.wait_for_timeout(50)
+    assert d.text("#sheet-title") == "Volume" and d.text(".sheet-body .quiet") == "The speaker isn't connected."
+    d.shot("volume-unknown", settle=400)
+
+    # The level arrives: the hero number and a slider as wide as the screen, thumb-high
+    d.push({"type": "volume", "level": 40})
+    assert d.text(".vol-level") == "40" and d.page.input_value(".vol-slider") == "40"
+    box = d.page.locator(".vol-slider").bounding_box()
+    assert big(box, w=560, h=72), box
+    d.shot("volume", settle=400)
+
+    # Drag from 40 to 80: the number follows the finger; one message, sent when the finger lifts
+    y = box["y"] + box["height"] / 2
+    at = lambda v: box["x"] + 24 + v / 100 * (box["width"] - 48)  # noqa: E731  (thumb centre for a value)
+    d.page.mouse.move(at(40), y)
+    d.page.mouse.down()
+    d.page.mouse.move(at(80), y, steps=12)
+    d.page.wait_for_timeout(50)
+    assert volumes() == [], "nothing is sent while the finger is still down"
+    d.push({"type": "volume", "level": 10})  # a report arriving mid-drag must not yank the slider
+    assert abs(int(d.page.input_value(".vol-slider")) - 80) <= 1, d.page.input_value(".vol-slider")
+    d.shot("volume-dragging", settle=100)
+    d.page.mouse.up()
+    d.page.wait_for_timeout(50)
+    assert len(volumes()) == 1 and abs(volumes()[0] - 80) <= 1, volumes()
+    assert d.text(".vol-level") == str(volumes()[0])
+
+    # With no finger on it, the brain's report moves it
+    d.push({"type": "volume", "level": 55})
+    assert d.text(".vol-level") == "55" and d.page.input_value(".vol-slider") == "55"
+    assert len(volumes()) == 1, "a report from the brain must not echo back"
+
+    # Claude turning it up opens the sheet at the new level
+    d.tap("#sheet-close")
+    d.push({"type": "card", "card": {"kind": "volume", "level": 65}})
+    assert d.visible("#sheet") and d.text(".vol-level") == "65"
     d.close()
 
 
@@ -378,6 +424,7 @@ def test_navigation_every_screen_gets_home(b):
         "timers": {"kind": "timers", "timers": [], "alarms": []},
         "shopping": {"kind": "shopping", "items": ["Milk"]},
         "text": {"kind": "text", "title": "Note", "lines": ["Hello"]},
+        "volume": {"kind": "volume", "level": 40},
     }
     d = Display(b)
     home = lambda: not d.visible("#sheet") and not d.visible("#overlay")  # noqa: E731

@@ -54,7 +54,7 @@ SYSTEM_PROMPT = """You are Claude Home, a voice assistant on a smart speaker. Ev
 - Search the web only when you need current information, at most once per question, then answer.
 - After a web search, never list sources or links; the listener cannot see them.
 - Each user message starts with the current local time in brackets; use it when relevant, never read it back unprompted.
-- Use your tools for timers, the shopping list, weather, and remembering things. Confirm what you did in a few words.
+- Use your tools for timers, alarms, the shopping list, weather, the speaker's volume, and remembering things. Confirm what you did in a few words.
 - When you end with a question, the speaker listens for the answer without the wake word, so only ask when you need to."""
 
 OPTIONS = ClaudeAgentOptions(
@@ -168,7 +168,7 @@ def options(device: str) -> ClaudeAgentOptions:
     known = tools.facts()
     memory = "\n\nThings you remember about this household:\n" + "\n".join(f"- {f}" for f in known) if known else ""
     return replace(OPTIONS, system_prompt=SYSTEM_PROMPT + memory,
-                   mcp_servers={"home": tools.make_tools(device, on_card=show_card(device))})
+                   mcp_servers={"home": tools.make_tools(device, on_card=show_card(device), on_volume=speaker(device))})
 
 
 def show_card(name: str):
@@ -176,6 +176,28 @@ def show_card(name: str):
     async def on_card(card: dict):
         await device(name).show({"type": "card", "card": card})
     return on_card
+
+
+def speaker(name: str):
+    """on_volume for one device's tools: set its speaker's level (or change it by some amount) and show it."""
+    async def on_volume(level: int, relative: bool) -> int | None:
+        dev = device(name)
+        if dev.sat is None or (relative and dev.volume is None):
+            return None
+        await set_volume(dev, dev.volume + level if relative else level)
+        await dev.show({"type": "card", "card": {"kind": "volume", "level": dev.volume}})
+        return dev.volume
+    return on_volume
+
+
+async def set_volume(dev: "Device", level: float):
+    """Send a new level (clamped to 0-100) to the satellite and the screens; the satellite then reports
+    what it actually set."""
+    if dev.sat is None:
+        return
+    dev.volume = max(0, min(100, int(level)))
+    await send(dev.sat, json.dumps({"type": "volume", "level": dev.volume}))
+    await dev.show({"type": "volume", "level": dev.volume})
 
 
 def session(device: str):
@@ -548,8 +570,8 @@ async def from_display(dev: Device, m: dict, ws: WebSocket):
         await stop(dev)
     elif kind == "snooze":
         await stop_ringing(dev, snooze=True)
-    elif kind == "volume" and dev.sat is not None and isinstance(m.get("level"), (int, float)):
-        await send(dev.sat, json.dumps({"type": "volume", "level": max(0, min(100, int(m["level"])))}))
+    elif kind == "volume" and isinstance(m.get("level"), (int, float)):
+        await set_volume(dev, m["level"])
 
 
 # Screens reload themselves when this changes, so a kiosk picks up new display code after a brain restart.

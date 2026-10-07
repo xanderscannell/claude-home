@@ -292,6 +292,34 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 .switch[aria-checked="true"] span { background: var(--accent); }
 .switch[aria-checked="true"] span::after { transform: translateX(24px); }
 
+/* Volume: the level as the hero, the slider low and wide where a thumb reaches it */
+.vol { height: 100%; display: flex; flex-direction: column; justify-content: space-between; padding-bottom: 18px; }
+.vol-level {
+  font: 330 132px/.9 var(--far);
+  font-variation-settings: "opsz" 144, "SOFT" 100;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  letter-spacing: -2px;
+}
+.vol-row { display: flex; align-items: center; gap: 22px; }
+.vol-end { flex: none; width: 34px; height: 34px; color: var(--mist); }
+.vol-end svg { width: 100%; height: 100%; }
+.vol-slider {
+  --fill: 50%;
+  flex: 1; height: 80px; margin: 0; background: none;
+  -webkit-appearance: none; appearance: none; touch-action: none; cursor: none;
+}
+.vol-slider::-webkit-slider-runnable-track {
+  height: 14px; border-radius: 7px;
+  background: linear-gradient(90deg, var(--accent) var(--fill), rgba(238, 243, 247, .16) var(--fill));
+}
+.vol-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 48px; height: 48px; margin-top: -17px; border-radius: 50%;
+  background: var(--frost);
+}
+.vol-slider:active::-webkit-slider-thumb { transform: scale(1.08); }
+.vol-slider:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+
 /* --- Ringing: the one screen that should be seen from across the room --------------------------- */
 
 .ringing {

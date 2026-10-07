@@ -68,6 +68,7 @@ const handlers = {
   },
   card: (m) => openSheet(m.card),
   ringing: (m) => showRinging(m.ringing),
+  volume: (m) => showVolume(m.level),
 };
 
 function handle(msg) {
@@ -272,6 +273,7 @@ function openSheet(card) {
   sheetCard = card;
   // A timers card can beat the next ambient update by up to half a second; it is just as fresh, so use it.
   if (card.kind === "timers") ambient = { ...ambient, timers: card.timers };
+  if (card.kind === "volume" && card.level !== undefined) speakerVolume = card.level;
   renderSheet();
   els.sheet.hidden = false;
   requestAnimationFrame(() => els.sheet.classList.add("shown"));
@@ -356,7 +358,7 @@ const renderers = {
       ["Timers and alarms", ICONS.timer, "timers"],
       ["Shopping list", ICONS.list, "shopping"],
       ["Music", ICONS.music, null],
-      ["Volume", ICONS.volume, null],
+      ["Volume", ICONS.volume, () => openSheet({ kind: "volume" })],  // the page already knows the level
     ];
     return ["Menu", entries.map(([label, icon, sheet]) => {
       const row = el("button", "menu-row");
@@ -364,10 +366,38 @@ const renderers = {
       const glyph = el("span", "menu-icon");
       glyph.innerHTML = icon;  // fixed markup from ICONS, never data
       row.append(glyph, el("span", "menu-label", label));
-      if (sheet) row.addEventListener("click", () => send({ type: "open", sheet }));
+      if (typeof sheet === "function") row.addEventListener("click", sheet);
+      else if (sheet) row.addEventListener("click", () => send({ type: "open", sheet }));
       else { row.disabled = true; row.append(el("span", "menu-soon", "Coming soon")); }
       return row;
     })];
+  },
+
+  // One big number and a slider as wide as the screen. The level is sent once, when the finger lifts.
+  volume: () => {
+    if (speakerVolume === null) {
+      return ["Volume", [el("p", "quiet", "The speaker isn't connected."),
+                         el("p", "hint", "Volume can be changed once it's back.")]];
+    }
+    const level = el("p", "vol-level");
+    const slider = el("input", "vol-slider");
+    Object.assign(slider, { type: "range", min: 0, max: 100, step: 1, value: speakerVolume });
+    slider.setAttribute("aria-label", "Volume");
+    const paint = () => {
+      level.textContent = slider.value;
+      slider.style.setProperty("--fill", `${slider.value}%`);
+    };
+    slider.addEventListener("input", paint);
+    slider.addEventListener("change", () => send({ type: "volume", level: Number(slider.value) }));
+    paint();
+    const quiet = el("span", "vol-end"), loud = el("span", "vol-end");
+    quiet.innerHTML = ICONS.quiet;  // fixed markup from ICONS
+    loud.innerHTML = ICONS.volume;
+    const row = el("div", "vol-row");
+    row.append(quiet, slider, loud);
+    const sheet = el("div", "vol");
+    sheet.append(level, row);
+    return ["Volume", [sheet]];
   },
 
   text: (c) => {
@@ -454,7 +484,25 @@ const ICONS = {
   list: svg('<path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1.2 1.2L7 4.8M3.5 12l1.2 1.2L7 10.8M3.5 18l1.2 1.2L7 16.8"/>'),
   music: svg('<path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>'),
   volume: svg('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/>'),
+  quiet: svg('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/>'),
 };
+
+// --- Volume -----------------------------------------------------------------------------------
+
+let speakerVolume = null;  // the speaker's level as the brain last reported it; null until it does
+
+// A new level from the brain (the satellite's report, another screen, or Claude). An open volume sheet
+// follows it, unless a finger is on the slider right now.
+function showVolume(level) {
+  speakerVolume = level;
+  if (!sheetCard || sheetCard.kind !== "volume") return;
+  const slider = els.sheetBody.querySelector(".vol-slider");
+  if (!slider) renderSheet();  // it was saying the speaker isn't connected
+  else if (!slider.matches(":active")) {
+    slider.value = level;
+    slider.dispatchEvent(new Event("input"));
+  }
+}
 
 function renderSheet() {
   const render = renderers[sheetCard.kind];
