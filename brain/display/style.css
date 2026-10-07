@@ -257,9 +257,6 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 .menu-icon { flex: none; width: 34px; height: 34px; color: var(--accent); }
 .menu-icon svg { width: 100%; height: 100%; }
 .menu-label { flex: 1; font: 380 30px/1.2 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; }
-.menu-soon { font-size: 18px; color: var(--mist); }
-.menu-row:disabled { cursor: none; }
-.menu-row:disabled .menu-icon, .menu-row:disabled .menu-label { opacity: .4; }
 
 /* Text: whatever Claude wants on screen; fewer, shorter lines get bigger type */
 .text-lines p { font-size: 22px; line-height: 1.45; padding: 7px 0; max-width: 700px; }
@@ -365,6 +362,29 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 .recipe-nav { display: flex; justify-content: flex-end; gap: 16px; padding-top: 12px; }
 .recipe-next { min-width: 150px; background: var(--accent); color: var(--night); font-weight: 600; }
 .recipe-next:active { background: var(--accent); opacity: .85; }
+
+/* Music: album art as the one picture, the title in the far-read type, controls bottom-right */
+.np { height: 100%; display: grid; grid-template-columns: 280px 1fr; gap: 32px; }
+.np-art { width: 280px; height: 280px; border-radius: 6px; overflow: hidden; background: rgba(238, 243, 247, .08); }
+.np-art img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.np-info { min-width: 0; display: flex; flex-direction: column; }
+.np-title {
+  font: 380 34px/1.15 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.np-artist, .np-album { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-artist { font-size: 22px; margin-top: 8px; }
+.np-album { font-size: 18px; color: var(--mist); margin-top: 2px; }
+.np-progress { margin-top: auto; }
+.np-bar { height: 4px; border-radius: 2px; overflow: hidden; background: rgba(238, 243, 247, .16); }
+.np-bar i { display: block; height: 100%; background: var(--accent); transform-origin: left center; transform: scaleX(0); }
+.np-times { display: flex; justify-content: space-between; margin-top: 6px; font-size: 16px; color: var(--mist); font-feature-settings: "tnum" 1; }
+.np-controls { display: flex; justify-content: flex-end; align-items: center; gap: 16px; margin-top: 12px; }
+.np-btn { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; background: rgba(238, 243, 247, .12); }
+.np-btn.main { width: 76px; height: 76px; background: var(--accent); color: var(--night); }
+.np-btn svg { width: 26px; height: 26px; fill: currentColor; stroke: none; }
+.np-btn:active { transform: scale(.94); }
+.strip .np-thumb { width: 28px; height: 28px; border-radius: 3px; object-fit: cover; align-self: center; }
 
 /* Volume: the level as the hero, the slider low and wide where a thumb reaches it */
 .vol { height: 100%; display: flex; flex-direction: column; justify-content: space-between; padding-bottom: 18px; }

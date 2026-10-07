@@ -8,6 +8,7 @@ expiry. Never print or log them.
 Settings: SPOTIFY_CLIENT_ID, SPOTIFY_DEVICE (default "Claude Home", the speaker's name in Spotify).
 """
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -48,6 +49,36 @@ class SpotifyError(Exception):
     """Something to tell the person, in words Claude can pass on."""
 
 
+def track(playback: dict | None) -> dict | None:
+    """Current playback (GET /me/player) as the screens show it, or None when there's nothing to show."""
+    item = (playback or {}).get("item")
+    if not item:
+        return None
+    if item.get("type") == "episode":
+        show = item.get("show") or {}
+        artist, album, images = show.get("name", ""), "", item.get("images") or show.get("images") or []
+    else:
+        album_info = item.get("album") or {}
+        artist = ", ".join(a["name"] for a in item.get("artists", []))
+        album, images = album_info.get("name", ""), album_info.get("images") or []
+    big_enough = [i for i in images if (i.get("width") or 0) >= 300]
+    art = min(big_enough, key=lambda i: i["width"]) if big_enough else (images[0] if images else None)
+    return {"title": item.get("name", ""), "artist": artist, "album": album, "art": art and art["url"],
+            "uri": item.get("uri"), "is_playing": bool(playback.get("is_playing")),
+            "progress_ms": playback.get("progress_ms") or 0, "duration_ms": item.get("duration_ms") or 0}
+
+
+def moved(old: dict | None, new: dict | None, elapsed_s: float) -> bool:
+    """Whether screens need fresh now-playing info: another track, play/pause, or a jump in position (a seek).
+    Plain progress isn't a change: the screens advance it themselves."""
+    if old is None or new is None:
+        return old != new
+    if (old["uri"], old["is_playing"]) != (new["uri"], new["is_playing"]):
+        return True
+    expected = old["progress_ms"] + (elapsed_s * 1000 if old["is_playing"] else 0)
+    return abs(new["progress_ms"] - expected) > 3000
+
+
 class Spotify:
     def __init__(self, client_id: str, token_path: Path = TOKEN_PATH, transport: httpx.AsyncBaseTransport | None = None,
                  clock=time.time, device_name: str | None = None):
@@ -57,6 +88,7 @@ class Spotify:
         self.device_name = device_name or os.environ.get("SPOTIFY_DEVICE", "Claude Home")
         self.http = httpx.AsyncClient(transport=transport, timeout=10)
         self.blocked_until = 0.0  # after a 429, no requests until then
+        self.changed = asyncio.Event()  # set after a control, so the now-playing poller looks again soon
 
     async def close(self):
         await self.http.aclose()

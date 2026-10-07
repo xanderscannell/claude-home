@@ -1,4 +1,4 @@
-"""Claude's tools: timers, alarms, memory, shopping list, weather, calendar, volume.
+"""Claude's tools: timers, alarms, memory, shopping list, weather, calendar, briefing, recipes, music, volume.
 
 To add a tool: write an async function with @tool (name, description for Claude, JSON schema of its
 arguments) inside make_tools(), and add it to the list at the bottom. Storage helpers are plain functions
@@ -17,6 +17,7 @@ import httpx
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
 import agenda
+import spotify
 
 DB_PATH = Path(os.environ.get("CLAUDE_HOME_DB", Path(__file__).parent / "home.db"))
 SCHEMA = """
@@ -405,10 +406,21 @@ async def _no_speaker(level: int, relative: bool) -> None:
     return None
 
 
-def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker) -> list:
+def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spotify.Spotify | None = None) -> list:
     """Claude's tools for one satellite. Timers belong to the device they were set on.
     on_card(card) is awaited to put a result on that device's screens.
-    on_volume(level, relative) sets the speaker's volume and returns the new level (None: no speaker)."""
+    on_volume(level, relative) sets the speaker's volume and returns the new level (None: no speaker).
+    music is the Spotify client (None: Spotify isn't set up)."""
+
+    async def via_spotify(action, say):
+        if music is None:
+            return _text("Spotify isn't set up.")
+        try:
+            result = await action()
+        except spotify.SpotifyError as e:
+            return _text(str(e))
+        music.changed.set()  # the screens' now playing catches up within a second or so
+        return _text(say(result))
 
     @tool("set_timer", "Start a countdown timer that rings on this speaker.",
           _schema(seconds={"type": "integer", "minimum": 1},
@@ -560,6 +572,42 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker) -> list:
         await on_card(recipe_card(device))
         return _text(note + recipe_text(r))
 
+    @tool("play_music", "Play music on this speaker through Spotify: a song, an artist, an album, or a playlist.",
+          _schema(query={"type": "string", "description": "what to search for, e.g. 'Blue by Joni Mitchell'"},
+                  kind={"type": "string", "enum": list(spotify.KINDS)}))
+    async def play_music(a):
+        return await via_spotify(lambda: music.play(a["query"], a["kind"]),
+                                 lambda f: f"Playing {f['name']}" + (f" by {f['by']}." if f["by"] else "."))
+
+    @tool("pause_music", "Pause the music.", _schema())
+    async def pause_music(a):
+        return await via_spotify(lambda: music.pause(), lambda _: "Paused.")
+
+    @tool("resume_music", "Carry on playing the music that was paused.", _schema())
+    async def resume_music(a):
+        return await via_spotify(lambda: music.resume(), lambda _: "Playing.")
+
+    @tool("skip_track", "Skip to the next track.", _schema())
+    async def skip_track(a):
+        return await via_spotify(lambda: music.next(), lambda _: "Skipped.")
+
+    @tool("previous_track", "Go back to the previous track.", _schema())
+    async def previous_track(a):
+        return await via_spotify(lambda: music.previous(), lambda _: "Gone back.")
+
+    @tool("whats_playing", "What's playing on Spotify right now; also shows it on the screen.", _schema())
+    async def whats_playing(a):
+        async def look():
+            return spotify.track(await music.playback())
+
+        def say(t):
+            if t is None:
+                return "Nothing is playing."
+            return f"{t['title']}" + (f" by {t['artist']}" if t["artist"] else "") + ("" if t["is_playing"] else ", paused") + "."
+        result = await via_spotify(look, say)
+        await on_card({"kind": "music"})
+        return result
+
     @tool("set_volume", "Set this speaker's volume, 0 to 100. For 'turn it up' or 'louder' use relative 10; "
           "for 'turn it down' or 'quieter', relative -10.",
           _schema(level={"type": "integer", "description": "the new level, or the change when relative"},
@@ -570,9 +618,10 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker) -> list:
 
     return [set_timer, list_timers, cancel_timer, set_alarm, list_alarms, cancel_alarm, remember_tool, forget_tool,
             add_shopping, remove_shopping, get_shopping, clear_shopping, get_weather, show_on_screen, get_agenda,
-            morning_briefing, show_recipe, recipe_step, set_volume]
+            morning_briefing, show_recipe, recipe_step, play_music, pause_music, resume_music, skip_track,
+            previous_track, whats_playing, set_volume]
 
 
-def make_tools(device: str, on_card=_no_screen, on_volume=_no_speaker):
+def make_tools(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spotify.Spotify | None = None):
     """The MCP tool server Claude's session uses for one satellite."""
-    return create_sdk_mcp_server("home", tools=tool_list(device, on_card, on_volume))
+    return create_sdk_mcp_server("home", tools=tool_list(device, on_card, on_volume, music))

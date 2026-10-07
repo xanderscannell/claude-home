@@ -383,4 +383,58 @@ async def spotify_checks():
 
 
 asyncio.run(spotify_checks())
+
+# Now playing: what the screens get from GET /me/player, and when it counts as a change
+PLAYING = {"is_playing": True, "progress_ms": 61000, "item": {
+    "type": "track", "name": "Blue", "uri": "spotify:track:1", "duration_ms": 180000,
+    "artists": [{"name": "Joni Mitchell"}],
+    "album": {"name": "Blue", "images": [{"url": "big", "width": 640}, {"url": "mid", "width": 300},
+                                         {"url": "small", "width": 64}]}}}
+blue = spotify.track(PLAYING)
+assert blue == {"title": "Blue", "artist": "Joni Mitchell", "album": "Blue", "art": "mid", "uri": "spotify:track:1",
+                "is_playing": True, "progress_ms": 61000, "duration_ms": 180000}, blue
+episode = spotify.track({"is_playing": False, "item": {"type": "episode", "name": "Ep 4", "uri": "spotify:episode:4",
+                                                         "show": {"name": "A Podcast", "images": [{"url": "s", "width": 64}]}}})
+assert episode["artist"] == "A Podcast" and episode["art"] == "s" and not episode["is_playing"]
+assert spotify.track(None) is None and spotify.track({"is_playing": True, "item": None}) is None  # e.g. an ad
+assert not spotify.moved(blue, dict(blue, progress_ms=66000), 5), "plain progress isn't a change"
+assert spotify.moved(blue, dict(blue, progress_ms=120000), 5), "a seek is"
+assert spotify.moved(blue, dict(blue, is_playing=False), 5) and spotify.moved(blue, dict(blue, uri="spotify:track:2"), 5)
+assert spotify.moved(None, blue, 0) and spotify.moved(blue, None, 0) and not spotify.moved(None, None, 0)
+paused = dict(blue, is_playing=False)
+assert not spotify.moved(paused, paused, 60), "paused: the position shouldn't be expected to move"
+
+# The music tools through the mock: what Claude hears back, and the calls behind it
+world["devices"] = [{"id": "pi1", "name": "Claude Home", "is_active": True}]
+
+
+async def music_tool_checks():
+    tok = pathlib.Path(tempfile.mkdtemp()) / "token.json"
+    tok.write_text(json.dumps({"access_token": "a", "refresh_token": "r", "expires_at": 10**12}))
+    s = spotify.Spotify("cid", tok, transport=httpx.MockTransport(spotify_api))
+    shown = []
+
+    async def on_card(card):
+        shown.append(card)
+
+    music = {t.name: t for t in tools.tool_list("kitchen", on_card, music=s)}
+    hear = lambda r: r["content"][0]["text"]  # noqa: E731
+    calls.clear()
+    assert hear(await music["play_music"].handler({"query": "blue", "kind": "track"})) == "Playing Blue by Joni Mitchell."
+    assert calls[-1][1:] == ("/v1/me/player/play", {"device_id": "pi1"}, {"uris": ["spotify:track:1"]})
+    assert s.changed.is_set(), "a control pokes the now-playing poller"
+    for name, endpoint, said in [("pause_music", "/v1/me/player/pause", "Paused."),
+                                 ("resume_music", "/v1/me/player/play", "Playing."),
+                                 ("skip_track", "/v1/me/player/next", "Skipped."),
+                                 ("previous_track", "/v1/me/player/previous", "Gone back.")]:
+        assert hear(await music[name].handler({})) == said and calls[-1][1] == endpoint, name
+    assert hear(await music["whats_playing"].handler({})) == "Nothing is playing." and shown[-1] == {"kind": "music"}
+    world["devices"] = []
+    assert "isn't showing up" in hear(await music["play_music"].handler({"query": "blue", "kind": "track"}))
+    nothing = {t.name: t for t in tools.tool_list("kitchen")}
+    assert hear(await nothing["pause_music"].handler({})) == "Spotify isn't set up."
+    await s.close()
+
+
+asyncio.run(music_tool_checks())
 print("ok")

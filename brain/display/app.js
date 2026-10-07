@@ -74,6 +74,7 @@ const handlers = {
   card: (m) => openSheet(m.card),
   ringing: (m) => showRinging(m.ringing),
   volume: (m) => showVolume(m.level),
+  now_playing: (m) => showNowPlaying(m.track),
 };
 
 function handle(msg) {
@@ -322,6 +323,19 @@ function renderStrip() {
     item.addEventListener("click", () => send({ type: "open", sheet: "agenda" }));
     els.strip.append(item);
   }
+  // Music while it plays: the album art small and square, then the title
+  if (nowPlaying && nowPlaying.is_playing) {
+    const item = el("button", "item music");
+    item.type = "button";
+    if (nowPlaying.art) {
+      const thumb = el("img", "np-thumb");
+      Object.assign(thumb, { src: nowPlaying.art, alt: "" });
+      item.append(thumb);
+    }
+    item.append(el("span", "label", nowPlaying.title));
+    item.addEventListener("click", () => openSheet({ kind: "music" }));
+    els.strip.append(item);
+  }
   // Tick once a second only while something is counting down (the Pi's CPU is better spent idle).
   if (running.length && !ticker) ticker = setInterval(tick, 1000);
   if (!running.length && ticker) { clearInterval(ticker); ticker = null; }
@@ -445,8 +459,8 @@ const renderers = {
     const entries = [
       ["Timers and alarms", ICONS.timer, "timers"],
       ["Shopping list", ICONS.list, "shopping"],
-      ["Music", ICONS.music, null],
-      ["Volume", ICONS.volume, () => openSheet({ kind: "volume" })],  // the page already knows the level
+      ["Music", ICONS.music, () => openSheet({ kind: "music" })],  // these two the page already knows
+      ["Volume", ICONS.volume, () => openSheet({ kind: "volume" })],
     ];
     return ["Menu", entries.map(([label, icon, sheet]) => {
       const row = el("button", "menu-row");
@@ -454,11 +468,51 @@ const renderers = {
       const glyph = el("span", "menu-icon");
       glyph.innerHTML = icon;  // fixed markup from ICONS, never data
       row.append(glyph, el("span", "menu-label", label));
-      if (typeof sheet === "function") row.addEventListener("click", sheet);
-      else if (sheet) row.addEventListener("click", () => send({ type: "open", sheet }));
-      else { row.disabled = true; row.append(el("span", "menu-soon", "Coming soon")); }
+      row.addEventListener("click", typeof sheet === "function" ? sheet : () => send({ type: "open", sheet }));
       return row;
     })];
+  },
+
+  // Music: the album art is the one picture; the title in the far-read type; the controls bottom-right,
+  // play/pause the big accent one
+  music: () => {
+    const t = nowPlaying;
+    if (!t) {
+      return ["Music", [el("p", "quiet", "Nothing is playing."),
+                        el("p", "hint", "Say “Hey Jarvis, play some Fleetwood Mac.”")]];
+    }
+    const art = el("div", "np-art");
+    if (t.art) {
+      const img = el("img");
+      Object.assign(img, { src: t.art, alt: "" });
+      art.append(img);
+    }
+    const info = el("div", "np-info");
+    info.append(el("p", "np-title", t.title), el("p", "np-artist", t.artist));
+    if (t.album && t.album !== t.title) info.append(el("p", "np-album", t.album));
+    const bar = el("div", "np-bar");
+    bar.append(el("i"));
+    const times = el("p", "np-times");
+    times.append(el("span", "np-at"), el("span", null, countdown(Math.floor(t.duration_ms / 1000))));
+    const progress = el("div", "np-progress");
+    progress.append(bar, times);
+    const controls = el("div", "np-controls");
+    const buttons = [["previous", "Previous track", ICONS.previous],
+                     t.is_playing ? ["pause", "Pause", ICONS.pause] : ["play", "Play", ICONS.play],
+                     ["next", "Next track", ICONS.next]];
+    for (const [action, label, icon] of buttons) {
+      const b = el("button", action === "play" || action === "pause" ? "np-btn main" : "np-btn");
+      b.type = "button";
+      b.dataset.action = action;
+      b.setAttribute("aria-label", label);
+      b.innerHTML = icon;  // fixed markup from ICONS
+      b.addEventListener("click", () => mediaPress(action));
+      controls.append(b);
+    }
+    info.append(progress, controls);
+    const wrap = el("div", "np");
+    wrap.append(art, info);
+    return ["Music", [wrap]];
   },
 
   // One big number and a slider as wide as the screen. The level is sent once, when the finger lifts.
@@ -679,7 +733,53 @@ const ICONS = {
   music: svg('<path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>'),
   volume: svg('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/>'),
   quiet: svg('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/>'),
+  previous: svg('<path d="M6 5h2.5v14H6zM19 5.5v13L9.5 12z"/>'),
+  play: svg('<path d="M8 5v14l11-7z"/>'),
+  pause: svg('<path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/>'),
+  next: svg('<path d="M15.5 5H18v14h-2.5zM5 5.5v13l9.5-6.5z"/>'),
 };
+
+// --- Music ------------------------------------------------------------------------------------
+
+let nowPlaying = null;  // the brain's now_playing track, or null when nothing is playing
+let nowPlayingAt = 0;  // Date.now() when it arrived: the position advances locally from there while playing
+let musicTicker = null;
+
+function showNowPlaying(track) {
+  nowPlaying = track;
+  nowPlayingAt = Date.now();
+  renderStrip();
+  if (sheetCard && sheetCard.kind === "music") renderSheet();
+}
+
+function musicPosition() {
+  const t = nowPlaying;
+  return Math.min(t.duration_ms, t.progress_ms + (t.is_playing ? Date.now() - nowPlayingAt : 0));
+}
+
+// Play and Pause show at once; the brain's next now_playing confirms (or corrects) it a moment later
+function mediaPress(action) {
+  if (action === "play" || action === "pause") {
+    nowPlaying = { ...nowPlaying, progress_ms: musicPosition(), is_playing: action === "play" };
+    nowPlayingAt = Date.now();
+    renderSheet();
+    renderStrip();
+  }
+  send({ type: "media", action });
+}
+
+// The progress bar and time, once a second while the music sheet is open and something plays
+function paintMusic() {
+  const fill = els.sheetBody.querySelector(".np-bar i");
+  if (fill) {
+    const at = musicPosition();
+    fill.style.transform = `scaleX(${nowPlaying.duration_ms ? at / nowPlaying.duration_ms : 0})`;
+    els.sheetBody.querySelector(".np-at").textContent = countdown(Math.floor(at / 1000));
+  }
+  const keepGoing = fill && nowPlaying.is_playing && sheetCard && sheetCard.kind === "music";
+  if (keepGoing && !musicTicker) musicTicker = setInterval(paintMusic, 1000);
+  if (!keepGoing && musicTicker) { clearInterval(musicTicker); musicTicker = null; }
+}
 
 // --- Volume -----------------------------------------------------------------------------------
 
@@ -707,6 +807,7 @@ function renderSheet() {
   if (sheetCard.kind === "timers" && !ticker && ambient.timers.length) ticker = setInterval(tick, 1000);
   const step = els.sheetBody.querySelector(".step-text");
   if (step) shrinkToFit(step, 24);
+  paintMusic();
 }
 
 // --- Conversation overlay ---------------------------------------------------------------------

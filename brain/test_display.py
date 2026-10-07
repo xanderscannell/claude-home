@@ -58,6 +58,8 @@ class Display:
         self.requests.append(rel)
         if rel == "/photos":
             return route.fulfill(json=list(self.photos))
+        if rel == "/art.jpg":  # album art for the music tests
+            return route.fulfill(body=ALBUM_ART, content_type="image/jpeg")
         if rel.startswith("/photos/"):
             name = urllib.parse.unquote(rel.removeprefix("/photos/"))
             return route.fulfill(body=self.photos[name], content_type="image/jpeg")
@@ -446,10 +448,9 @@ def test_menu(b):
     d.page.locator(".menu-row").nth(1).tap()
     d.page.wait_for_timeout(50)
     assert {"type": "open", "sheet": "timers"} in d.sent and {"type": "open", "sheet": "shopping"} in d.sent, d.sent
-    before = len(d.sent)
-    d.page.locator(".menu-row").nth(2).tap(force=True)  # not built yet: does nothing
+    d.page.locator(".menu-row").nth(2).tap()  # Music: opens straight away, the page knows what's playing
     d.page.wait_for_timeout(50)
-    assert len(d.sent) == before and d.page.locator(".menu-row:disabled").count() == 1
+    assert d.text("#sheet-title") == "Music" and d.text(".sheet-body .quiet") == "Nothing is playing."
     d.close()
 
 
@@ -509,6 +510,7 @@ def test_navigation_every_screen_gets_home(b):
         "volume": {"kind": "volume", "level": 40},
         "agenda": {"kind": "agenda", "events": []},
         "briefing": briefing()["card"],
+        "music": {"kind": "music"},
     }
     d = Display(b)
     home = lambda: not d.visible("#sheet") and not d.visible("#overlay")  # noqa: E731
@@ -771,6 +773,56 @@ def test_recipe(b):
     assert d.page.locator(".ingredients li").count() == 8 and not d.visible(".recipe-prev")
     d.tap("#sheet-close")
     assert recipe()[-1] == {"type": "recipe", "action": "close"}
+    d.close()
+
+
+ALBUM_ART = photo((40, 90, 160), (230, 200, 120))
+BLUE = {"title": "A Case of You", "artist": "Joni Mitchell", "album": "Blue", "art": f"{ORIGIN}/art.jpg",
+        "uri": "spotify:track:1", "is_playing": True, "progress_ms": 61000, "duration_ms": 263000}
+
+
+def test_music(b):
+    d = Display(b)
+    media = lambda: [m["action"] for m in d.sent if m.get("type") == "media"]  # noqa: E731
+
+    # Playing: art and title join the home strip
+    d.push(dict(ambient([], weather=WEATHER)), {"type": "now_playing", "track": BLUE})
+    assert d.text(".strip .music .label") == "A Case of You" and d.visible(".strip .music .np-thumb")
+    d.shot("music-strip", settle=300)
+
+    # Its sheet: art, title, artist, album, where it is, and the controls
+    d.tap(".strip .music")
+    assert d.text("#sheet-title") == "Music" and d.text(".np-title") == "A Case of You"
+    assert d.text(".np-artist") == "Joni Mitchell" and d.text(".np-album") == "Blue"
+    assert d.text(".np-at") == "1:01" and d.page.locator(".np-times span").nth(1).inner_text() == "4:23"
+    assert d.page.get_attribute(".np-btn.main", "aria-label") == "Pause"
+    for sel in (".np-btn >> nth=0", ".np-btn.main", ".np-btn >> nth=2"):
+        assert big(d.page.locator(sel).bounding_box()), sel
+    d.page.wait_for_function("document.querySelector('.np-art img').complete")
+    d.shot("music-playing", settle=400)
+    d.page.clock.run_for(10_000)
+    assert d.text(".np-at") == "1:11", "the position should advance while playing"
+
+    # Pause shows at once and leaves the strip; the position holds
+    d.tap(".np-btn.main")
+    assert media() == ["pause"] and d.page.get_attribute(".np-btn.main", "aria-label") == "Play"
+    assert d.page.locator(".strip .music").count() == 0
+    d.page.clock.run_for(10_000)
+    assert d.text(".np-at") == "1:11"
+    d.shot("music-paused", settle=200)
+    d.tap(".np-btn >> nth=2")
+    d.tap(".np-btn >> nth=0")
+    d.tap(".np-btn.main")
+    assert media() == ["pause", "next", "previous", "play"], media()
+
+    # The brain reports a new track (a skip): the sheet follows
+    d.push({"type": "now_playing", "track": dict(BLUE, title="River", progress_ms=0, duration_ms=240000)})
+    assert d.text(".np-title") == "River" and d.text(".np-at") == "0:00"
+
+    # Nothing playing: says so, and says how to start something
+    d.push({"type": "now_playing", "track": None})
+    assert d.text(".sheet-body .quiet") == "Nothing is playing." and d.page.locator(".np-btn").count() == 0
+    d.shot("music-nothing", settle=200)
     d.close()
 
 

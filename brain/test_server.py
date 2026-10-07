@@ -379,6 +379,68 @@ async def alarm_flow(port: int):
     await screen.close()
 
 
+async def music_flow(port: int):
+    """Media buttons reach Spotify, and the now-playing poller tells screens about changes only.
+    Never the real account: the brain's Spotify client is swapped for one whose transport is a mock."""
+    hits, playing = [], {"now": None}
+
+    def api(request):
+        hits.append((request.method, request.url.path))
+        if request.url.path == "/v1/me/player/next":
+            return httpx.Response(404, json={"error": {"status": 404, "message": "Player command failed: No active device found"}})
+        if request.method == "GET" and request.url.path == "/v1/me/player":
+            return httpx.Response(200, json=playing["now"]) if playing["now"] else httpx.Response(204)
+        return httpx.Response(204)
+
+    tok = os.path.join(TMP, "spotify_token.json")
+    open(tok, "w").write(json.dumps({"access_token": "a", "refresh_token": "r", "expires_at": 10**12}))
+    real = brain.app.state.spotify
+    sp = brain.spotify.Spotify("cid", tok, transport=httpx.MockTransport(api))
+    brain.app.state.spotify = sp
+    try:
+        screen = await open_display(port, "den")
+
+        # A media button: the API call, then the poller is poked
+        await screen.send(json.dumps({"type": "media", "action": "pause"}))
+        deadline = time.time() + 3
+        while ("PUT", "/v1/me/player/pause") not in hits:
+            assert time.time() < deadline, hits
+            await asyncio.sleep(0.05)
+        assert sp.changed.is_set()
+        # A failed command says why, on the screen that was tapped
+        await screen.send(json.dumps({"type": "media", "action": "next"}))
+        card = await until_card(screen, "text")
+        assert card["title"] == "Music" and "No active device found" in card["lines"][0], card
+
+        # The poller: a new track is pushed; the same track a moment later is not; a pause is
+        playing["now"] = {"is_playing": True, "progress_ms": 1000, "item": {
+            "type": "track", "name": "Blue", "uri": "spotify:track:1", "duration_ms": 180000,
+            "artists": [{"name": "Joni Mitchell"}], "album": {"name": "Blue", "images": []}}}
+        assert await on_server(brain.check_music(sp)) == 5.0
+        m = await until_type(screen, "now_playing")
+        assert m["track"]["title"] == "Blue" and m["track"]["is_playing"], m
+        assert await on_server(brain.check_music(sp)) == 5.0
+        try:
+            stray = await recv_json(screen, timeout=0.5)
+            raise AssertionError(f"unchanged playback was pushed again: {stray}")
+        except TimeoutError:
+            pass
+        late = await open_display(port, "den")  # a screen connecting mid-song gets it straight away
+        assert (await until_type(late, "now_playing"))["track"]["title"] == "Blue"
+        playing["now"] = dict(playing["now"], is_playing=False)
+        assert await on_server(brain.check_music(sp)) == 20.0
+        assert (await until_type(screen, "now_playing"))["track"]["is_playing"] is False
+        playing["now"] = None
+        await on_server(brain.check_music(sp))
+        assert (await until_type(screen, "now_playing"))["track"] is None
+        await screen.close()
+        await late.close()
+    finally:
+        brain.app.state.spotify = real
+        brain.music_now = None
+        await on_server(sp.close())
+
+
 def main():
     server, port = start()
     base = f"http://127.0.0.1:{port}"
@@ -438,6 +500,7 @@ def main():
     assert got[-1]["type"] == "audio_end"
     # Displays: the device hub, ordering, isolation between devices, and turns started from a screen
     asyncio.run(display_flow(port))
+    asyncio.run(music_flow(port))
     asyncio.run(alarm_flow(port))
     assert not errors.records, [r.getMessage() for r in errors.records]
 

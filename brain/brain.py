@@ -59,7 +59,7 @@ SYSTEM_PROMPT = """You are Claude Home, a voice assistant on a smart speaker. Ev
 - Search the web only when you need current information, at most once per question, then answer.
 - After a web search, never list sources or links; the listener cannot see them.
 - Each user message starts with the current local time in brackets; use it when relevant, never read it back unprompted.
-- Use your tools for timers, alarms, the shopping list, weather, the calendar, a morning briefing, recipes, the speaker's volume, and remembering things. Confirm what you did in a few words.
+- Use your tools for timers, alarms, the shopping list, weather, the calendar, a morning briefing, recipes, music, the speaker's volume, and remembering things. Confirm what you did in a few words.
 - When you end with a question, the speaker listens for the answer without the wake word, so only ask when you need to."""
 
 OPTIONS = ClaudeAgentOptions(
@@ -173,7 +173,8 @@ def options(device: str) -> ClaudeAgentOptions:
     known = tools.facts()
     memory = "\n\nThings you remember about this household:\n" + "\n".join(f"- {f}" for f in known) if known else ""
     return replace(OPTIONS, system_prompt=SYSTEM_PROMPT + memory,
-                   mcp_servers={"home": tools.make_tools(device, on_card=show_card(device), on_volume=speaker(device))})
+                   mcp_servers={"home": tools.make_tools(device, on_card=show_card(device), on_volume=speaker(device),
+                                                         music=app.state.spotify)})
 
 
 def show_card(name: str):
@@ -442,6 +443,50 @@ async def refresh_weather():
         await asyncio.sleep(900)
 
 
+music_now: dict | None = None  # what the screens show as now playing (see spotify.track)
+music_at = 0.0  # when music_now was sent; its progress_ms is as of then
+music_error = ""  # the last Spotify problem logged, so the poller doesn't repeat it every 20 s
+
+
+def music_snapshot() -> dict | None:
+    """music_now with its position brought up to date, for a screen that connects mid-song."""
+    if not music_now or not music_now["is_playing"]:
+        return music_now
+    ahead = int((time.time() - music_at) * 1000)
+    return {**music_now, "progress_ms": min(music_now["duration_ms"], music_now["progress_ms"] + ahead)}
+
+
+async def check_music(sp: spotify.Spotify) -> float:
+    """Look at Spotify once and tell every screen if what's playing changed. Returns seconds until the next look:
+    5 while playing, 20 otherwise, longer while Spotify has asked us to back off."""
+    global music_now, music_at, music_error
+    try:
+        new = spotify.track(await sp.playback())
+    except spotify.SpotifyError as e:
+        if str(e) != music_error:
+            music_error = str(e)
+            print(f"spotify: {e}")
+        return max(20.0, sp.blocked_until - sp.clock())
+    music_error = ""
+    if spotify.moved(music_now, new, time.time() - music_at):
+        music_now, music_at = new, time.time()
+        for dev in list(devices.values()):
+            await dev.show({"type": "now_playing", "track": new})
+    return 5.0 if new and new["is_playing"] else 20.0
+
+
+async def poll_music():
+    sp = app.state.spotify
+    while True:
+        delay = await check_music(sp)
+        try:
+            await asyncio.wait_for(sp.changed.wait(), delay)
+            sp.changed.clear()
+            await asyncio.sleep(1)  # a control just happened; Spotify takes a moment to reflect it
+        except TimeoutError:
+            pass
+
+
 async def ring_timers():
     """Timers and alarms live in SQLite, so they survive restarts. Overdue timers ring once a satellite
     connects; an alarm more than RING_LIMIT_S late (the brain was down) is skipped rather than ringing late.
@@ -486,6 +531,8 @@ async def lifespan(app: FastAPI):
     app.state.spotify = spotify.Spotify(os.environ.get("SPOTIFY_CLIENT_ID", ""))
     loops = [asyncio.create_task(ring_timers()), asyncio.create_task(refresh_weather()),
              asyncio.create_task(refresh_agenda())]
+    if os.environ.get("SPOTIFY_CLIENT_ID"):
+        loops.append(asyncio.create_task(poll_music()))
     yield
     for task in loops:
         task.cancel()
@@ -585,6 +632,13 @@ async def from_display(dev: Device, m: dict, ws: WebSocket):
             tools.recipes.pop(dev.name, None)  # closing the sheet ends recipe mode
         elif tools.recipe_move(dev.name, m["action"]):
             await dev.show({"type": "card", "card": tools.recipe_card(dev.name)})  # every screen follows along
+    elif kind == "media" and m.get("action") in ("play", "pause", "next", "previous"):
+        sp = app.state.spotify
+        try:
+            await {"play": sp.resume, "pause": sp.pause, "next": sp.next, "previous": sp.previous}[m["action"]]()
+        except spotify.SpotifyError as e:  # say why on the screen that was tapped
+            await ws.send_text(json.dumps({"type": "card", "card": tools.text_card("Music", [str(e)])}))
+        sp.changed.set()
     elif kind == "text" and m.get("text"):
         spawn(turn(dev, text=m["text"]))  # spawned, so this screen can still send (e.g. stop) meanwhile
     elif kind == "talk" and dev.sat is not None:
@@ -616,6 +670,8 @@ async def display(ws: WebSocket):
             await ws.send_text(json.dumps({"type": "volume", "level": dev.volume}))
         if dev.ringing is not None:
             await ws.send_text(json.dumps({"type": "ringing", "ringing": dev.ringing}))
+        if music_now is not None:
+            await ws.send_text(json.dumps({"type": "now_playing", "track": music_snapshot()}))
         while True:
             msg = await ws.receive()
             if msg["type"] == "websocket.disconnect":
