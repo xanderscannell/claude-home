@@ -187,6 +187,10 @@ def weather_card(w: dict) -> dict:
     return {"kind": "weather", **w}
 
 
+def shopping_card() -> dict:
+    return {"kind": "shopping", "items": shopping_items()}
+
+
 def text_card(title: str, lines: list[str]) -> dict:
     return {"kind": "text", "title": title, "lines": lines}
 
@@ -233,21 +237,25 @@ def tool_list(device: str, on_card=_no_screen) -> list:
     @tool("add_to_shopping_list", "Add items to the shopping list.", _schema(items=STRINGS))
     async def add_shopping(a):
         shopping_add(a["items"])
+        await on_card(shopping_card())
         return _text(f"Shopping list now: {', '.join(shopping_items())}")
 
     @tool("remove_from_shopping_list", "Remove items from the shopping list.", _schema(items=STRINGS))
     async def remove_shopping(a):
         missing = shopping_remove(a["items"])
+        await on_card(shopping_card())
         left = ", ".join(shopping_items()) or "empty"
         return _text((f"Not on the list: {', '.join(missing)}. " if missing else "") + f"Shopping list now: {left}")
 
     @tool("get_shopping_list", "Read the shopping list.", _schema())
     async def get_shopping(a):
+        await on_card(shopping_card())
         return _text(", ".join(shopping_items()) or "The shopping list is empty.")
 
     @tool("clear_shopping_list", "Remove everything from the shopping list.", _schema())
     async def clear_shopping(a):
         shopping_remove(shopping_items())
+        await on_card(shopping_card())
         return _text("Shopping list cleared.")
 
     @tool("get_weather", "Current conditions and a 3-day forecast. Faster and more accurate than web search for weather.",

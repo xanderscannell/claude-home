@@ -298,12 +298,79 @@ const renderers = {
     })];
   },
 
+  shopping: (c) => {
+    if (!c.items.length) {
+      return ["Shopping list", [el("p", "quiet", "The shopping list is empty."),
+                                el("p", "hint", "Say “Hey Jarvis, add milk to the shopping list.”")]];
+    }
+    const list = el("ul", "shop-list");
+    for (const item of c.items) {
+      const row = el("li", "shop-row");
+      const tick = el("button", "shop-item");
+      tick.type = "button";
+      tick.append(el("span", "shop-check"), el("span", "shop-name", item));
+      tick.addEventListener("click", () => toggleItem(row, item));
+      const undo = el("button", "pill shop-undo", "Undo");
+      undo.type = "button";
+      undo.addEventListener("click", () => toggleItem(row, item));
+      row.append(tick, undo);
+      if (shopPending.has(item)) row.classList.add("done");
+      list.append(row);
+    }
+    return ["Shopping list", [list]];
+  },
+
+  menu: () => {
+    const entries = [
+      ["Timers and alarms", ICONS.timer, "timers"],
+      ["Shopping list", ICONS.list, "shopping"],
+      ["Music", ICONS.music, null],
+      ["Volume", ICONS.volume, null],
+    ];
+    return ["Menu", entries.map(([label, icon, sheet]) => {
+      const row = el("button", "menu-row");
+      row.type = "button";
+      const glyph = el("span", "menu-icon");
+      glyph.innerHTML = icon;  // fixed markup from ICONS, never data
+      row.append(glyph, el("span", "menu-label", label));
+      if (sheet) row.addEventListener("click", () => send({ type: "open", sheet }));
+      else { row.disabled = true; row.append(el("span", "menu-soon", "Coming soon")); }
+      return row;
+    })];
+  },
+
   text: (c) => {
     const lines = el("div", "text-lines");
     if (c.lines.length <= 5 && c.lines.every((l) => l.length <= 40)) lines.classList.add("roomy");
     lines.append(...c.lines.map((l) => el("p", null, l)));
     return [c.title, [lines]];
   },
+};
+
+// Checking an item off: struck through right away, removed for good after 3 s unless Undo is tapped.
+const SHOP_UNDO_MS = 3000;
+const shopPending = new Map();  // item -> timeout
+
+function toggleItem(row, item) {
+  if (shopPending.has(item)) {
+    clearTimeout(shopPending.get(item));
+    shopPending.delete(item);
+    row.classList.remove("done");
+    return;
+  }
+  row.classList.add("done");
+  shopPending.set(item, setTimeout(() => {
+    shopPending.delete(item);
+    send({ type: "shopping_remove", item });  // the brain answers with the updated list
+  }, SHOP_UNDO_MS));
+}
+
+const svg = (body) => `<svg viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
+const ICONS = {
+  timer: svg('<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9.5 2.5h5"/>'),
+  list: svg('<path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1.2 1.2L7 4.8M3.5 12l1.2 1.2L7 10.8M3.5 18l1.2 1.2L7 16.8"/>'),
+  music: svg('<path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>'),
+  volume: svg('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/>'),
 };
 
 function renderSheet() {
@@ -370,6 +437,7 @@ els.mic.addEventListener("click", () => send({ type: "talk" }));
 els.stop.addEventListener("click", () => send({ type: "stop" }));
 els.close.addEventListener("click", hideOverlay);
 els.sheetClose.addEventListener("click", closeSheet);
+els.menu.addEventListener("click", () => openSheet({ kind: "menu" }));
 els.sheet.addEventListener("pointerdown", touchSheet);
 
 startClock();

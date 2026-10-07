@@ -316,6 +316,96 @@ def test_sheets(b):
     d.close()
 
 
+def test_shopping_list(b):
+    d = Display(b)
+    d.push({"type": "card", "card": {"kind": "shopping", "items": ["Milk", "Eggs", "Sourdough bread", "Bananas"]}})
+    assert d.text("#sheet-title") == "Shopping list"
+    assert d.page.locator(".shop-name").all_inner_texts() == ["Milk", "Eggs", "Sourdough bread", "Bananas"]
+    box = d.page.locator(".shop-item").first.bounding_box()
+    assert box["height"] >= 64, box
+    d.shot("shopping", settle=400)
+
+    # Check off Eggs: struck through at once, with Undo; nothing sent yet
+    d.page.locator(".shop-item").nth(1).tap()
+    assert "done" in d.page.get_attribute(".shop-row >> nth=1", "class") and d.visible(".shop-row.done .shop-undo")
+    d.shot("shopping-checked", settle=200)
+    d.page.clock.run_for(1500)
+    d.page.locator(".shop-row.done .shop-undo").tap()  # changed my mind
+    d.page.clock.run_for(3000)
+    assert not any(m.get("type") == "shopping_remove" for m in d.sent), "undo should cancel the removal"
+    assert d.page.locator(".shop-row.done").count() == 0
+
+    # Check off Milk and let it go: removed after 3 s
+    d.page.locator(".shop-item").first.tap()
+    d.page.clock.run_for(3100)
+    assert {"type": "shopping_remove", "item": "Milk"} in d.sent, d.sent
+    d.push({"type": "card", "card": {"kind": "shopping", "items": ["Eggs", "Sourdough bread", "Bananas"]}})
+    assert d.page.locator(".shop-name").all_inner_texts() == ["Eggs", "Sourdough bread", "Bananas"]
+
+    # Empty list says how to add things
+    d.push({"type": "card", "card": {"kind": "shopping", "items": []}})
+    assert d.text(".sheet-body .quiet") == "The shopping list is empty." and "add milk" in d.text(".hint")
+    d.shot("shopping-empty", settle=200)
+    d.close()
+
+
+def test_menu(b):
+    d = Display(b)
+    d.tap("#menu")
+    assert d.visible("#sheet") and d.text("#sheet-title") == "Menu"
+    assert d.page.locator(".menu-label").all_inner_texts() == ["Timers and alarms", "Shopping list", "Music", "Volume"]
+    d.shot("menu", settle=400)
+    d.page.locator(".menu-row").nth(0).tap()
+    d.page.locator(".menu-row").nth(1).tap()
+    d.page.wait_for_timeout(50)
+    assert {"type": "open", "sheet": "timers"} in d.sent and {"type": "open", "sheet": "shopping"} in d.sent, d.sent
+    before = len(d.sent)
+    d.page.locator(".menu-row").nth(2).tap(force=True)  # not built yet: does nothing
+    d.page.wait_for_timeout(50)
+    assert len(d.sent) == before and d.page.locator(".menu-row:disabled").count() == 2
+    d.close()
+
+
+def test_navigation_every_screen_gets_home(b):
+    """From every screen there is a visible way home, and every sheet goes home on its own when left alone."""
+    screens = {
+        "weather": {"kind": "weather", **WEATHER},
+        "timers": {"kind": "timers", "timers": [], "alarms": []},
+        "shopping": {"kind": "shopping", "items": ["Milk"]},
+        "text": {"kind": "text", "title": "Note", "lines": ["Hello"]},
+    }
+    d = Display(b)
+    home = lambda: not d.visible("#sheet") and not d.visible("#overlay")  # noqa: E731
+
+    def open_screen(name):
+        if name == "menu":
+            d.tap("#menu")
+        else:
+            d.push({"type": "card", "card": screens[name]})
+        assert d.visible("#sheet"), name
+
+    for name in [*screens, "menu"]:
+        open_screen(name)
+        box = d.page.locator("#sheet-close").bounding_box()
+        assert box and box["width"] >= 64 and box["height"] >= 64, (name, box)
+        d.tap("#sheet-close")
+        assert home(), f"close didn't return home from {name}"
+        open_screen(name)
+        d.page.clock.run_for(45_500)
+        assert home(), f"{name} didn't return home after 45 s"
+
+    # The conversation overlay: a close button while it's up, and home 4 s after the conversation ends
+    for state in ("listening", "thinking", "speaking"):
+        d.push({"type": "state", "state": state})
+        assert d.visible("#close-overlay"), state
+        d.tap("#close-overlay")
+        assert home(), f"close didn't dismiss the {state} overlay"
+    d.push({"type": "state", "state": "speaking"}, {"type": "state", "state": "idle"})
+    d.page.clock.run_for(4100)
+    assert home()
+    d.close()
+
+
 def test_touch_controls(b):
     d = Display(b)
     d.tap("#mic")

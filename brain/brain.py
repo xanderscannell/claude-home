@@ -455,6 +455,8 @@ def sheet_card(dev: Device, sheet: str) -> dict | None:
                 tools.text_card("Weather", ["The forecast hasn't loaded yet. Try again in a minute."]))
     if sheet == "timers":
         return tools.timers_card(dev.name)
+    if sheet == "shopping":
+        return tools.shopping_card()
     return None
 
 
@@ -465,6 +467,11 @@ async def from_display(dev: Device, m: dict, ws: WebSocket):
         await ws.send_text(json.dumps({"type": "card", "card": card}))  # just the screen that asked
     elif kind == "timer_cancel" and isinstance(m.get("id"), int):
         tools.timer_cancel_id(dev.name, m["id"])  # the timer watcher updates every screen
+    elif kind == "shopping_remove" and isinstance(m.get("item"), str):
+        tools.shopping_remove([m["item"]])
+        # Only this screen: a card opens the sheet, and other screens shouldn't pop open. They get a fresh list
+        # whenever they open it.
+        await ws.send_text(json.dumps({"type": "card", "card": tools.shopping_card()}))
     elif kind == "text" and m.get("text"):
         spawn(turn(dev, text=m["text"]))  # spawned, so this screen can still send (e.g. stop) meanwhile
     elif kind == "talk" and dev.sat is not None:

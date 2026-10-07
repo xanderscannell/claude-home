@@ -121,6 +121,13 @@ async def until_type(ws, kind: str) -> dict:
     return m
 
 
+async def until_card(ws, kind: str) -> dict:
+    """Skip messages until a card of this kind; return the card."""
+    while (m := await until_type(ws, "card"))["card"]["kind"] != kind:
+        pass
+    return m["card"]
+
+
 async def display_flow(port: int):
     a, b, other = [await open_display(port, n) for n in ("kitchen", "kitchen", "office")]
     async with websockets.connect(f"ws://127.0.0.1:{port}/satellite?device=kitchen") as sat:
@@ -222,6 +229,17 @@ async def display_flow(port: int):
         while m["timers"]:
             m = await until_type(a, "ambient")
         assert brain.tools.timer_list("kitchen") == []
+
+        # Shopping: Claude's tools show the list; checking an item off on one screen updates just that screen
+        await on_server(kitchen_tools["add_to_shopping_list"].handler({"items": ["Milk", "eggs", "Bread"]}))
+        assert await until_card(a, "shopping") == {"kind": "shopping", "items": ["Milk", "eggs", "Bread"]}
+        await until_card(b, "shopping")
+        await a.send(json.dumps({"type": "shopping_remove", "item": "EGGS"}))
+        assert (await until_card(a, "shopping"))["items"] == ["Milk", "Bread"]
+        assert brain.tools.shopping_items() == ["Milk", "Bread"]
+        await b.send(json.dumps({"type": "open", "sheet": "shopping"}))
+        assert (await until_card(b, "shopping"))["items"] == ["Milk", "Bread"], "b sees the change when it opens"
+        brain.tools.shopping_remove(["Milk", "Bread"])
     for ws in (a, b, other):
         await ws.close()
 
