@@ -1,0 +1,5 @@
+# Files are deployed to a Linux Pi; keep Unix line endings in every checkout.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.onnx binary
