@@ -10,6 +10,8 @@ const els = {
   time: $("time"), date: $("date"), mic: $("mic"), menu: $("menu"), weather: $("weather"), strip: $("strip"),
   overlay: $("overlay"), heard: $("heard"), reply: $("reply"), stop: $("stop"), close: $("close-overlay"),
   sheet: $("sheet"), sheetTitle: $("sheet-title"), sheetBody: $("sheet-body"), sheetClose: $("sheet-close"),
+  ringing: $("ringing"), ringingTime: $("ringing-time"), ringingLabel: $("ringing-label"),
+  ringingStop: $("ringing-stop"), snooze: $("snooze"),
   offline: $("offline"),
 };
 
@@ -65,6 +67,7 @@ const handlers = {
     if (sheetCard && sheetCard.kind === "timers") renderSheet();  // keep an open timers sheet live
   },
   card: (m) => openSheet(m.card),
+  ringing: (m) => showRinging(m.ringing),
 };
 
 function handle(msg) {
@@ -190,6 +193,31 @@ function renderWeather() {
   els.weather.append(button);
 }
 
+// "06:30" -> 6:30 with a small "am", in an element of the given class
+function alarmTime(hhmm, className) {
+  const [h, m] = hhmm.split(":").map(Number);
+  const out = el("span", className, `${h % 12 || 12}:${String(m).padStart(2, "0")}`);
+  out.append(el("span", "ampm", h < 12 ? "am" : "pm"));
+  return out;
+}
+
+// "" today, " tomorrow", or " Monday" for when an alarm next rings
+function dayWord(epoch) {
+  const at = new Date(epoch * 1000), today = new Date();
+  const days = Math.round((new Date(at).setHours(0, 0, 0, 0) - new Date(today).setHours(0, 0, 0, 0)) / 86400000);
+  if (days <= 0) return "";
+  if (days === 1) return " tomorrow";
+  return ` ${at.toLocaleDateString([], { weekday: "long" })}`;
+}
+
+const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+function repeatText(days) {
+  const named = { "": "Once", "01234": "Weekdays", "56": "Weekends", "0123456": "Every day" };
+  if (days in named) return named[days];
+  return [...days].map((d) => WEEKDAY_NAMES[Number(d)].slice(0, 3)).join(", ");
+}
+
 // m:ss under an hour, h:mm:ss over
 function countdown(seconds) {
   const s = Math.max(0, Math.ceil(seconds));
@@ -206,6 +234,14 @@ function renderStrip() {
     item.type = "button";
     item.dataset.endsAt = t.ends_at;
     item.append(el("span", "num", countdown(t.ends_at - now)), el("span", "label", sentence(t.label) || "Timer"));
+    item.addEventListener("click", () => send({ type: "open", sheet: "timers" }));
+    els.strip.append(item);
+  }
+  const a = ambient.next_alarm;
+  if (a) {
+    const item = el("button", "item alarm");
+    item.type = "button";
+    item.append(alarmTime(a.time, "num"), el("span", "label", `${sentence(a.label) || "Alarm"}${dayWord(a.next_ring)}`));
     item.addEventListener("click", () => send({ type: "open", sheet: "timers" }));
     els.strip.append(item);
   }
@@ -276,26 +312,21 @@ const renderers = {
     return [title, [now, days]];
   },
 
-  timers: () => {
+  timers: (c) => {
     const now = Date.now() / 1000;
     const running = ambient.timers.filter((t) => t.ends_at > now);  // live list, not the card's snapshot
-    if (!running.length) {
-      return ["Timers", [el("p", "quiet", "No timers running."),
-                         el("p", "hint", "Say “Hey Jarvis, set a timer for ten minutes.”")]];
+    const alarms = c.alarms || [];
+    if (!running.length && !alarms.length) {
+      return ["Timers and alarms", [el("p", "quiet", "No timers or alarms."),
+                                    el("p", "hint", "Say “Hey Jarvis, set a timer for ten minutes” or “wake me up at 7.”")]];
     }
-    return ["Timers", running.map((t) => {
-      const row = el("div", "timer-row");
-      const num = el("span", "countdown", countdown(t.ends_at - now));
-      num.dataset.endsAt = t.ends_at;
-      const cancel = el("button", "pill", "Cancel");
-      cancel.type = "button";
-      cancel.addEventListener("click", () => {
-        row.classList.add("leaving");
-        send({ type: "timer_cancel", id: t.id });
-      });
-      row.append(num, el("span", "label", sentence(t.label) || "Timer"), cancel);
-      return row;
-    })];
+    const both = running.length && alarms.length;  // group labels only when there are two groups to tell apart
+    const nodes = [];
+    if (both) nodes.push(el("p", "group-label", "Timers"));
+    nodes.push(...running.map(timerRow));
+    if (both) nodes.push(el("p", "group-label", "Alarms"));
+    nodes.push(...alarms.map(alarmRow));
+    return [both ? "Timers and alarms" : running.length ? "Timers" : "Alarms", nodes];
   },
 
   shopping: (c) => {
@@ -346,6 +377,58 @@ const renderers = {
     return [c.title, [lines]];
   },
 };
+
+function timerRow(t) {
+  const row = el("div", "timer-row");
+  const num = el("span", "countdown", countdown(t.ends_at - Date.now() / 1000));
+  num.dataset.endsAt = t.ends_at;
+  const cancel = el("button", "pill", "Cancel");
+  cancel.type = "button";
+  cancel.addEventListener("click", () => {
+    row.classList.add("leaving");
+    send({ type: "timer_cancel", id: t.id });
+  });
+  row.append(num, el("span", "label", sentence(t.label) || "Timer"), cancel);
+  return row;
+}
+
+function alarmRow(a) {
+  const row = el("div", a.enabled ? "alarm-row" : "alarm-row off");
+  const what = el("div", "alarm-what");
+  what.append(el("p", "alarm-name", sentence(a.label) || "Alarm"), el("p", "alarm-days", repeatText(a.days)));
+  const toggle = el("button", "switch");
+  toggle.type = "button";
+  toggle.setAttribute("role", "switch");
+  toggle.setAttribute("aria-checked", String(a.enabled));
+  toggle.setAttribute("aria-label", `Alarm at ${a.time}`);
+  toggle.append(el("span"));
+  toggle.addEventListener("click", () => {
+    const on = toggle.getAttribute("aria-checked") !== "true";
+    toggle.setAttribute("aria-checked", String(on));  // show the change now; the brain's card confirms it
+    row.classList.toggle("off", !on);
+    send({ type: "alarm_toggle", id: a.id, enabled: on });
+  });
+  const del = el("button", "pill", "Delete");
+  del.type = "button";
+  del.addEventListener("click", () => {
+    row.classList.add("leaving");
+    send({ type: "alarm_delete", id: a.id });
+  });
+  row.append(alarmTime(a.time, "alarm-time"), what, toggle, del);
+  return row;
+}
+
+// --- Ringing ----------------------------------------------------------------------------------
+
+function showRinging(r) {
+  if (!r) {
+    els.ringing.hidden = true;
+    return;
+  }
+  els.ringingTime.replaceChildren(...alarmTime(r.time, "t").childNodes);
+  els.ringingLabel.textContent = sentence(r.label) || "Alarm";
+  els.ringing.hidden = false;
+}
 
 // Checking an item off: struck through right away, removed for good after 3 s unless Undo is tapped.
 const SHOP_UNDO_MS = 3000;
@@ -438,6 +521,8 @@ els.stop.addEventListener("click", () => send({ type: "stop" }));
 els.close.addEventListener("click", hideOverlay);
 els.sheetClose.addEventListener("click", closeSheet);
 els.menu.addEventListener("click", () => openSheet({ kind: "menu" }));
+els.ringingStop.addEventListener("click", () => send({ type: "stop" }));
+els.snooze.addEventListener("click", () => send({ type: "snooze" }));
 els.sheet.addEventListener("pointerdown", touchSheet);
 
 startClock();

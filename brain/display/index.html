@@ -46,6 +46,16 @@
     <button id="stop" class="stop" type="button">Stop</button>
   </section>
 
+  <section id="ringing" class="ringing" hidden role="alertdialog" aria-labelledby="ringing-time">
+    <div class="ringing-pulse" aria-hidden="true"></div>
+    <p id="ringing-time" class="ringing-time"></p>
+    <p id="ringing-label" class="ringing-label"></p>
+    <div class="ringing-actions">
+      <button id="snooze" class="snooze" type="button">Snooze</button>
+      <button id="ringing-stop" class="ringing-stop" type="button">Stop</button>
+    </div>
+  </section>
+
   <div id="offline" class="offline" role="status" hidden>Can't reach Claude Home. Trying again…</div>
 </body>
 </html>

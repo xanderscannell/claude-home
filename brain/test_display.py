@@ -22,6 +22,11 @@ PREFIX = os.environ.get("SCREENS_PREFIX", "display")
 START = dt.datetime(2026, 10, 7, 9, 41, 0)  # a Wednesday morning, local time
 
 
+def big(box, w=64, h=64) -> bool:
+    """A touch target at least w x h px. Rounded: boxes measured mid-slide come out a hair under (63.99997)."""
+    return bool(box) and round(box["width"]) >= w and round(box["height"]) >= h
+
+
 class Display:
     """One page with a fake brain on the other end of its socket."""
 
@@ -179,7 +184,7 @@ def test_weather_and_timers(b):
     assert labels == ["Timer", "Pasta"] and nums == ["1:15", "4:12"], (labels, nums)
     for selector in (".weather-button", ".strip .item"):
         box = d.page.locator(selector).first.bounding_box()
-        assert box["height"] >= 64 and box["width"] >= 64, (selector, box)
+        assert big(box), (selector, box)
     d.shot("weather-timers")
 
     d.page.clock.run_for(60_000)
@@ -268,7 +273,7 @@ def test_sheets(b):
     assert d.page.locator(".wx-rain").all_inner_texts() == ["60% chance of rain"], "rain shown only when likely"
     d.shot("sheet-weather", settle=400)
     box = d.page.locator("#sheet-close").bounding_box()
-    assert box["width"] >= 64 and box["height"] >= 64, box
+    assert big(box), box
     d.tap("#sheet-close")
     assert not sheet_open(d), "close didn't return home"
 
@@ -286,7 +291,7 @@ def test_sheets(b):
     d.push(ambient([timers[1]]))  # the brain confirms the cancel
     assert d.page.locator(".timer-row").count() == 1
     d.push(ambient([]))
-    assert d.text(".sheet-body .quiet") == "No timers running."
+    assert d.text(".sheet-body .quiet") == "No timers or alarms."
     d.shot("sheet-timers-empty", settle=400)
 
     # Untouched for 45 s, the sheet goes home; a touch restarts the wait
@@ -322,7 +327,7 @@ def test_shopping_list(b):
     assert d.text("#sheet-title") == "Shopping list"
     assert d.page.locator(".shop-name").all_inner_texts() == ["Milk", "Eggs", "Sourdough bread", "Bananas"]
     box = d.page.locator(".shop-item").first.bounding_box()
-    assert box["height"] >= 64, box
+    assert big(box, w=0), box
     d.shot("shopping", settle=400)
 
     # Check off Eggs: struck through at once, with Undo; nothing sent yet
@@ -386,8 +391,8 @@ def test_navigation_every_screen_gets_home(b):
 
     for name in [*screens, "menu"]:
         open_screen(name)
-        box = d.page.locator("#sheet-close").bounding_box()
-        assert box and box["width"] >= 64 and box["height"] >= 64, (name, box)
+        box = d.page.locator("#sheet-close").bounding_box()  # (may be mid-slide: sub-pixel sizes, so round)
+        assert big(box), (name, box)
         d.tap("#sheet-close")
         assert home(), f"close didn't return home from {name}"
         open_screen(name)
@@ -406,12 +411,79 @@ def test_navigation_every_screen_gets_home(b):
     d.close()
 
 
+def alarm(id, time_, days="", label="", enabled=True, next_ring=None):
+    return {"id": id, "time": time_, "days": days, "label": label, "enabled": enabled,
+            "next_ring": next_ring or (START + dt.timedelta(days=1)).timestamp()}
+
+
+def test_alarms_on_screen(b):
+    d = Display(b)
+    tomorrow_630 = dt.datetime(2026, 10, 8, 6, 30).timestamp()
+    monday_7 = dt.datetime(2026, 10, 12, 7, 0).timestamp()
+
+    # The next alarm on the home strip: the time, then which day
+    d.push(dict(ambient([], weather=None), next_alarm=alarm(1, "06:30", next_ring=tomorrow_630)))
+    assert d.text(".strip .alarm .num") == "6:30am" and d.text(".strip .alarm .label") == "Alarm tomorrow"
+    d.push(dict(ambient([], weather=None), next_alarm=alarm(2, "07:00", "0", "gym", next_ring=monday_7)))
+    assert d.text(".strip .alarm .label") == "Gym Monday"
+    d.tap(".strip .alarm")
+    assert {"type": "open", "sheet": "timers"} in d.sent
+
+    # The sheet: timers and alarms in two labeled groups; each alarm with its days, a switch, Delete
+    d.push(ambient([{"id": 9, "label": "pasta", "ends_at": START.timestamp() + 252}], weather=None))
+    alarms = [alarm(1, "06:30", "01234", "", next_ring=tomorrow_630), alarm(2, "21:15", "56", "reading", enabled=False)]
+    d.push({"type": "card", "card": {"kind": "timers", "timers": ambient()["timers"] or
+                                     [{"id": 9, "label": "pasta", "ends_at": START.timestamp() + 252}], "alarms": alarms}})
+    assert d.text("#sheet-title") == "Timers and alarms"
+    assert d.page.locator(".group-label").all_inner_texts() == ["Timers", "Alarms"]
+    assert d.page.locator(".alarm-time").all_inner_texts() == ["6:30am", "9:15pm"]
+    assert d.page.locator(".alarm-days").all_inner_texts() == ["Weekdays", "Weekends"]
+    assert d.page.locator(".alarm-name").all_inner_texts() == ["Alarm", "Reading"]
+    assert d.page.locator(".alarm-row.off").count() == 1
+    for sel in (".switch", ".alarm-row .pill"):
+        box = d.page.locator(sel).first.bounding_box()
+        assert big(box), (sel, box)
+    d.shot("sheet-alarms", settle=400)
+    d.page.locator(".switch").first.tap()
+    d.page.wait_for_timeout(50)
+    assert {"type": "alarm_toggle", "id": 1, "enabled": False} in d.sent, d.sent
+    assert d.page.get_attribute(".switch >> nth=0", "aria-checked") == "false", "the switch should move at once"
+    d.page.locator(".alarm-row .pill").nth(1).tap()
+    d.page.wait_for_timeout(50)
+    assert {"type": "alarm_delete", "id": 2} in d.sent, d.sent
+
+    # Only alarms: titled for what it holds, no group labels
+    d.push({"type": "card", "card": {"kind": "timers", "timers": [], "alarms": alarms[:1]}})
+    d.push(ambient([], weather=None))
+    assert d.text("#sheet-title") == "Alarms" and d.page.locator(".group-label").count() == 0
+
+    # Ringing: over everything (even an open sheet), Stop and Snooze send their messages, null clears it
+    d.push({"type": "ringing", "ringing": {"kind": "alarm", "id": 1, "label": "", "time": "06:30"}})
+    assert d.visible("#ringing") and d.text("#ringing-time") == "6:30am" and d.text("#ringing-label") == "Alarm"
+    top = d.page.evaluate("document.elementFromPoint(400, 240).closest('section').id")
+    assert top == "ringing", f"ringing should be on top, found {top}"
+    stop_box = d.page.locator("#ringing-stop").bounding_box()
+    assert big(stop_box, w=240, h=96), stop_box
+    d.shot("ringing", settle=400)
+    d.tap("#snooze")
+    d.tap("#ringing-stop")
+    assert {"type": "snooze"} in d.sent and {"type": "stop"} in d.sent, d.sent
+    d.page.clock.run_for(60_000)
+    assert d.visible("#ringing"), "ringing must not time out on its own; the brain ends it"
+    d.push({"type": "ringing", "ringing": None})
+    assert not d.visible("#ringing")
+    d.push({"type": "ringing", "ringing": {"kind": "alarm", "id": 2, "label": "time for the gym", "time": "07:00"}})
+    assert d.text("#ringing-label") == "Time for the gym"
+    d.shot("ringing-label", settle=400)
+    d.close()
+
+
 def test_touch_controls(b):
     d = Display(b)
     d.tap("#mic")
     assert {"type": "talk"} in d.sent, d.sent
     box = d.page.locator("#mic").bounding_box()
-    assert box["width"] >= 64 and box["height"] >= 64, box
+    assert big(box), box
     d.push({"type": "state", "state": "speaking"})
     d.tap("#close-overlay")
     assert not d.visible("#overlay"), "close didn't dismiss the overlay"

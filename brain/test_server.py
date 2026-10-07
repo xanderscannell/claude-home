@@ -305,6 +305,20 @@ async def alarm_flow(port: int):
         await asyncio.sleep(0.3)
         assert not any(a["id"] == gives_up for a in brain.tools.alarm_list("bedroom"))
 
+        # From the timers sheet: turn an alarm off and on, delete it; the sheet refreshes, home learns the next alarm
+        later = brain.tools.alarm_add("bedroom", "21:15", "56", "weekend reading")
+        await screen.send(json.dumps({"type": "alarm_toggle", "id": later, "enabled": False}))
+        card = await until_card(screen, "timers")
+        assert [(a["id"], a["enabled"]) for a in card["alarms"]] == [(later, False)], card
+        await screen.send(json.dumps({"type": "alarm_toggle", "id": later, "enabled": True}))
+        assert (await until_card(screen, "timers"))["alarms"][0]["enabled"] is True
+        m = await until_type(screen, "ambient")
+        while not m["next_alarm"]:
+            m = await until_type(screen, "ambient")
+        assert m["next_alarm"]["id"] == later and m["next_alarm"]["time"] == "21:15", m["next_alarm"]
+        await screen.send(json.dumps({"type": "alarm_delete", "id": later}))
+        assert (await until_card(screen, "timers"))["alarms"] == []
+
         # An alarm missed by more than the limit (the brain was down) is skipped, not rung late
         late = brain.tools.alarm_add("bedroom", "06:30", "", "late")
         brain.tools.q("UPDATE alarms SET next_ring = ? WHERE id = ?", time.time() - 3600, late)

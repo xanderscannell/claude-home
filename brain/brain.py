@@ -528,6 +528,12 @@ async def from_display(dev: Device, m: dict, ws: WebSocket):
         await ws.send_text(json.dumps({"type": "card", "card": card}))  # just the screen that asked
     elif kind == "timer_cancel" and isinstance(m.get("id"), int):
         tools.timer_cancel_id(dev.name, m["id"])  # the timer watcher updates every screen
+    elif kind in ("alarm_toggle", "alarm_delete") and isinstance(m.get("id"), int):
+        if kind == "alarm_toggle":
+            tools.alarm_toggle(dev.name, m["id"], bool(m.get("enabled")))
+        else:
+            tools.alarm_delete(dev.name, m["id"])
+        await ws.send_text(json.dumps({"type": "card", "card": tools.timers_card(dev.name)}))  # refresh this sheet
     elif kind == "shopping_remove" and isinstance(m.get("item"), str):
         tools.shopping_remove([m["item"]])
         # Only this screen: a card opens the sheet, and other screens shouldn't pop open. They get a fresh list
