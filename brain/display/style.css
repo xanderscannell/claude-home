@@ -1,0 +1,154 @@
+/* Claude Home display. 800x480 kitchen screen; photos are the room, the interface is a caption.
+   Pi 3 GPU: animate only opacity and transform; no backdrop-filter, blur, or large shadows. */
+
+@font-face { font-family: "Fraunces"; src: url("fonts/Fraunces.ttf") format("truetype"); font-weight: 100 900; font-display: block; }
+@font-face { font-family: "Inter"; src: url("fonts/Inter.ttf") format("truetype"); font-weight: 100 900; font-display: block; }
+
+:root {
+  --night: #13202E;
+  --frost: #EEF3F7;
+  --mist: #A9B8C6;
+  --marigold: #F2B544;
+  --ember: #FF8A4C;
+  --accent: var(--marigold);   /* replaced per photo by app.js */
+  --on-photo: 0 1px 12px rgba(0, 0, 0, .45);
+  --far: "Fraunces", Georgia, serif;
+  --near: "Inter", system-ui, sans-serif;
+  --edge: 30px;
+}
+
+* { box-sizing: border-box; margin: 0; }
+html, body { width: 100%; height: 100%; overflow: hidden; }
+body {
+  background: var(--night);
+  color: var(--frost);
+  font: 20px/1.4 var(--near);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: none;
+}
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: none; touch-action: manipulation; }
+button:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+svg { display: block; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+[hidden] { display: none !important; }
+
+/* The room: until photos arrive (item 7), a calm night gradient. */
+.backdrop {
+  position: fixed; inset: 0;
+  background:
+    radial-gradient(120% 90% at 85% 10%, #1f3347 0%, transparent 60%),
+    radial-gradient(90% 80% at 10% 100%, #0d1823 0%, transparent 70%),
+    var(--night);
+}
+
+/* --- Home ------------------------------------------------------------------------------ */
+
+.home { position: fixed; inset: 0; transition: opacity .25s ease; }
+body.talking .home { opacity: 0; pointer-events: none; }
+
+.menu {
+  position: absolute; top: 14px; left: 14px;
+  width: 64px; height: 64px; display: grid; place-items: center;
+  color: var(--frost); opacity: .55;
+}
+.menu svg { width: 22px; height: 22px; fill: currentColor; stroke: none; }
+
+.weather { position: absolute; top: 22px; right: var(--edge); text-align: right; text-shadow: var(--on-photo); }
+
+.clock { position: absolute; left: var(--edge); bottom: 92px; text-shadow: var(--on-photo); }
+.time {
+  display: block;
+  font: 330 156px/.86 var(--far);
+  font-variation-settings: "opsz" 144, "SOFT" 100, "WONK" 0;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  letter-spacing: -2px;
+}
+.date { font-size: 22px; opacity: .88; margin-top: 10px; padding-left: 4px; }
+
+.strip {
+  position: absolute; left: calc(var(--edge) + 4px); right: 130px; bottom: 30px;
+  display: flex; gap: 34px; align-items: baseline;
+  font-size: 18px; text-shadow: var(--on-photo); white-space: nowrap; overflow: hidden;
+}
+
+.mic {
+  position: absolute; right: 26px; bottom: 22px;
+  width: 76px; height: 76px; border-radius: 50%;
+  background: var(--accent); color: var(--night);
+  display: grid; place-items: center;
+  transition: transform .12s ease;
+}
+.mic:active { transform: scale(.94); }
+body.is-offline .mic { opacity: .4; pointer-events: none; }
+.mic svg { width: 30px; height: 30px; }
+
+/* --- Conversation overlay ------------------------------------------------------------- */
+
+.overlay {
+  position: fixed; inset: 0;
+  background: rgba(19, 32, 46, .9);
+  padding: 34px 36px 0;
+  opacity: 0; transition: opacity .2s ease;
+}
+.overlay.shown { opacity: 1; }
+
+.close {
+  position: absolute; top: 10px; right: 10px;
+  width: 64px; height: 64px; display: grid; place-items: center; opacity: .7;
+}
+.close svg { width: 26px; height: 26px; }
+
+.heard {
+  max-width: 640px; min-height: 28px;
+  font-size: 20px; color: var(--frost); opacity: .7;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.reply {
+  margin-top: 16px; max-width: 700px; height: 300px; overflow: hidden;
+  font: 360 36px/1.26 var(--far);
+  font-variation-settings: "opsz" 48, "SOFT" 100;
+}
+
+/* The state light carries all conversation state: breathe (listening), sweep (thinking), pulse (speaking). */
+.light {
+  position: absolute; left: 36px; right: 168px; bottom: 58px; height: 4px;
+  border-radius: 2px; overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.light i {
+  position: absolute; inset: 0; border-radius: 2px;
+  background: var(--accent);
+  transform-origin: left center;
+}
+.overlay[data-state="listening"] .light i { animation: breathe 2.4s ease-in-out infinite; transform-origin: center; }
+.overlay[data-state="thinking"] .light i { width: 30%; animation: sweep 1.3s cubic-bezier(.5, 0, .5, 1) infinite alternate; }
+.overlay[data-state="speaking"] .light i { animation: pulse .9s ease-in-out infinite alternate; }
+.overlay[data-state="idle"] .light i { opacity: .25; }
+
+@keyframes breathe { 0%, 100% { transform: scaleX(.35); opacity: .5; } 50% { transform: scaleX(1); opacity: 1; } }
+@keyframes sweep { from { transform: translateX(0); } to { transform: translateX(233%); } }
+@keyframes pulse { from { opacity: .55; } to { opacity: 1; } }
+
+.stop {
+  position: absolute; right: 26px; bottom: 22px;
+  height: 76px; min-width: 112px; padding: 0 30px; border-radius: 38px;
+  background: var(--frost); color: var(--night);
+  font-size: 22px; font-weight: 600;
+  transition: transform .12s ease;
+}
+.stop:active { transform: scale(.95); }
+.overlay[data-state="idle"] .stop { opacity: 0; pointer-events: none; }
+
+/* --- Offline note ------------------------------------------------------------------------ */
+
+.offline {
+  position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+  padding: 10px 20px; border-radius: 22px;
+  background: rgba(19, 32, 46, .92); color: var(--frost);
+  font-size: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

@@ -1,5 +1,40 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>Claude Home</title></head>
-<body>Claude Home display</body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude Home</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <div class="backdrop" aria-hidden="true"></div>
+
+  <main id="home" class="home">
+    <button id="menu" class="menu" type="button" aria-label="Menu">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="1.6"/><circle cx="12" cy="6" r="1.6"/><circle cx="18" cy="6" r="1.6"/><circle cx="6" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18" cy="12" r="1.6"/><circle cx="6" cy="18" r="1.6"/><circle cx="12" cy="18" r="1.6"/><circle cx="18" cy="18" r="1.6"/></svg>
+    </button>
+    <section id="weather" class="weather" aria-live="polite"></section>
+    <div class="clock">
+      <time id="time" class="time"></time>
+      <div id="date" class="date"></div>
+    </div>
+    <div id="strip" class="strip"></div>
+    <button id="mic" class="mic" type="button" aria-label="Talk to Claude">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+    </button>
+  </main>
+
+  <section id="overlay" class="overlay" data-state="idle" hidden aria-live="polite">
+    <button id="close-overlay" class="close" type="button" aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <p id="heard" class="heard"></p>
+    <div id="reply" class="reply"></div>
+    <div class="light" aria-hidden="true"><i></i></div>
+    <button id="stop" class="stop" type="button">Stop</button>
+  </section>
+
+  <div id="offline" class="offline" role="status" hidden>Can't reach Claude Home. Trying again…</div>
+</body>
 </html>
