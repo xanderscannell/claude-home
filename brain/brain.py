@@ -151,7 +151,13 @@ FAKE_LLM = os.environ.get("CLAUDE_HOME_FAKE_LLM") == "1"
 
 
 async def fake_ask(client, text: str):
-    """Stand-in for ask(): two sentences, ending with a question if the request mentions one."""
+    """Stand-in for ask(): two sentences, ending with a question if the request mentions one.
+    "long" gives five slower sentences, so tests can stop a reply partway through."""
+    if "long" in text.lower():
+        for i in range(1, 6):
+            await asyncio.sleep(0.3)
+            yield f"This is sentence {i} of a long reply."
+        return
     yield "This is a canned reply."
     yield "Did you want anything else?" if "question" in text.lower() else "That is all."
 
@@ -187,6 +193,9 @@ class Device:
         self.sat: WebSocket | None = None  # the satellite connection, if one is connected
         self.client = None  # its Claude session (None in fake mode or with no satellite)
         self.lock = asyncio.Lock()  # one reply or announcement at a time
+        self.busy = False  # a turn is running
+        self.stopped = False  # Stop was tapped during this turn
+        self.volume: int | None = None  # the speaker's level, as last reported by the satellite
         self.displays: set[WebSocket] = set()
         self.state = "idle"  # idle | listening | thinking | speaking
 
@@ -235,6 +244,30 @@ async def announce(dev: Device, text: str):
 
 async def turn(dev: Device, pcm: bytes = b"", text: str | None = None):
     """One request: speech (pcm) or typed text in, Claude's spoken reply out, with the screens following along."""
+    dev.busy, dev.stopped = True, False
+    try:
+        await _turn(dev, pcm, text)
+    finally:
+        dev.busy = dev.stopped = False
+
+
+async def quietly(coro):
+    with contextlib.suppress(Exception):
+        await coro
+
+
+async def stop(dev: Device):
+    """Stop on the screen: cut the reply short now, or drop whatever the satellite still has queued."""
+    if dev.busy:
+        dev.stopped = True  # the running turn stops speaking at its next sentence
+        if dev.client is not None:
+            # Claude stops writing. Spawned: awaiting it here held up this screen's next message for ~8 s.
+            spawn(quietly(dev.client.interrupt()))
+    elif dev.sat is not None:
+        await send(dev.sat, json.dumps({"type": "stop"}))
+
+
+async def _turn(dev: Device, pcm: bytes, text: str | None):
     voice, groq = app.state.voice, app.state.groq
     await dev.set_state("thinking")
     t0 = time.perf_counter()  # speech_end received (the satellite's VAD silence tail came just before)
@@ -243,7 +276,7 @@ async def turn(dev: Device, pcm: bytes = b"", text: str | None = None):
     t_stt = time.perf_counter()
     async with dev.lock:
         sat = dev.sat
-        if text.lower().strip(" .!?,") in IGNORE or sat is None:
+        if text.lower().strip(" .!?,") in IGNORE or sat is None or dev.stopped:
             print(f"[{dev.name}] (heard {text!r}, skipped)" if sat else f"[{dev.name}] no satellite connected")
             if sat:
                 await send(sat, json.dumps({"type": "audio_end", "follow_up": False}))
@@ -255,6 +288,8 @@ async def turn(dev: Device, pcm: bytes = b"", text: str | None = None):
         await send(sat, json.dumps({"type": "audio_start", "sample_rate": voice.config.sample_rate}))
         reply, t_first, t_audio = [], None, None
         async for s in (fake_ask if FAKE_LLM else ask)(dev.client, text):
+            if dev.stopped:
+                continue  # keep draining Claude's stream so nothing leaks into the next turn, but say no more
             t_first = t_first or time.perf_counter()
             reply.append(s)
             audio = await asyncio.to_thread(lambda: [c.audio_int16_bytes for c in voice.synthesize(for_speech(s))])
@@ -263,11 +298,13 @@ async def turn(dev: Device, pcm: bytes = b"", text: str | None = None):
             for chunk in audio:
                 await send(sat, chunk)
             t_audio = t_audio or time.perf_counter()
-        follow_up = bool(reply) and reply[-1].endswith("?")
+        if dev.stopped:
+            await send(sat, json.dumps({"type": "stop"}))  # drop what the satellite has queued
+        follow_up = bool(reply) and reply[-1].endswith("?") and not dev.stopped
         await send(sat, json.dumps({"type": "audio_end", "follow_up": follow_up}))
-        if not reply:
-            await dev.set_state("idle")  # nothing to play, so no "played" will come
-    print(f"[{dev.name}] claude: {' '.join(reply)}")
+        if not reply or dev.stopped:
+            await dev.set_state("idle")  # nothing (more) to play, so don't wait for "played"
+    print(f"[{dev.name}] claude: {' '.join(reply)}" + (" (stopped)" if dev.stopped else ""))
 
     log = {"ts": datetime.now().isoformat(timespec="seconds"), "device": dev.name, "you": text,
            "claude": " ".join(reply), "audio_s": round(len(pcm) / 2 / RATE, 2),
@@ -359,6 +396,22 @@ async def serve_satellite(ws: WebSocket, dev: Device):
             await turn(dev, text=m["text"])
         elif kind == "played":
             await dev.set_state("idle")
+        elif kind == "volume":
+            dev.volume = m["level"]
+            await dev.show({"type": "volume", "level": dev.volume})
+
+
+async def from_display(dev: Device, m: dict):
+    """A touch on the screen."""
+    kind = m.get("type")
+    if kind == "text" and m.get("text"):
+        spawn(turn(dev, text=m["text"]))  # spawned, so this screen can still send (e.g. stop) meanwhile
+    elif kind == "talk" and dev.sat is not None:
+        await send(dev.sat, json.dumps({"type": "listen"}))
+    elif kind == "stop":
+        await stop(dev)
+    elif kind == "volume" and dev.sat is not None and isinstance(m.get("level"), (int, float)):
+        await send(dev.sat, json.dumps({"type": "volume", "level": max(0, min(100, int(m["level"])))}))
 
 
 @app.websocket("/display")
@@ -372,13 +425,13 @@ async def display(ws: WebSocket):
         await ws.send_text(json.dumps({"type": "ambient", "weather": None, "timers": [], "next_alarm": None,
                                        "agenda": []}))
         await ws.send_text(json.dumps({"type": "state", "state": dev.state}))
+        if dev.volume is not None:
+            await ws.send_text(json.dumps({"type": "volume", "level": dev.volume}))
         while True:
             msg = await ws.receive()
             if msg["type"] == "websocket.disconnect":
                 return
-            m = json.loads(msg.get("text") or "{}")
-            if m.get("type") == "text" and m.get("text"):
-                spawn(turn(dev, text=m["text"]))  # spawned, so this screen can still send (e.g. stop) meanwhile
+            await from_display(dev, json.loads(msg.get("text") or "{}"))
     except GONE:
         pass
     finally:

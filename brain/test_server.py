@@ -134,6 +134,38 @@ async def display_flow(port: int):
         assert await recv_json(a) == {"type": "state", "state": "listening"}
         await sat.send(json.dumps({"type": "cancel"}))
         assert await recv_json(a) == {"type": "state", "state": "idle"}
+
+        # Tap-to-talk reaches the satellite as listen
+        await a.send(json.dumps({"type": "talk"}))
+        assert await recv_json(sat) == {"type": "listen"}
+
+        # Volume: the satellite's report reaches the screens; the screen's slider reaches the satellite
+        await sat.send(json.dumps({"type": "volume", "level": 82}))
+        assert await recv_json(a) == {"type": "volume", "level": 82}
+        await a.send(json.dumps({"type": "volume", "level": 140}))
+        assert await recv_json(sat) == {"type": "volume", "level": 100}, "volume should be clamped"
+
+        # Stop while idle drops whatever the satellite still has queued
+        await a.send(json.dumps({"type": "stop"}))
+        assert await recv_json(sat) == {"type": "stop"}
+
+        # Stop mid-reply: the turn ends early with stop then audio_end, and the screen goes idle
+        await a.send(json.dumps({"type": "text", "text": "tell me a long story"}))
+        got = []
+        while got[-1:] != [{"type": "reply", "text": "This is sentence 1 of a long reply."}]:
+            got.append(await recv_json(a))
+        await a.send(json.dumps({"type": "stop"}))
+        to_sat = []
+        while not to_sat or to_sat[-1].get("type") != "audio_end":
+            to_sat.append(await recv_json(sat))
+        assert to_sat[-2:] == [{"type": "stop"}, {"type": "audio_end", "follow_up": False}], to_sat
+        rest = await until_idle(a)
+        replies = [m for m in got + rest if m["type"] == "reply"]
+        assert len(replies) < 5, f"reply wasn't cut short: {replies}"
+        # The next request works normally
+        await a.send(json.dumps({"type": "text", "text": "hello again"}))
+        await play_out(sat)
+        assert {"type": "reply", "text": "That is all."} in await until_idle(a)
     for ws in (a, b, other):
         await ws.close()
 
