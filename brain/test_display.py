@@ -711,6 +711,69 @@ def test_briefing(b):
     d.close()
 
 
+PANCAKES = {"kind": "recipe", "title": "Pancakes", "step": -1,
+            "ingredients": ["1 cup flour", "2 tbsp sugar", "2 tsp baking powder", "Pinch of salt", "1 cup milk",
+                            "1 egg", "2 tbsp melted butter", "Butter for the pan"],
+            "steps": ["Whisk the flour, sugar, baking powder and salt in a large bowl.",
+                      "Whisk the milk, egg and melted butter, then stir into the dry ingredients until just combined; "
+                      "a few lumps are fine, and overmixing makes the pancakes tough, so stop as soon as no dry flour "
+                      "remains and let the batter rest for five minutes while the pan heats over a medium flame.",
+                      "Pour a quarter cup of batter per pancake onto the buttered pan.",
+                      "Flip when bubbles form, and cook until golden."]}
+
+
+def test_recipe(b):
+    d = Display(b)
+    recipe = lambda: [m for m in d.sent if m.get("type") == "recipe"]  # noqa: E731
+    d.push({"type": "card", "card": PANCAKES})
+    assert d.text("#sheet-title") == "Pancakes" and d.page.locator(".ingredients.two-col li").count() == 8
+    assert not d.visible(".recipe-prev") and d.text(".recipe-next") == "Next"
+    assert big(d.page.locator(".recipe-next").bounding_box(), w=140)
+    d.shot("recipe-ingredients", settle=400)
+
+    # Next shows step 1 at once and tells the brain; the brain's echo changes nothing
+    d.tap(".recipe-next")
+    assert recipe() == [{"type": "recipe", "action": "next"}]
+    assert d.text(".step-n") == "1" and d.text(".step-of") == "of 4" and d.visible(".recipe-prev")
+    d.push({"type": "card", "card": dict(PANCAKES, step=0)})
+    assert d.text(".step-n") == "1" and "Whisk the flour" in d.text(".step-text")
+    d.shot("recipe-step", settle=400)
+
+    # A long step shrinks to fit rather than running off the screen
+    d.tap(".recipe-next")
+    fit = d.page.evaluate("""() => { const s = document.querySelector('.step-text');
+        return { fits: s.scrollHeight <= s.clientHeight + 1, size: parseFloat(getComputedStyle(s).fontSize) }; }""")
+    assert fit["fits"] and fit["size"] >= 24, fit
+    d.shot("recipe-long-step", settle=200)
+
+    # Previous goes back; Claude moving it by voice moves the screen too
+    d.tap(".recipe-prev")
+    assert d.text(".step-n") == "1" and recipe()[-1] == {"type": "recipe", "action": "previous"}
+    d.push({"type": "card", "card": dict(PANCAKES, step=3)})
+    assert d.text(".step-n") == "4" and d.text(".recipe-next") == "Done"
+    d.shot("recipe-last-step", settle=200)
+
+    # A recipe outlasts the usual 45 s: a step can simmer a long time untouched
+    d.page.clock.run_for(60_000)
+    assert d.visible("#sheet"), "a recipe shouldn't leave after 45 s"
+    d.page.clock.run_for(30 * 60_000)
+    assert not d.visible("#sheet") and recipe()[-1] == {"type": "recipe", "action": "close"}
+
+    # Done on the last step closes it and ends recipe mode
+    d.push({"type": "card", "card": dict(PANCAKES, step=3)})
+    before = len(recipe())
+    d.tap(".recipe-next")
+    assert not d.visible("#sheet") and recipe()[before:] == [{"type": "recipe", "action": "close"}]
+
+    # Previous from step 1 returns to the ingredients
+    d.push({"type": "card", "card": dict(PANCAKES, step=0)})
+    d.tap(".recipe-prev")
+    assert d.page.locator(".ingredients li").count() == 8 and not d.visible(".recipe-prev")
+    d.tap("#sheet-close")
+    assert recipe()[-1] == {"type": "recipe", "action": "close"}
+    d.close()
+
+
 def test_touch_controls(b):
     d = Display(b)
     d.tap("#mic")

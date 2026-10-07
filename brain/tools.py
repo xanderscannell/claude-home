@@ -330,6 +330,38 @@ def agenda_text(events: list[dict], now: float) -> str:
     return ". ".join(parts) + "."
 
 
+# --- Recipes: one open recipe per device, walked through a step at a time (in memory; a restart closes it) --
+
+recipes: dict[str, dict] = {}  # device -> {title, ingredients, steps, step}; step -1 is the ingredients
+
+
+def recipe_open(device: str, title: str, ingredients: list[str], steps: list[str]) -> None:
+    recipes[device] = {"title": title, "ingredients": ingredients, "steps": steps, "step": -1}
+
+
+def recipe_move(device: str, direction: str) -> bool:
+    """next, previous, repeat, or first (step 1). Stays put at either end. Returns whether a recipe is open."""
+    r = recipes.get(device)
+    if r is None:
+        return False
+    last = len(r["steps"]) - 1
+    r["step"] = {"next": min(r["step"] + 1, last), "previous": max(r["step"] - 1, -1),
+                 "first": min(0, last), "repeat": r["step"]}[direction]
+    return True
+
+
+def recipe_card(device: str) -> dict:
+    return {"kind": "recipe", **recipes[device]}
+
+
+def recipe_text(r: dict) -> str:
+    """Where the recipe is, for Claude to read out."""
+    if r["step"] < 0:
+        return "Ingredients: " + "; ".join(r["ingredients"]) + "."
+    n, i = len(r["steps"]), r["step"]
+    return f"Step {i + 1} of {n}: {r['steps'][i]}" + (" That's the last step." if i == n - 1 else "")
+
+
 def greeting(now: float) -> str:
     h = datetime.datetime.fromtimestamp(now).hour
     return "Good morning" if h < 12 else "Good afternoon" if h < 17 else "Good evening"
@@ -504,6 +536,30 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker) -> list:
         await on_card(card)
         return _text(briefing_text(card, time.time()))
 
+    @tool("show_recipe", "Put a recipe on the screen to cook along with: the ingredients first, then one step at a "
+          "time. Keep each step short (one or two sentences). Afterwards, use recipe_step to move through it.",
+          _schema(title={"type": "string"}, ingredients={**STRINGS, "description": "with amounts, e.g. '2 eggs'"},
+                  steps={**STRINGS, "description": "in order, without numbers"}))
+    async def show_recipe(a):
+        recipe_open(device, a["title"], a["ingredients"], a["steps"])
+        await on_card(recipe_card(device))
+        return _text(f"Showing {a['title']} on the screen: {len(a['ingredients'])} ingredients, "
+                     f"{len(a['steps'])} steps, starting with the ingredients.")
+
+    @tool("recipe_step", "Move through the recipe on the screen and get the step to read out: next, previous, "
+          "repeat (the current one), or first (step 1).",
+          _schema(direction={"type": "string", "enum": ["next", "previous", "repeat", "first"]}))
+    async def recipe_step(a):
+        r = recipes.get(device)
+        if r is None:
+            return _text("No recipe is open. Use show_recipe first.")
+        before = r["step"]
+        recipe_move(device, a["direction"])
+        stuck = r["step"] == before and a["direction"] in ("next", "previous")
+        note = ("There are no more steps. " if a["direction"] == "next" else "That's the beginning. ") if stuck else ""
+        await on_card(recipe_card(device))
+        return _text(note + recipe_text(r))
+
     @tool("set_volume", "Set this speaker's volume, 0 to 100. For 'turn it up' or 'louder' use relative 10; "
           "for 'turn it down' or 'quieter', relative -10.",
           _schema(level={"type": "integer", "description": "the new level, or the change when relative"},
@@ -514,7 +570,7 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker) -> list:
 
     return [set_timer, list_timers, cancel_timer, set_alarm, list_alarms, cancel_alarm, remember_tool, forget_tool,
             add_shopping, remove_shopping, get_shopping, clear_shopping, get_weather, show_on_screen, get_agenda,
-            morning_briefing, set_volume]
+            morning_briefing, show_recipe, recipe_step, set_volume]
 
 
 def make_tools(device: str, on_card=_no_screen, on_volume=_no_speaker):

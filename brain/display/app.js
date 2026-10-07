@@ -350,24 +350,36 @@ function openSheet(card) {
   // A timers card can beat the next ambient update by up to half a second; it is just as fresh, so use it.
   if (card.kind === "timers") ambient = { ...ambient, timers: card.timers };
   if (card.kind === "volume" && card.level !== undefined) speakerVolume = card.level;
+  els.sheet.hidden = false;  // before rendering, so long text can be measured and fitted
   renderSheet();
-  els.sheet.hidden = false;
   requestAnimationFrame(() => els.sheet.classList.add("shown"));
   touchSheet();
 }
 
 function closeSheet() {
   clearTimeout(sheetIdle);
+  if (sheetCard && sheetCard.kind === "recipe") send({ type: "recipe", action: "close" });  // ends recipe mode
   sheetCard = null;
   els.sheet.classList.remove("shown");
   els.sheet.hidden = true;
   els.sheetBody.replaceChildren();
 }
 
-// Untouched for 45 s, a sheet goes away and the room comes back.
+// Untouched for 45 s, a sheet goes away and the room comes back. A recipe waits 30 minutes: a step can
+// simmer that long without anyone touching the screen.
+const RECIPE_IDLE_MS = 30 * 60000;
+
 function touchSheet() {
   clearTimeout(sheetIdle);
-  sheetIdle = setTimeout(closeSheet, SHEET_IDLE_MS);
+  sheetIdle = setTimeout(closeSheet, sheetCard && sheetCard.kind === "recipe" ? RECIPE_IDLE_MS : SHEET_IDLE_MS);
+}
+
+// Previous and Next on the recipe: move at once, and tell the brain (which moves the other screens too)
+function recipeGo(action) {
+  const c = sheetCard;
+  c.step = action === "next" ? Math.min(c.step + 1, c.steps.length - 1) : Math.max(c.step - 1, -1);
+  renderSheet();
+  send({ type: "recipe", action });
 }
 
 const renderers = {
@@ -554,6 +566,34 @@ const renderers = {
     return [c.greeting, [sheet]];
   },
 
+  // Cooking along: the ingredients, then one numbered step at a time in the far-read type. Previous and Next
+  // sit bottom-right; on the last step Next becomes Done, which closes the recipe.
+  recipe: (c) => {
+    let body;
+    if (c.step < 0) {
+      body = el("ul", c.ingredients.length > 6 ? "ingredients two-col" : "ingredients");
+      body.append(...c.ingredients.map((i) => el("li", null, i)));
+    } else {
+      body = el("div", "recipe-step");
+      const num = el("div", "step-num");
+      num.append(el("span", "step-n", String(c.step + 1)), el("span", "step-of", `of ${c.steps.length}`));
+      body.append(num, el("p", "step-text", c.steps[c.step]));
+    }
+    const done = c.step >= 0 && c.step === c.steps.length - 1;
+    const prev = el("button", "pill recipe-prev", "Previous");
+    const next = el("button", "pill recipe-next", done ? "Done" : "Next");
+    prev.type = next.type = "button";
+    prev.hidden = c.step < 0;  // nothing comes before the ingredients
+    next.hidden = !c.steps.length;
+    prev.addEventListener("click", () => recipeGo("previous"));
+    next.addEventListener("click", () => (done ? closeSheet() : recipeGo("next")));
+    const nav = el("div", "recipe-nav");
+    nav.append(prev, next);
+    const wrap = el("div", "recipe");
+    wrap.append(body, nav);
+    return [c.title, [wrap]];
+  },
+
   text: (c) => {
     const lines = el("div", "text-lines");
     if (c.lines.length <= 5 && c.lines.every((l) => l.length <= 40)) lines.classList.add("roomy");
@@ -665,6 +705,8 @@ function renderSheet() {
   els.sheetTitle.textContent = title;
   els.sheetBody.replaceChildren(...nodes);
   if (sheetCard.kind === "timers" && !ticker && ambient.timers.length) ticker = setInterval(tick, 1000);
+  const step = els.sheetBody.querySelector(".step-text");
+  if (step) shrinkToFit(step, 24);
 }
 
 // --- Conversation overlay ---------------------------------------------------------------------
@@ -706,13 +748,18 @@ function addReply(text) {
   fitReply();
 }
 
+// Long text shrinks 2px at a time to fit its box, down to a floor
+function shrinkToFit(node, min) {
+  let size = parseFloat(getComputedStyle(node).fontSize);
+  while (node.scrollHeight > node.clientHeight && size > min) {
+    size -= 2;
+    node.style.fontSize = `${size}px`;
+  }
+}
+
 // Long replies shrink to fit instead of scrolling: 36px down to 24px, then the oldest words scroll off.
 function fitReply() {
-  let size = parseFloat(getComputedStyle(els.reply).fontSize);
-  while (els.reply.scrollHeight > els.reply.clientHeight && size > 24) {
-    size -= 2;
-    els.reply.style.fontSize = `${size}px`;
-  }
+  shrinkToFit(els.reply, 24);
   els.reply.scrollTop = els.reply.scrollHeight;
 }
 

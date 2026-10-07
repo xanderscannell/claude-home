@@ -56,7 +56,7 @@ SYSTEM_PROMPT = """You are Claude Home, a voice assistant on a smart speaker. Ev
 - Search the web only when you need current information, at most once per question, then answer.
 - After a web search, never list sources or links; the listener cannot see them.
 - Each user message starts with the current local time in brackets; use it when relevant, never read it back unprompted.
-- Use your tools for timers, alarms, the shopping list, weather, the calendar, a morning briefing, the speaker's volume, and remembering things. Confirm what you did in a few words.
+- Use your tools for timers, alarms, the shopping list, weather, the calendar, a morning briefing, recipes, the speaker's volume, and remembering things. Confirm what you did in a few words.
 - When you end with a question, the speaker listens for the answer without the wake word, so only ask when you need to."""
 
 OPTIONS = ClaudeAgentOptions(
@@ -575,6 +575,11 @@ async def from_display(dev: Device, m: dict, ws: WebSocket):
         # Only this screen: a card opens the sheet, and other screens shouldn't pop open. They get a fresh list
         # whenever they open it.
         await ws.send_text(json.dumps({"type": "card", "card": tools.shopping_card()}))
+    elif kind == "recipe" and m.get("action") in ("next", "previous", "close"):
+        if m["action"] == "close":
+            tools.recipes.pop(dev.name, None)  # closing the sheet ends recipe mode
+        elif tools.recipe_move(dev.name, m["action"]):
+            await dev.show({"type": "card", "card": tools.recipe_card(dev.name)})  # every screen follows along
     elif kind == "text" and m.get("text"):
         spawn(turn(dev, text=m["text"]))  # spawned, so this screen can still send (e.g. stop) meanwhile
     elif kind == "talk" and dev.sat is not None:

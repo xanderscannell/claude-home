@@ -272,6 +272,20 @@ async def display_flow(port: int):
         assert card["greeting"].startswith("Good ") and r["content"][0]["text"].startswith(card["greeting"]), r
         await until_card(b, "briefing")
         brain.agenda.events.clear()
+
+        # Recipe: Next on one screen moves every kitchen screen along; closing the sheet ends recipe mode
+        await on_server(kitchen_tools["show_recipe"].handler(
+            {"title": "Pancakes", "ingredients": ["1 cup flour"], "steps": ["Whisk.", "Cook."]}))
+        assert (await until_card(b, "recipe"))["step"] == -1
+        await a.send(json.dumps({"type": "recipe", "action": "next"}))
+        assert (await until_card(b, "recipe"))["step"] == 0, "the other screen follows"
+        await a.send(json.dumps({"type": "recipe", "action": "close"}))
+        deadline = time.time() + 3
+        while "kitchen" in brain.tools.recipes:
+            assert time.time() < deadline, "close should end recipe mode"
+            await asyncio.sleep(0.05)
+        r = await on_server(kitchen_tools["recipe_step"].handler({"direction": "next"}))
+        assert r["content"][0]["text"] == "No recipe is open. Use show_recipe first.", r
     for ws in (a, b, other):
         await ws.close()
 

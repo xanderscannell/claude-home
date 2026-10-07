@@ -231,4 +231,31 @@ assert tools.briefing_text(full, at_7) == (
     "Next alarm: 6:30 AM tomorrow (gym). Timers: pasta, 4 minutes 12 seconds left. The shopping list has 3 items."
 ), tools.briefing_text(full, at_7)
 tools.shopping_remove(["milk", "eggs", "bread"])
+
+# Recipes: one step at a time, stopping at either end; every move puts the recipe card on screen
+shown = []
+
+
+async def grab(card):
+    shown.append(card)
+
+
+cook = {t.name: t for t in tools.tool_list("kitchen", grab)}
+say = lambda name, args: asyncio.run(cook[name].handler(args))["content"][0]["text"]  # noqa: E731
+step = lambda direction: say("recipe_step", {"direction": direction})  # noqa: E731
+assert step("next") == "No recipe is open. Use show_recipe first." and shown == []
+say("show_recipe", {"title": "Pancakes", "ingredients": ["1 cup flour", "1 egg"], "steps": ["Whisk.", "Cook."]})
+assert shown[-1] == {"kind": "recipe", "title": "Pancakes", "ingredients": ["1 cup flour", "1 egg"],
+                     "steps": ["Whisk.", "Cook."], "step": -1}
+assert step("previous") == "That's the beginning. Ingredients: 1 cup flour; 1 egg."
+assert step("next") == "Step 1 of 2: Whisk." and shown[-1]["step"] == 0
+assert step("next") == "Step 2 of 2: Cook. That's the last step."
+assert step("next") == "There are no more steps. Step 2 of 2: Cook. That's the last step." and shown[-1]["step"] == 1
+assert step("repeat") == "Step 2 of 2: Cook. That's the last step."
+assert step("first") == "Step 1 of 2: Whisk."
+assert step("previous") == "Ingredients: 1 cup flour; 1 egg." and shown[-1]["step"] == -1
+tools.recipe_open("other", "Toast", ["bread"], [])  # no steps: stays on the ingredients
+assert tools.recipe_move("other", "next") and tools.recipe_move("other", "first") and tools.recipes["other"]["step"] == -1
+assert tools.recipes["kitchen"]["title"] == "Pancakes", "recipes are per device"
+assert not tools.recipe_move("nobody", "next")
 print("ok")
