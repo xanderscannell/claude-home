@@ -173,6 +173,7 @@ Out of the box it behaves like a coding agent, so it gets locked down:
 | `setting_sources` | `[]` | Don't load CLAUDE.md, hooks, plugins, or skills from `~/.claude` or the project |
 | `tools` | No built-ins except `WebSearch` | No shell or file access on the brain machine. Confirm in the session's `system/init` message. |
 | `mcp_servers` | Our tools (in-process, via `create_sdk_mcp_server`) and, in Phase 2, Home Assistant over HTTP | |
+| `env` / `extra_args` | `ENABLE_CLAUDEAI_MCP_SERVERS=false` and `--strict-mcp-config` | On a subscription login, the account's claude.ai connectors (Gmail, Drive, and so on) load into every session, and `setting_sources=[]` does not stop them. Verified: without these, the init tool list included them. |
 | `model` | `haiku` | |
 | `include_partial_messages` | `True` | Text deltas for sentence streaming |
 
