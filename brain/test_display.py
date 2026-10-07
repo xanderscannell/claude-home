@@ -34,7 +34,7 @@ class Display:
         """ws: point the page's socket at this URL instead of the fake brain (e.g. a port nobody listens on).
         Refusing a mocked socket from inside its handler deadlocks Playwright's sync API, so offline is real.
         photos: {name: JPEG bytes} served at /photos, in this order (default: none)."""
-        self.sent, self.sockets, self.errors = [], [], []
+        self.sent, self.sockets, self.errors, self.requests = [], [], [], []
         self.photos = photos or {}
         self.ctx = browser.new_context(viewport={"width": 800, "height": 480}, has_touch=True,
                                        locale="en-US", timezone_id="America/New_York")
@@ -55,6 +55,7 @@ class Display:
 
     def _serve(self, route):
         rel = route.request.url.split("?")[0].removeprefix(ORIGIN)
+        self.requests.append(rel)
         if rel == "/photos":
             return route.fulfill(json=list(self.photos))
         if rel.startswith("/photos/"):
@@ -225,6 +226,7 @@ MARIGOLD = "rgb(242, 181, 68)"
 def test_slideshow_and_accent(b):
     # No photos: the night gradient, marigold, no photo layer shown
     d = Display(b)
+    d.push(hello())
     d.page.wait_for_timeout(300)
     assert d.page.locator(".photo.shown").count() == 0 and accent(d) == MARIGOLD
     d.close()
@@ -232,6 +234,7 @@ def test_slideshow_and_accent(b):
     sunset = photo((236, 120, 60), (60, 30, 50))
     lake = photo((90, 150, 220), (20, 40, 70))
     d = Display(b, photos={"sunset.jpg": sunset, "lake.jpg": lake})
+    d.push(hello())  # the slideshow starts once the brain says hello (it might be night)
     d.wait_until(lambda: d.page.locator(".photo.shown").count() == 1, "first photo never appeared")
     assert "sunset.jpg" in d.page.get_attribute(".photo.shown", "style")
     warm = accent(d)
@@ -252,6 +255,85 @@ def test_slideshow_and_accent(b):
 
 
 PHOTO_SECONDS = 30
+
+
+def hello(start="22:00", end="07:00") -> dict:
+    return {"type": "hello", "device": "test", "version": "1", "night": {"start": start, "end": end}}
+
+
+def is_night(d) -> bool:
+    return d.page.evaluate("document.body.classList.contains('is-night')")
+
+
+def photo_requests(d) -> list:
+    return [r for r in d.requests if r.startswith("/photos")]
+
+
+def test_night_mode(b):
+    pics = {"sunset.jpg": photo((236, 120, 60), (60, 30, 50))}
+
+    # 23:00: pure black, the time in dim ember, nothing else, and no photos fetched (not even after 30 s)
+    d = Display(b, start=dt.datetime(2026, 10, 7, 23, 0, 0), photos=pics)
+    d.push(hello())
+    assert is_night(d) and d.visible("#night") and not d.visible("#home")
+    assert d.text("#night-time") == "11:00", d.text("#night-time")
+    style = d.page.evaluate("""() => { const s = getComputedStyle(document.getElementById('night-time'));
+        return [s.color, s.opacity, getComputedStyle(document.getElementById('night')).backgroundColor]; }""")
+    assert style == ["rgb(255, 138, 76)", "0.35", "rgb(0, 0, 0)"], style
+    d.page.clock.run_for(PHOTO_SECONDS * 1000 + 1000)
+    d.page.wait_for_timeout(200)
+    assert photo_requests(d) == [], photo_requests(d)
+    assert not d.visible(".photo.shown")
+    d.shot("night", settle=200)
+
+    # A tap brings the normal home back (and the room with it) for 30 s; another touch keeps it 30 s more
+    d.tap("#night")
+    assert not is_night(d) and d.visible("#home") and d.visible("#mic")
+    d.wait_until(lambda: d.page.locator(".photo.shown").count() == 1, "the room didn't come back on a tap")
+    assert d.sent == [], "the waking tap mustn't press anything"
+    d.shot("night-woken", settle=2300)
+    d.page.clock.run_for(20_000)
+    d.tap("#date")
+    d.page.clock.run_for(20_000)
+    assert not is_night(d), "a touch should keep home up another 30 s"
+    d.page.clock.run_for(11_000)
+    assert is_night(d), "home didn't go back to the night clock after 30 s"
+
+    # Ringing still shows at night, on top; afterwards it's the night clock again
+    d.push({"type": "ringing", "ringing": {"kind": "alarm", "id": 1, "label": "", "time": "06:30"}})
+    assert d.page.evaluate("document.elementFromPoint(400, 240).closest('section').id") == "ringing"
+    d.shot("night-ringing", settle=200)
+    d.push({"type": "ringing", "ringing": None})
+    assert d.visible("#night") and not d.visible("#ringing")
+
+    # A conversation comes up over the night clock and leaves it behind
+    d.push({"type": "state", "state": "listening"})
+    assert d.page.evaluate("document.elementFromPoint(400, 240).closest('section').id") == "overlay"
+    d.push({"type": "state", "state": "idle"})
+    d.page.clock.run_for(4100)
+    assert not d.visible("#overlay") and d.visible("#night")
+    d.close()
+
+    # Noon: the normal home
+    d = Display(b, start=dt.datetime(2026, 10, 7, 12, 0, 0))
+    d.push(hello())
+    assert not is_night(d) and not d.visible("#night") and d.visible("#home")
+    d.close()
+
+    # 06:59 is still night; at 07:00 the room comes back by itself
+    d = Display(b, start=dt.datetime(2026, 10, 8, 6, 59, 30), photos=pics)
+    d.push(hello())
+    assert is_night(d) and d.text("#night-time") == "6:59"
+    d.page.clock.run_for(31_000)
+    assert not is_night(d) and d.text("#time") == "7:00"
+    d.wait_until(lambda: d.page.locator(".photo.shown").count() == 1, "no photo at 7:00")
+    d.close()
+
+    # Night hours that don't cross midnight work too (13:00 to 15:00 at 14:00)
+    d = Display(b, start=dt.datetime(2026, 10, 7, 14, 0, 0))
+    d.push(hello("13:00", "15:00"))
+    assert is_night(d)
+    d.close()
 
 
 def sheet_open(d) -> bool:

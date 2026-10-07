@@ -355,6 +355,21 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 }
 .ringing-stop:active, .snooze:active { transform: scale(.96); }
 
+/* --- Night: a dim clock on pure black, nothing else (conversation, sheets, and ringing still come up over it).
+   Same place and type as the day clock, so the room's one fixed point doesn't move at bedtime. --------- */
+
+.night { display: none; position: fixed; inset: 0; background: #000; }
+body.is-night .night { display: block; }
+body.is-night .photo, body.is-night .scrim, body.is-night .home, body.is-night .offline { display: none; }
+.night-time {
+  position: absolute; left: var(--edge); bottom: 132px;
+  font: 330 156px/.86 var(--far);
+  font-variation-settings: "opsz" 144, "SOFT" 100, "WONK" 0;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  letter-spacing: -2px;
+  color: var(--ember); opacity: .35;
+}
+
 /* --- Offline note ------------------------------------------------------------------------ */
 
 .offline {

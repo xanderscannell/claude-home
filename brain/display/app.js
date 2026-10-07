@@ -12,7 +12,7 @@ const els = {
   sheet: $("sheet"), sheetTitle: $("sheet-title"), sheetBody: $("sheet-body"), sheetClose: $("sheet-close"),
   ringing: $("ringing"), ringingTime: $("ringing-time"), ringingLabel: $("ringing-label"),
   ringingStop: $("ringing-stop"), snooze: $("snooze"),
-  offline: $("offline"),
+  offline: $("offline"), nightTime: $("night-time"),
 };
 
 // --- Connection -------------------------------------------------------------------------------
@@ -53,9 +53,14 @@ let pageVersion = null;
 
 const handlers = {
   // A brain restarted with different display code: load it (the kiosk would otherwise keep the old page).
+  // The first hello also starts the slideshow: only then is it known whether it's night (no photos at night).
   hello: (m) => {
-    if (pageVersion === null) pageVersion = m.version;
-    else if (m.version !== pageVersion) location.reload();
+    nightHours = m.night || null;
+    applyNight();
+    if (pageVersion === null) {
+      pageVersion = m.version;
+      startPhotos();
+    } else if (m.version !== pageVersion) location.reload();
   },
   state: (m) => setState(m.state),
   heard: (m) => { els.heard.textContent = m.text; },
@@ -82,6 +87,43 @@ function renderClock() {
   els.time.textContent = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).replace(/\s?[AP]M$/i, "");
   els.time.dateTime = now.toISOString();
   els.date.textContent = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+  els.nightTime.textContent = els.time.textContent;
+  applyNight();
+}
+
+// --- Night ------------------------------------------------------------------------------------
+// Between hello.night's start and end ("22:00" to "07:00") home becomes a dim clock on black. A touch
+// brings the normal home back for 30 s, and each touch while it's back keeps it for another 30 s.
+
+const NIGHT_WAKE_MS = 30000;
+let nightHours = null;
+let wokenUntil = 0;
+let nightTimer = null;
+
+function minutes(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function inNightHours(now = new Date()) {
+  if (!nightHours) return false;
+  const m = now.getHours() * 60 + now.getMinutes(), start = minutes(nightHours.start), end = minutes(nightHours.end);
+  return start > end ? m >= start || m < end : m >= start && m < end;  // usually it spans midnight
+}
+
+function applyNight() {
+  const night = inNightHours() && Date.now() >= wokenUntil;
+  const was = document.body.classList.contains("is-night");
+  document.body.classList.toggle("is-night", night);
+  if (was && !night && !frontLayer.classList.contains("shown")) nextPhoto();  // morning, or a touch: bring the room back
+}
+
+function wakeFromNight() {
+  if (!inNightHours()) return;
+  wokenUntil = Date.now() + NIGHT_WAKE_MS;
+  clearTimeout(nightTimer);
+  nightTimer = setTimeout(applyNight, NIGHT_WAKE_MS);
+  applyNight();
 }
 
 function startClock() {
@@ -110,6 +152,7 @@ async function loadPhotoList() {
 
 // Load the next photo off-screen, then crossfade to it and take its accent color.
 async function nextPhoto() {
+  if (document.body.classList.contains("is-night")) return;
   if (photoIndex >= photoList.length) await loadPhotoList();  // each lap reshuffles and picks up new photos
   if (!photoList.length) return;
   const img = new Image();
@@ -572,7 +615,7 @@ els.menu.addEventListener("click", () => openSheet({ kind: "menu" }));
 els.ringingStop.addEventListener("click", () => send({ type: "stop" }));
 els.snooze.addEventListener("click", () => send({ type: "snooze" }));
 els.sheet.addEventListener("pointerdown", touchSheet);
+document.addEventListener("pointerdown", wakeFromNight, true);
 
 startClock();
-startPhotos();
 connect();
