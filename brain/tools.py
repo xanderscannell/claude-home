@@ -440,7 +440,9 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spo
     @tool("cancel_timer", "Cancel timers whose label contains the given text, or all timers if it is empty.",
           _schema(label={"type": "string"}))
     async def cancel_timer(a):
-        return _text(f"Cancelled {timer_cancel(device, a['label'])} timer(s).")
+        n = timer_cancel(device, a["label"])
+        await on_card(timers_card(device))
+        return _text(f"Cancelled {n} timer(s).")
 
     @tool("set_alarm", "Set an alarm that rings on this speaker at a time of day, once or repeating.",
           _schema(time={"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$",
@@ -519,7 +521,9 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spo
         return _text(weather_text(w))
 
     @tool("show_on_screen", "Show something on this speaker's screen while you talk about it: a list, steps, a "
-          "definition, a comparison. Keep it short; the screen is small and read from across the room.",
+          "definition, a comparison. Keep it short; the screen is small and read from across the room. Not for "
+          "timers, alarms, weather, the shopping list, the calendar, the briefing, recipes, or music: their own "
+          "tools already put them on the screen, in a better form.",
           _schema(title={"type": "string"},
                   lines={**STRINGS, "description": "a few short lines, shown in order"}))
     async def show_on_screen(a):

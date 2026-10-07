@@ -124,6 +124,8 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
   opacity: 0; transition: opacity .2s ease;
 }
 .overlay.shown { opacity: 1; }
+/* Over a sheet, 10% show-through puts the sheet's text behind the reply (found on the Pi); go solid */
+.sheet:not([hidden]) ~ .overlay { background: var(--night); }
 
 .close {
   position: absolute; top: 12px; right: 12px;

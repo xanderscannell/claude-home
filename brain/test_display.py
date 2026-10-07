@@ -399,6 +399,9 @@ def test_sheets(b):
     # A conversation shows over an open sheet, and the sheet is still there afterwards
     d.push({"type": "state", "state": "speaking"}, {"type": "reply", "text": "Here's the recipe."})
     assert d.visible("#overlay") and sheet_open(d)
+    bg = d.page.evaluate("getComputedStyle(document.getElementById('overlay')).backgroundColor")
+    assert bg == "rgb(19, 32, 46)", f"over a sheet the overlay must be solid, or the sheet's text shows through: {bg}"
+    d.shot("overlay-over-sheet", settle=300)
     d.push({"type": "state", "state": "idle"})
     d.page.clock.run_for(4100)
     assert not d.visible("#overlay") and sheet_open(d)
@@ -430,6 +433,13 @@ def test_shopping_list(b):
     assert {"type": "shopping_remove", "item": "Milk"} in d.sent, d.sent
     d.push({"type": "card", "card": {"kind": "shopping", "items": ["Eggs", "Sourdough bread", "Bananas"]}})
     assert d.page.locator(".shop-name").all_inner_texts() == ["Eggs", "Sourdough bread", "Bananas"]
+
+    # Items are kept as said ("oat milk") but shown in sentence case; removal uses the item as stored
+    d.push({"type": "card", "card": {"kind": "shopping", "items": ["oat milk"]}})
+    assert d.text(".shop-name") == "Oat milk"
+    d.page.locator(".shop-item").first.tap()
+    d.page.clock.run_for(3100)
+    assert {"type": "shopping_remove", "item": "oat milk"} in d.sent
 
     # Empty list says how to add things
     d.push({"type": "card", "card": {"kind": "shopping", "items": []}})

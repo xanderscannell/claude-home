@@ -443,7 +443,7 @@ const renderers = {
       const row = el("li", "shop-row");
       const tick = el("button", "shop-item");
       tick.type = "button";
-      tick.append(el("span", "shop-check"), el("span", "shop-name", item));
+      tick.append(el("span", "shop-check"), el("span", "shop-name", sentence(item)));  // as said; shown like a list
       tick.addEventListener("click", () => toggleItem(row, item));
       const undo = el("button", "pill shop-undo", "Undo");
       undo.type = "button";

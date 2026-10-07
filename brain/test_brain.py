@@ -258,6 +258,8 @@ tools.recipe_open("other", "Toast", ["bread"], [])  # no steps: stays on the ing
 assert tools.recipe_move("other", "next") and tools.recipe_move("other", "first") and tools.recipes["other"]["step"] == -1
 assert tools.recipes["kitchen"]["title"] == "Pancakes", "recipes are per device"
 assert not tools.recipe_move("nobody", "next")
+assert say("cancel_timer", {"label": "nothing by this name"}) == "Cancelled 0 timer(s)."
+assert shown[-1]["kind"] == "timers", "cancelling shows the timers, like setting one does"
 
 # Spotify, all through a mock: PKCE, refresh only when due, search then play, a missing speaker, 429 back-off
 import string  # noqa: E402
