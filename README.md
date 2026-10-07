@@ -24,7 +24,8 @@ Claude runs through the Agent SDK on the Claude Code login of this machine (or a
 **Satellite and display** (the Pi): `satellite/claude-home-satellite.service` runs the mic,
 wake word, and playback; `satellite/claude-home-display.service` runs Chromium in kiosk mode on
 the touchscreen. Install steps are in each unit file's header. `satellite/asound.conf` goes to
-`/etc/asound.conf` (shared playback, and a `Music` volume control for ducking).
+`/etc/asound.conf` (shared playback, a `Master` volume for everything, and a `Music` volume
+control for ducking).
 
 **Music:** [raspotify](https://github.com/dtcooper/raspotify) on the Pi makes it a Spotify
 Connect speaker; the brain controls it through the Spotify Web API. Open

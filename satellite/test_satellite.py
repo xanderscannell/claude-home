@@ -1,13 +1,14 @@
 """Run: uv run python test_satellite.py"""
-from satellite import amixer_args, parse_level
+from satellite import VOLUME, amixer_args, parse_level
 
 # amixer commands: read, set, clamped
-assert amixer_args("PCM") == ["amixer", "-c", "2", "sget", "PCM"]
+assert VOLUME == "Master", "the speaker volume is asound.conf's software control, not the device's own"
+assert amixer_args(VOLUME) == ["amixer", "-c", "2", "sget", "Master"]
 assert amixer_args("Music", 20) == ["amixer", "-c", "2", "-q", "sset", "Music", "20%"]
-assert amixer_args("PCM", 140)[-1] == "100%" and amixer_args("PCM", -5)[-1] == "0%"
-assert amixer_args("PCM", 37.6)[-1] == "37%"
+assert amixer_args(VOLUME, 140)[-1] == "100%" and amixer_args(VOLUME, -5)[-1] == "0%"
+assert amixer_args(VOLUME, 37.6)[-1] == "37%"
 
-# Levels from real amixer output on the Pi (SteelSeries Arctis Pro, and the softvol Music control)
+# Levels from real amixer output on the Pi (a USB headset's PCM control, and a softvol control)
 PCM = """Simple mixer control 'PCM',0
   Capabilities: pvolume pswitch
   Playback channels: Front Left - Front Right

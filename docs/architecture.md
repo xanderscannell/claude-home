@@ -110,7 +110,7 @@ sequenceDiagram
 | Satellite hardware, P3 | Pi 5, Raspberry Pi Touch Display 2 (or any DSI/HDMI touchscreen), ReSpeaker XVF3800 mic array, amp and speakers | XVF3800 does echo cancellation and beamforming on-chip. Playback must be routed through it so it has the echo reference. | A repurposed Android tablet showing the display UI: cheap, but weaker mics and no control over echo cancellation |
 | Wake word | openWakeWord | Open source, runs on the Pi CPU, custom words trainable from synthetic speech, so "Hey Claude" is possible. Use a stock model ("hey jarvis") during development. | Porcupine (commercial) if false triggers are bad; microWakeWord if moving to ESP32 |
 | End-of-speech detection | Silero VAD | Small, accurate, CPU-only | |
-| Audio I/O | `sounddevice` (PortAudio) on plain ALSA, configured by `satellite/asound.conf` | Simple Python API. ALSA's dmix lets the voice and music play at once; a `softvol` device named `music` (control `Music`) gives music its own volume, so the satellite can duck it with `amixer`. | PipeWire, if per-stream routing gets more complicated |
+| Audio I/O | `sounddevice` (PortAudio) on plain ALSA, configured by `satellite/asound.conf` | Simple Python API. ALSA's dmix lets the voice and music play at once. Two `softvol` controls: `Master` on the default output is the speaker's volume for everything, and `music` (control `Music`) gives music its own level on top, so the satellite can duck it with `amixer`. Software controls behave the same whatever speaker is plugged in. | PipeWire, if per-stream routing gets more complicated |
 | Language (satellite and brain) | Python with asyncio and `uv`: 3.13 for the brain, 3.11 for the satellite (openWakeWord requires `tflite-runtime` on Linux, which has no builds past 3.11; uv installs 3.11 even though Raspberry Pi OS Trixie ships 3.13) | The voice ecosystem (openWakeWord, Silero, Piper, Whisper) and Home Assistant are all Python | |
 | Brain server | FastAPI + uvicorn | One process serves the satellite and display WebSockets, the display page, photos, and the Spotify login; Phase 2's `/announce` joins them. | |
 | LLM | Claude Agent SDK (`claude-agent-sdk`), one `ClaudeSDKClient` per device | The same code runs on a Claude subscription or an API key; switching is one environment variable. It also handles the tool loop, MCP, streaming, and prompt caching. | Direct Messages API (`anthropic` SDK) if the Claude Code runtime's overhead shows up in latency logs. See [LLM backend](#llm-backend). |
@@ -140,7 +140,7 @@ Satellite -> brain:
 | `cancel` | Wake word fired but nobody spoke |
 | `text {text}` | A typed request; skips speech-to-text (testing) |
 | `played` | A reply finished playing (not sent for announcements, so a timer ending mid-conversation doesn't end it on screen) |
-| `volume {level}` | The headset's playback level (0-100), on connect and after every change |
+| `volume {level}` | The speaker's volume (0-100, the `Master` control), on connect and after every change |
 
 Brain -> satellite:
 
@@ -152,7 +152,7 @@ Brain -> satellite:
 | `audio_start` / `audio_end` with `announce: true` | Unprompted speech, such as a finished timer or an alarm. Can arrive at any time; the satellite always listens for it. |
 | `listen` | Start listening as if the wake word fired (tap-to-talk on a screen) |
 | `stop` | Drop all queued audio now (Stop on a screen, a stopped reply, a silenced alarm) |
-| `volume {level}` | Set the headset's playback level (`amixer -c 2 sset PCM`) |
+| `volume {level}` | Set the speaker's volume: the `Master` software control from `asound.conf` (`amixer -c 2 sset Master`), not the USB device's own control, which some devices ignore |
 
 **Ducking is the satellite's job:** on wake or `listen` it sets the ALSA `Music` control to 20%,
 and back to 100% once the reply has played or the request was cancelled. Music players
@@ -311,7 +311,7 @@ Built so far on the Pi 3 with a 5" 800x480 HDMI touchscreen (USB touch), with th
 ### On the Pi
 
 - **Kiosk:** `satellite/claude-home-display.service` runs `cage` + Chromium on tty1 as the desktop user (`getty@tty1` disabled). It opens `satellite/kiosk.html` first, a local page that waits for the brain and then switches to the display, because Chromium shows a dead error page if the brain is down when it starts. `LANG=en_US.UTF-8` in the unit gives the page US clock and date formats. Screens reload themselves when the brain restarts with new display code, so deploying the page is just restarting the brain.
-- **Audio:** `satellite/asound.conf` as `/etc/asound.conf` makes the USB headset (card 2) the default for every user, shares it through ALSA's dmix (with `ipc_perm 0666`, because raspotify runs as its own user and would otherwise lock the satellite out), and adds the `music` device with its `Music` volume control.
+- **Audio:** `satellite/asound.conf` as `/etc/asound.conf` makes the USB headset (card 2) the default for every user, shares it through ALSA's dmix (with `ipc_perm 0666`, because raspotify runs as its own user and would otherwise lock the satellite out), puts every sound through the `Master` software volume, and adds the `music` device with its `Music` volume control on top. Software controls appear the first time something plays.
 - **raspotify** (librespot) runs as `raspotify.service`. Its settings are appended to `/etc/raspotify/conf` (the original is kept as `conf.orig`): `LIBRESPOT_NAME="Claude Home"`, `LIBRESPOT_DEVICE=music`, `LIBRESPOT_DEVICE_TYPE=speaker`, `LIBRESPOT_INITIAL_VOLUME=100`. Two stock lines are commented out: `LIBRESPOT_DISABLE_CREDENTIAL_CACHE` (with it, librespot forgets its Spotify login on every restart and only appears to the Web API after someone picks it in a Spotify app) and `LIBRESPOT_ENABLE_VOLUME_NORMALISATION` (it made music noticeably quieter than the voice on the headset).
 
 ## Latency budget

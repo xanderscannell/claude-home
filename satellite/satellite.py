@@ -3,7 +3,7 @@
 Run from satellite/:  uv run satellite.py
 Optional env: BRAIN_URL (default ws://localhost:8765), DEVICE (default: hostname),
               AUDIO_IN / AUDIO_OUT (sounddevice device index or name), WAKE_THRESHOLD (default 0.5),
-              MIXER_CARD (ALSA card with the PCM and Music controls, default 2).
+              MIXER_CARD (ALSA card with the Master and Music controls from asound.conf, default 2).
 """
 
 import asyncio
@@ -38,6 +38,7 @@ NO_SPEECH_TIMEOUT_S = 4.0  # wake word fired but nobody spoke
 MAX_UTTERANCE_S = 15.0
 MIC_TIMEOUT_S = 2.0  # no audio for this long means the mic is gone (unplugged)
 DUCK_PERCENT = 20  # music volume while listening and talking
+VOLUME = "Master"  # the speaker's volume: asound.conf's software control, the same whatever is plugged in
 
 
 def _device(name):
@@ -147,7 +148,7 @@ async def next_frame(mic: asyncio.Queue) -> np.ndarray:
 
 
 async def report_volume(ws):
-    level = await asyncio.to_thread(mixer, "PCM")
+    level = await asyncio.to_thread(mixer, VOLUME)
     if level is not None:
         await ws.send(json.dumps({"type": "volume", "level": level}))
 
@@ -188,7 +189,7 @@ async def receive(ws, player: Player, replies: asyncio.Queue, listen_now: asynci
         elif kind == "stop":
             player.clear()
         elif kind == "volume":
-            await asyncio.to_thread(mixer, "PCM", m["level"])
+            await asyncio.to_thread(mixer, VOLUME, m["level"])
             await report_volume(ws)
     raise ConnectionError("brain closed the connection")
 
