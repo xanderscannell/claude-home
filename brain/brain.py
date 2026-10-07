@@ -167,7 +167,15 @@ def options(device: str) -> ClaudeAgentOptions:
     """Per-satellite session: its own timer tools, and saved facts baked into the prompt."""
     known = tools.facts()
     memory = "\n\nThings you remember about this household:\n" + "\n".join(f"- {f}" for f in known) if known else ""
-    return replace(OPTIONS, system_prompt=SYSTEM_PROMPT + memory, mcp_servers={"home": tools.make_tools(device)})
+    return replace(OPTIONS, system_prompt=SYSTEM_PROMPT + memory,
+                   mcp_servers={"home": tools.make_tools(device, on_card=show_card(device))})
+
+
+def show_card(name: str):
+    """on_card for one device's tools: a tool's result goes up on that device's screens."""
+    async def on_card(card: dict):
+        await device(name).show({"type": "card", "card": card})
+    return on_card
 
 
 def session(device: str):
@@ -201,12 +209,16 @@ class Device:
         self.state = "idle"  # idle | listening | thinking | speaking
 
     async def show(self, msg: dict):
-        """Send to every display of this device; drop displays that have gone away."""
+        """Send to every display of this device; drop displays that have gone away or stopped reading.
+        The timeout matters: a hung screen would otherwise stall whoever is showing (a reply, the timer loop)."""
+        text = json.dumps(msg)
         for d in list(self.displays):
             try:
-                await d.send_text(json.dumps(msg))
-            except GONE:
+                await asyncio.wait_for(d.send_text(text), 2)
+            except (*GONE, TimeoutError):
                 self.displays.discard(d)
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(d.close(), 1)  # it reconnects and gets a fresh snapshot
 
     async def set_state(self, state: str):
         if state != self.state:
@@ -368,6 +380,7 @@ async def ring_timers():
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
+    app.state.loop = asyncio.get_running_loop()  # tests hand tool calls to this loop from their own thread
     app.state.voice = PiperVoice.load(VOICE)
     app.state.groq = httpx.Client(base_url="https://api.groq.com/openai/v1", timeout=30,
                                   headers={"Authorization": f"Bearer {os.environ.get('GROQ_KEY', '')}"},
@@ -418,7 +431,8 @@ async def serve_satellite(ws: WebSocket, dev: Device):
             frames = []
             await dev.set_state("listening")
             # Reopen the Groq connection while the user talks, so STT never pays for a TLS handshake.
-            spawn(asyncio.to_thread(app.state.groq.get, "/models"))
+            if not FAKE_LLM:
+                spawn(asyncio.to_thread(app.state.groq.get, "/models"))
         elif kind == "cancel":
             frames = []
             await dev.set_state("idle")
@@ -434,10 +448,24 @@ async def serve_satellite(ws: WebSocket, dev: Device):
             await dev.show({"type": "volume", "level": dev.volume})
 
 
-async def from_display(dev: Device, m: dict):
+def sheet_card(dev: Device, sheet: str) -> dict | None:
+    """The card for a sheet opened from the screen (the menu, or tapping something on the home screen)."""
+    if sheet == "weather":
+        return (tools.weather_card(weather_now) if weather_now else
+                tools.text_card("Weather", ["The forecast hasn't loaded yet. Try again in a minute."]))
+    if sheet == "timers":
+        return tools.timers_card(dev.name)
+    return None
+
+
+async def from_display(dev: Device, m: dict, ws: WebSocket):
     """A touch on the screen."""
     kind = m.get("type")
-    if kind == "text" and m.get("text"):
+    if kind == "open" and (card := sheet_card(dev, m.get("sheet"))):
+        await ws.send_text(json.dumps({"type": "card", "card": card}))  # just the screen that asked
+    elif kind == "timer_cancel" and isinstance(m.get("id"), int):
+        tools.timer_cancel_id(dev.name, m["id"])  # the timer watcher updates every screen
+    elif kind == "text" and m.get("text"):
         spawn(turn(dev, text=m["text"]))  # spawned, so this screen can still send (e.g. stop) meanwhile
     elif kind == "talk" and dev.sat is not None:
         await send(dev.sat, json.dumps({"type": "listen"}))
@@ -467,7 +495,7 @@ async def display(ws: WebSocket):
             msg = await ws.receive()
             if msg["type"] == "websocket.disconnect":
                 return
-            await from_display(dev, json.loads(msg.get("text") or "{}"))
+            await from_display(dev, json.loads(msg.get("text") or "{}"), ws)
     except GONE:
         pass
     finally:

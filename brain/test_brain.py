@@ -1,4 +1,5 @@
 """Run: uv run python test_brain.py"""
+import asyncio
 import io
 import json
 import os
@@ -73,6 +74,25 @@ assert tools.weather_text(w).splitlines() == [
     "friday: overcast, high 74F, low 61F, 0% chance of rain"]
 raw["daily"]["precipitation_probability_max"][0] = None  # Open-Meteo sends null when it has no estimate
 assert tools.parse_forecast("X", raw)["days"][0]["rain"] == 0
+assert asyncio.run(tools.locate(None, "40.71, -74.01")) == ("Home", 40.71, -74.01)  # coordinates: no lookup
+
+# Screen cards from tools, and cancelling one timer by id
+tools.timer_add("den", "tea", 120)
+tea = tools.timer_list("den")[0]
+assert tools.timers_card("den") == {"kind": "timers", "timers": [tea], "alarms": []}
+assert tools.timer_cancel_id("den", tea["id"]) and not tools.timer_cancel_id("den", tea["id"])
+shown_cards = []
+
+
+async def capture(card):
+    shown_cards.append(card)
+
+by_name = {t.name: t for t in tools.tool_list("den", capture)}
+asyncio.run(by_name["set_timer"].handler({"seconds": 90, "label": "toast"}))
+asyncio.run(by_name["show_on_screen"].handler({"title": "Ingredients", "lines": ["eggs", "flour"]}))
+assert [c["kind"] for c in shown_cards] == ["timers", "text"] and shown_cards[0]["timers"][0]["label"] == "toast"
+assert shown_cards[1] == {"kind": "text", "title": "Ingredients", "lines": ["eggs", "flour"]}
+tools.timer_cancel("den", "")
 
 # Photos: listing, safe lookup, cover-resize with EXIF rotation, caching
 pics = pathlib.Path(tempfile.mkdtemp())

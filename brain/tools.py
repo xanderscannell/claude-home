@@ -84,6 +84,11 @@ def timer_cancel(device: str, label: str) -> int:
     return len(q("DELETE FROM timers WHERE device = ? AND instr(lower(label), lower(?)) RETURNING id", device, label))
 
 
+def timer_cancel_id(device: str, timer_id: int) -> bool:
+    """Cancel one of a device's timers by id (a Cancel button). Returns whether it existed."""
+    return bool(q("DELETE FROM timers WHERE device = ? AND id = ? RETURNING id", device, timer_id))
+
+
 def timers_due() -> list[tuple[str, str]]:
     """Pop finished timers: [(device, label)]."""
     return q("DELETE FROM timers WHERE ends_at <= ? RETURNING device, label", time.time())
@@ -110,7 +115,7 @@ async def locate(http: httpx.AsyncClient, place: str) -> tuple[str, float, float
     """Place name, or "lat,lon", to (name, lat, lon)."""
     try:
         lat, lon = (float(x) for x in place.split(","))
-        return "home", lat, lon
+        return "Home", lat, lon  # shown as the weather sheet's title
     except ValueError:
         pass
     r = await http.get("https://geocoding-api.open-meteo.com/v1/search", params={"name": place, "count": 1})
@@ -170,19 +175,42 @@ def _schema(**props) -> dict:
 STRINGS = {"type": "array", "items": {"type": "string"}}
 
 
-def make_tools(device: str):
-    """The tool server for one satellite. Timers belong to the device they were set on."""
+
+
+# --- Cards: what a screen shows after a tool runs, or when someone opens a sheet ------------------
+
+def timers_card(device: str) -> dict:
+    return {"kind": "timers", "timers": timer_list(device), "alarms": []}
+
+
+def weather_card(w: dict) -> dict:
+    return {"kind": "weather", **w}
+
+
+def text_card(title: str, lines: list[str]) -> dict:
+    return {"kind": "text", "title": title, "lines": lines}
+
+
+async def _no_screen(card: dict):
+    pass
+
+
+def tool_list(device: str, on_card=_no_screen) -> list:
+    """Claude's tools for one satellite. Timers belong to the device they were set on.
+    on_card(card) is awaited to put a result on that device's screens."""
 
     @tool("set_timer", "Start a countdown timer that rings on this speaker.",
           _schema(seconds={"type": "integer", "minimum": 1},
                   label={"type": "string", "description": "short name, e.g. 'pasta'; empty if none given"}))
     async def set_timer(a):
         timer_add(device, a["label"], a["seconds"])
+        await on_card(timers_card(device))
         return _text(f"Timer set for {spoken_duration(a['seconds'])}.")
 
     @tool("list_timers", "List this speaker's running timers and the time left on each.", _schema())
     async def list_timers(a):
         running = timers(device)
+        await on_card(timers_card(device))
         return _text("; ".join(f"{label or 'unnamed'}: {spoken_duration(left)} left" for label, left in running)
                      or "No timers running.")
 
@@ -229,11 +257,24 @@ def make_tools(device: str):
         if not place:
             return _text("Home location isn't configured (HOME_LOCATION). Ask which city.")
         try:
-            return _text(weather_text(await weather_data(place)))
+            w = await weather_data(place)
         except (LookupError, httpx.HTTPError) as e:
             return _text(f"Weather lookup failed: {e}")
+        await on_card(weather_card(w))
+        return _text(weather_text(w))
 
-    return create_sdk_mcp_server("home", tools=[
-        set_timer, list_timers, cancel_timer, remember_tool, forget_tool,
-        add_shopping, remove_shopping, get_shopping, clear_shopping, get_weather,
-    ])
+    @tool("show_on_screen", "Show something on this speaker's screen while you talk about it: a list, steps, a "
+          "definition, a comparison. Keep it short; the screen is small and read from across the room.",
+          _schema(title={"type": "string"},
+                  lines={**STRINGS, "description": "a few short lines, shown in order"}))
+    async def show_on_screen(a):
+        await on_card(text_card(a["title"], a["lines"]))
+        return _text("Shown on the screen.")
+
+    return [set_timer, list_timers, cancel_timer, remember_tool, forget_tool,
+            add_shopping, remove_shopping, get_shopping, clear_shopping, get_weather, show_on_screen]
+
+
+def make_tools(device: str, on_card=_no_screen):
+    """The MCP tool server Claude's session uses for one satellite."""
+    return create_sdk_mcp_server("home", tools=tool_list(device, on_card))

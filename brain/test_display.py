@@ -249,6 +249,73 @@ def test_slideshow_and_accent(b):
 PHOTO_SECONDS = 30
 
 
+def sheet_open(d) -> bool:
+    return d.visible("#sheet")
+
+
+def test_sheets(b):
+    d = Display(b)
+    t0 = START.timestamp()
+
+    # Weather: the place as the title, now as the hero, three days; rain only when it's likely
+    w = dict(WEATHER, place="New York, New York, United States")
+    w["days"] = [dict(WEATHER["days"][0]), dict(WEATHER["days"][1], rain=60), dict(WEATHER["days"][2])]
+    d.push({"type": "card", "card": {"kind": "weather", **w}})
+    assert sheet_open(d) and d.text("#sheet-title") == "New York"
+    assert d.text(".wx-temp") == "47°" and d.text(".wx-condition") == "Clear"
+    assert d.text(".wx-detail") == "Feels like 43°, wind 3 mph"
+    assert d.page.locator(".wx-label").all_inner_texts() == ["Today", "Tomorrow", "Friday"]
+    assert d.page.locator(".wx-rain").all_inner_texts() == ["60% chance of rain"], "rain shown only when likely"
+    d.shot("sheet-weather", settle=400)
+    box = d.page.locator("#sheet-close").bounding_box()
+    assert box["width"] >= 64 and box["height"] >= 64, box
+    d.tap("#sheet-close")
+    assert not sheet_open(d), "close didn't return home"
+
+    # Timers: live countdowns, Cancel sends the timer's id; the list follows ambient updates
+    timers = [{"id": 7, "label": "pasta", "ends_at": t0 + 252}, {"id": 8, "label": "", "ends_at": t0 + 1500}]
+    d.push({"type": "card", "card": {"kind": "timers", "timers": timers, "alarms": []}})
+    assert d.page.locator(".timer-row .countdown").all_inner_texts() == ["4:12", "25:00"]
+    assert d.page.locator(".timer-row .label").all_inner_texts() == ["Pasta", "Timer"]
+    d.shot("sheet-timers", settle=400)
+    d.page.clock.run_for(2000)
+    assert d.page.locator(".timer-row .countdown").first.inner_text() == "4:10", "sheet countdown isn't ticking"
+    d.page.locator(".timer-row .pill").first.tap()
+    d.page.wait_for_timeout(50)
+    assert {"type": "timer_cancel", "id": 7} in d.sent, d.sent
+    d.push(ambient([timers[1]]))  # the brain confirms the cancel
+    assert d.page.locator(".timer-row").count() == 1
+    d.push(ambient([]))
+    assert d.text(".sheet-body .quiet") == "No timers running."
+    d.shot("sheet-timers-empty", settle=400)
+
+    # Untouched for 45 s, the sheet goes home; a touch restarts the wait
+    d.page.clock.run_for(30_000)
+    d.page.locator(".sheet-body").tap()
+    d.page.clock.run_for(30_000)
+    assert sheet_open(d), "a touch should restart the 45 s wait"
+    d.page.clock.run_for(16_000)
+    assert not sheet_open(d), "sheet didn't return home after 45 s untouched"
+
+    # Text from Claude: few short lines get the big type, long lists stay readable
+    d.push({"type": "card", "card": {"kind": "text", "title": "Pancakes",
+                                     "lines": ["1 cup flour", "2 tbsp sugar", "1 egg", "1 cup milk"]}})
+    assert d.text("#sheet-title") == "Pancakes" and d.page.locator(".text-lines.roomy p").count() == 4
+    d.shot("sheet-text-short", settle=400)
+    long = [f"Step {i}: whisk the dry ingredients, then fold in the wet ones gently" for i in range(1, 9)]
+    d.push({"type": "card", "card": {"kind": "text", "title": "How to make pancakes", "lines": long}})
+    assert d.page.locator(".text-lines.roomy").count() == 0 and d.page.locator(".text-lines p").count() == 8
+    d.shot("sheet-text-long", settle=400)
+
+    # A conversation shows over an open sheet, and the sheet is still there afterwards
+    d.push({"type": "state", "state": "speaking"}, {"type": "reply", "text": "Here's the recipe."})
+    assert d.visible("#overlay") and sheet_open(d)
+    d.push({"type": "state", "state": "idle"})
+    d.page.clock.run_for(4100)
+    assert not d.visible("#overlay") and sheet_open(d)
+    d.close()
+
+
 def test_touch_controls(b):
     d = Display(b)
     d.tap("#mic")

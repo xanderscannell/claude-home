@@ -9,6 +9,7 @@ const $ = (id) => document.getElementById(id);
 const els = {
   time: $("time"), date: $("date"), mic: $("mic"), menu: $("menu"), weather: $("weather"), strip: $("strip"),
   overlay: $("overlay"), heard: $("heard"), reply: $("reply"), stop: $("stop"), close: $("close-overlay"),
+  sheet: $("sheet"), sheetTitle: $("sheet-title"), sheetBody: $("sheet-body"), sheetClose: $("sheet-close"),
   offline: $("offline"),
 };
 
@@ -57,7 +58,13 @@ const handlers = {
   state: (m) => setState(m.state),
   heard: (m) => { els.heard.textContent = m.text; },
   reply: (m) => addReply(m.text),
-  ambient: (m) => { ambient = m; renderWeather(); renderStrip(); },
+  ambient: (m) => {
+    ambient = m;
+    renderWeather();
+    renderStrip();
+    if (sheetCard && sheetCard.kind === "timers") renderSheet();  // keep an open timers sheet live
+  },
+  card: (m) => openSheet(m.card),
 };
 
 function handle(msg) {
@@ -214,6 +221,98 @@ function tick() {
     if (left <= 0) { renderStrip(); return; }  // finished: drop it (the brain rings and confirms)
     item.querySelector(".num").textContent = countdown(left);
   }
+  for (const c of els.sheetBody.querySelectorAll("[data-ends-at]")) {
+    c.textContent = countdown(Number(c.dataset.endsAt) - now);
+  }
+}
+
+// --- Sheets -----------------------------------------------------------------------------------
+
+const SHEET_IDLE_MS = 45000;
+let sheetCard = null;
+let sheetIdle = null;
+
+function openSheet(card) {
+  sheetCard = card;
+  // A timers card can beat the next ambient update by up to half a second; it is just as fresh, so use it.
+  if (card.kind === "timers") ambient = { ...ambient, timers: card.timers };
+  renderSheet();
+  els.sheet.hidden = false;
+  requestAnimationFrame(() => els.sheet.classList.add("shown"));
+  touchSheet();
+}
+
+function closeSheet() {
+  clearTimeout(sheetIdle);
+  sheetCard = null;
+  els.sheet.classList.remove("shown");
+  els.sheet.hidden = true;
+  els.sheetBody.replaceChildren();
+}
+
+// Untouched for 45 s, a sheet goes away and the room comes back.
+function touchSheet() {
+  clearTimeout(sheetIdle);
+  sheetIdle = setTimeout(closeSheet, SHEET_IDLE_MS);
+}
+
+const renderers = {
+  weather: (c) => {
+    const title = c.place.split(",")[0];
+    const now = el("div", "wx-now");
+    const words = el("div");
+    words.append(el("p", "wx-condition", sentence(c.now.condition)),
+                 el("p", "wx-detail", `Feels like ${c.now.feels}°, wind ${c.now.wind} mph`));
+    now.append(el("span", "wx-temp", `${c.now.temp}°`), words);
+    const days = el("div", "wx-days");
+    for (const d of c.days) {
+      const day = el("div", "wx-day");
+      const range = el("p", "wx-range");
+      range.append(el("span", "wx-high", `${d.high}°`), el("span", "wx-low", `${d.low}°`));
+      day.append(el("p", "wx-label", d.label), range, el("p", "wx-sky", sentence(d.condition)));
+      if (d.rain >= 10) day.append(el("p", "wx-rain", `${d.rain}% chance of rain`));
+      days.append(day);
+    }
+    return [title, [now, days]];
+  },
+
+  timers: () => {
+    const now = Date.now() / 1000;
+    const running = ambient.timers.filter((t) => t.ends_at > now);  // live list, not the card's snapshot
+    if (!running.length) {
+      return ["Timers", [el("p", "quiet", "No timers running."),
+                         el("p", "hint", "Say “Hey Jarvis, set a timer for ten minutes.”")]];
+    }
+    return ["Timers", running.map((t) => {
+      const row = el("div", "timer-row");
+      const num = el("span", "countdown", countdown(t.ends_at - now));
+      num.dataset.endsAt = t.ends_at;
+      const cancel = el("button", "pill", "Cancel");
+      cancel.type = "button";
+      cancel.addEventListener("click", () => {
+        row.classList.add("leaving");
+        send({ type: "timer_cancel", id: t.id });
+      });
+      row.append(num, el("span", "label", sentence(t.label) || "Timer"), cancel);
+      return row;
+    })];
+  },
+
+  text: (c) => {
+    const lines = el("div", "text-lines");
+    if (c.lines.length <= 5 && c.lines.every((l) => l.length <= 40)) lines.classList.add("roomy");
+    lines.append(...c.lines.map((l) => el("p", null, l)));
+    return [c.title, [lines]];
+  },
+};
+
+function renderSheet() {
+  const render = renderers[sheetCard.kind];
+  if (!render) return;
+  const [title, nodes] = render(sheetCard);
+  els.sheetTitle.textContent = title;
+  els.sheetBody.replaceChildren(...nodes);
+  if (sheetCard.kind === "timers" && !ticker && ambient.timers.length) ticker = setInterval(tick, 1000);
 }
 
 // --- Conversation overlay ---------------------------------------------------------------------
@@ -270,6 +369,8 @@ function fitReply() {
 els.mic.addEventListener("click", () => send({ type: "talk" }));
 els.stop.addEventListener("click", () => send({ type: "stop" }));
 els.close.addEventListener("click", hideOverlay);
+els.sheetClose.addEventListener("click", closeSheet);
+els.sheet.addEventListener("pointerdown", touchSheet);
 
 startClock();
 startPhotos();

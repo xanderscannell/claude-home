@@ -106,6 +106,21 @@ async def play_out(sat):
     await sat.send(json.dumps({"type": "played"}))
 
 
+FIXTURE = os.path.join(os.path.dirname(__file__), "test_data", "openmeteo.json")
+
+
+async def on_server(coro):
+    """Run a coroutine on the server's event loop (tool handlers send over its sockets)."""
+    return await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(coro, brain.app.state.loop))
+
+
+async def until_type(ws, kind: str) -> dict:
+    """Skip messages until one of this type (ambient updates and state changes interleave)."""
+    while (m := await recv_json(ws))["type"] != kind:
+        pass
+    return m
+
+
 async def display_flow(port: int):
     a, b, other = [await open_display(port, n) for n in ("kitchen", "kitchen", "office")]
     async with websockets.connect(f"ws://127.0.0.1:{port}/satellite?device=kitchen") as sat:
@@ -178,6 +193,35 @@ async def display_flow(port: int):
         brain.tools.timer_cancel("kitchen", "pasta")
         m = await recv_json(a, timeout=3)
         assert m["type"] == "ambient" and m["timers"] == [], m
+
+        # Claude's tools put their results on the device's screens: a timer, a weather lookup, a list
+        kitchen_tools = {t.name: t for t in brain.tools.tool_list("kitchen", brain.show_card("kitchen"))}
+        await on_server(kitchen_tools["set_timer"].handler({"seconds": 300, "label": "eggs"}))
+        m = await until_type(a, "card")
+        assert m["card"]["kind"] == "timers" and [t["label"] for t in m["card"]["timers"]] == ["eggs"], m
+        assert (await until_type(b, "card"))["card"]["kind"] == "timers", "every kitchen screen gets the card"
+        # (the timer watcher polls every 0.5 s; wait until it has seen this timer, or a quick cancel goes unnoticed)
+        while [t["label"] for t in (await until_type(a, "ambient"))["timers"]] != ["eggs"]:
+            pass
+        await on_server(kitchen_tools["show_on_screen"].handler({"title": "Pancakes", "lines": ["Flour", "Eggs"]}))
+        assert (await until_type(a, "card"))["card"] == {"kind": "text", "title": "Pancakes", "lines": ["Flour", "Eggs"]}
+
+        # Opening sheets from the screen: only the screen that asked gets the card
+        brain.weather_now = brain.tools.parse_forecast("Home", json.load(open(FIXTURE)))
+        await a.send(json.dumps({"type": "open", "sheet": "weather"}))
+        m = await until_type(a, "card")
+        assert m["card"]["kind"] == "weather" and m["card"]["now"]["temp"] == 47, m
+        await a.send(json.dumps({"type": "open", "sheet": "timers"}))
+        assert [t["label"] for t in (await until_type(a, "card"))["card"]["timers"]] == ["eggs"]
+        await a.send(json.dumps({"type": "open", "sheet": "nonsense"}))  # ignored, nothing breaks
+
+        # Cancel from the screen by id; screens hear about it through the timer watcher
+        eggs = brain.tools.timer_list("kitchen")[0]["id"]
+        await a.send(json.dumps({"type": "timer_cancel", "id": eggs}))
+        m = await until_type(a, "ambient")
+        while m["timers"]:
+            m = await until_type(a, "ambient")
+        assert brain.tools.timer_list("kitchen") == []
     for ws in (a, b, other):
         await ws.close()
 

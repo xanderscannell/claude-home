@@ -28,6 +28,14 @@
     </button>
   </main>
 
+  <section id="sheet" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <h2 id="sheet-title" class="sheet-title"></h2>
+    <button id="sheet-close" class="close" type="button" aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <div id="sheet-body" class="sheet-body"></div>
+  </section>
+
   <section id="overlay" class="overlay" data-state="idle" hidden aria-live="polite">
     <button id="close-overlay" class="close" type="button" aria-label="Close">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
