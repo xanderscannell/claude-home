@@ -1,0 +1,24 @@
+# systemd unit for the satellite on a Raspberry Pi.
+# Install:  sudo cp claude-home-satellite.service /etc/systemd/system/
+#           sudo systemctl enable --now claude-home-satellite
+# Logs:     journalctl -u claude-home-satellite -f
+#
+# BRAIN_URL uses the brain PC's IP; reserve that address in the router so it doesn't change.
+# Audio goes through ALSA "default", pointed at the USB headset by ~/.asoundrc (defaults.pcm.card N).
+
+[Unit]
+Description=Claude Home satellite
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+User=claude-pi
+WorkingDirectory=/home/claude-pi/claude-home/satellite
+Environment=BRAIN_URL=ws://192.168.0.172:8765 DEVICE=claude-pi AUDIO_IN=default AUDIO_OUT=default PYTHONUNBUFFERED=1
+ExecStart=/home/claude-pi/.local/bin/uv run --frozen satellite.py
+# Exits on a lost mic or headset are deliberate; come back with whatever is plugged in now.
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -32,6 +32,7 @@ MIN_SPEECH_S = 0.25  # less speech than this after the wake word counts as nothi
 END_SILENCE_S = 0.7  # this much silence after speech ends the utterance
 NO_SPEECH_TIMEOUT_S = 4.0  # wake word fired but nobody spoke
 MAX_UTTERANCE_S = 15.0
+MIC_TIMEOUT_S = 2.0  # no audio for this long means the mic is gone (unplugged)
 
 
 def _device(name):
@@ -91,14 +92,24 @@ class Player:
     def drain(self):
         """Block until everything queued has played."""
         while self.buf:
+            if not self.stream.active:
+                raise SystemExit("audio output stopped (headset unplugged?); exiting so the service restarts")
             time.sleep(0.02)
         time.sleep(self.stream.latency)
+
+
+async def next_frame(mic: asyncio.Queue) -> np.ndarray:
+    """A swapped or unplugged mic fails silently in PortAudio; exit instead of waiting forever."""
+    try:
+        return await asyncio.wait_for(mic.get(), MIC_TIMEOUT_S)
+    except TimeoutError:
+        raise SystemExit("no audio from the mic (unplugged?); exiting so the service restarts")
 
 
 async def session(ws, mic: asyncio.Queue, wake: Model, vad: VAD, player: Player):
     while True:
         # 1. Wait for the wake word.
-        while wake.predict(await mic.get())[WAKE_WORD] < WAKE_THRESHOLD:
+        while wake.predict(await next_frame(mic))[WAKE_WORD] < WAKE_THRESHOLD:
             pass
         player.play(*chime(player.rate))
         await ws.send(json.dumps({"type": "wake"}))
@@ -108,7 +119,7 @@ async def session(ws, mic: asyncio.Queue, wake: Model, vad: VAD, player: Player)
         vad.reset_states()
         speech = silence = total = 0.0
         while True:
-            frame = await mic.get()
+            frame = await next_frame(mic)
             await ws.send(frame.tobytes())
             total += FRAME_S
             if vad.predict(frame, frame_size=640) >= SPEECH_PROB:
