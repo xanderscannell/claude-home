@@ -497,13 +497,19 @@ async def _no_speaker(level: int, relative: bool) -> None:
     return None
 
 
+async def _right_away(action):
+    await action()
+
+
 def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spotify.Spotify | None = None,
-              categories: list[str] = ()) -> list:
+              categories: list[str] = (), after_reply=_right_away) -> list:
     """Claude's tools for one satellite. Timers belong to the device they were set on.
     on_card(card) is awaited to put a result on that device's screens.
     on_volume(level, relative) sets the speaker's volume and returns the new level (None: no speaker).
     music is the Spotify client (None: Spotify isn't set up).
-    categories are the shopping list's, as of the session's start (shopping results always list the current ones)."""
+    categories are the shopping list's, as of the session's start (shopping results always list the current ones).
+    after_reply(action) is awaited to run an async action once this device's reply has finished playing, so music
+    doesn't start under Claude's voice (and the music ducking)."""
 
     async def via_spotify(action, say):
         if music is None:
@@ -710,8 +716,20 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spo
           _schema(query={"type": "string", "description": "what to search for, e.g. 'Blue by Joni Mitchell'"},
                   kind={"type": "string", "enum": list(spotify.KINDS)}))
     async def play_music(a):
-        return await via_spotify(lambda: music.play(a["query"], a["kind"]),
-                                 lambda f: f"Playing {f['name']}" + (f" by {f['by']}." if f["by"] else "."))
+        async def find():
+            found = await music.search(a["query"], a["kind"])
+            await music.speaker()  # a missing speaker is said now, not found out after the reply
+            await after_reply(lambda: start(found))
+            return found
+
+        async def start(found):
+            try:
+                await music.start(found, a["kind"])
+            except spotify.SpotifyError as e:  # Claude has finished talking; say it on the screen
+                await on_card(text_card("Music", [str(e)]))
+            music.changed.set()
+
+        return await via_spotify(find, lambda f: f"Playing {f['name']}" + (f" by {f['by']}." if f["by"] else "."))
 
     @tool("pause_music", "Pause the music.", _schema())
     async def pause_music(a):
@@ -757,6 +775,6 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spo
 
 
 def make_tools(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spotify.Spotify | None = None,
-               categories: list[str] = ()):
+               categories: list[str] = (), after_reply=_right_away):
     """The MCP tool server Claude's session uses for one satellite."""
-    return create_sdk_mcp_server("home", tools=tool_list(device, on_card, on_volume, music, categories))
+    return create_sdk_mcp_server("home", tools=tool_list(device, on_card, on_volume, music, categories, after_reply))

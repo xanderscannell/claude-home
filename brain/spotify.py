@@ -191,19 +191,24 @@ class Spotify:
         return False
 
     async def play(self, query: str, kind: str = "track") -> dict:
-        """Find something and play it on the speaker; the play command names the speaker, which also moves playback
+        """Find something and play it on the speaker."""
+        found = await self.search(query, kind)
+        await self.start(found, kind)
+        return found
+
+    async def start(self, found: dict, kind: str = "track"):
+        """Play a search result on the speaker; the play command names the speaker, which also moves playback
         there. No separate transfer first: an idle librespot (0.8.0) restores its last track on a transfer, and with
         the play right behind it, Spotify went on reporting that old track while the new one played.
 
         Tried twice: librespot only notices that Spotify closed its session when the next command arrives. That
         command wakes it up (it logs in again in about 2 s) but is itself lost. Both seen on the Pi 2026-10-08."""
-        found = await self.search(query, kind)
         body = {"uris": [found["uri"]]} if kind == "track" else {"context_uri": found["uri"]}
         for _ in range(2):
             dev = await self.speaker()
             await self.call("PUT", "/me/player/play", params={"device_id": dev["id"]}, json=body)
             if await self.started(found["uri"]):
-                return found
+                return
         raise SpotifyError(f"The {self.device_name} speaker didn't start playing. Try again in a moment.")
 
     async def pause(self):

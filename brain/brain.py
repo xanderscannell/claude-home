@@ -176,7 +176,15 @@ def options(device: str, categories: list[str] = ()) -> ClaudeAgentOptions:
     memory = "\n\nThings you remember about this household:\n" + "\n".join(f"- {f}" for f in known) if known else ""
     return replace(OPTIONS, system_prompt=SYSTEM_PROMPT + memory,
                    mcp_servers={"home": tools.make_tools(device, on_card=show_card(device), on_volume=speaker(device),
-                                                         music=app.state.spotify, categories=categories)})
+                                                         music=app.state.spotify, categories=categories,
+                                                         after_reply=after_reply(device))})
+
+
+def after_reply(name: str):
+    """after_reply for one device's tools: hold an action until the device goes idle, i.e. its reply has played."""
+    async def hold(action):
+        device(name).after_reply.append(action)
+    return hold
 
 
 def show_card(name: str):
@@ -239,6 +247,7 @@ class Device:
         self.snoozed = False
         self.displays: set[WebSocket] = set()
         self.state = "idle"  # idle | listening | thinking | speaking
+        self.after_reply: list = []  # async actions held until the reply has played (music starting, say)
 
     async def show(self, msg: dict):
         """Send to every display of this device; drop displays that have gone away or stopped reading.
@@ -256,6 +265,10 @@ class Device:
         if state != self.state:
             self.state = state
             await self.show({"type": "state", "state": state})
+        if state == "idle":
+            held, self.after_reply = self.after_reply, []
+            for action in held:
+                spawn(action())
 
 
 devices: dict[str, Device] = {}

@@ -497,7 +497,28 @@ async def music_flow(port: int):
         await on_server(sp.close())
 
 
+async def after_reply_check():
+    """A tool's held action (a song starting) runs when the device goes idle after its reply, not before."""
+    dev, ran = brain.device("held"), []
+
+    async def act():
+        ran.append("played")
+
+    await dev.set_state("thinking")
+    await brain.after_reply("held")(act)
+    await dev.set_state("speaking")
+    await asyncio.sleep(0.05)
+    assert ran == [], "still talking"
+    await dev.set_state("idle")
+    await asyncio.sleep(0.05)
+    assert ran == ["played"] and dev.after_reply == []
+    await dev.set_state("idle")
+    await asyncio.sleep(0.05)
+    assert ran == ["played"], "only once"
+
+
 def main():
+    asyncio.run(after_reply_check())
     server, port = start()
     base = f"http://127.0.0.1:{port}"
 

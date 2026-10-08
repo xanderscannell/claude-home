@@ -577,8 +577,28 @@ async def music_tool_checks():
         assert hear(await music[name].handler({})) == said and calls[-1][1] == endpoint, name
     world["playing"] = False
     assert hear(await music["whats_playing"].handler({})) == "Nothing is playing." and shown[-1] == {"kind": "music"}
+
+    # On a speaker, the song waits for Claude's reply to finish playing; if starting it then fails, the screen says so
+    held = []
+
+    async def hold(action):
+        held.append(action)
+
+    later = {t.name: t for t in tools.tool_list("kitchen", on_card, music=s, after_reply=hold)}
+    calls.clear()
+    assert hear(await later["play_music"].handler({"query": "blue", "kind": "track"})) == "Playing Blue by Joni Mitchell."
+    assert len(held) == 1 and not any(c[1] == "/v1/me/player/play" for c in calls), "nothing plays during the reply"
+    await held.pop()()
+    assert ("PUT", "/v1/me/player/play", {"device_id": "pi1"}, {"uris": ["spotify:track:1"]}) in calls
+    world["playing"], world["lose"] = False, 2
+    await later["play_music"].handler({"query": "blue", "kind": "track"})
+    await held.pop()()
+    assert shown[-1]["kind"] == "text" and "didn't start playing" in shown[-1]["lines"][0], shown[-1]
+
     world["devices"] = []
     assert "isn't showing up" in hear(await music["play_music"].handler({"query": "blue", "kind": "track"}))
+    assert "isn't showing up" in hear(await later["play_music"].handler({"query": "blue", "kind": "track"}))
+    assert not held, "a missing speaker is said straight away, with nothing held"
     nothing = {t.name: t for t in tools.tool_list("kitchen")}
     assert hear(await nothing["pause_music"].handler({})) == "Spotify isn't set up."
     await s.close()
