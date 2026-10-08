@@ -69,7 +69,8 @@ def _rebuild(today: dt.date):
     events[:] = merged
 
 
-async def refresh(client: httpx.AsyncClient | None = None, environ=os.environ) -> list[str]:
+async def refresh(client: httpx.AsyncClient | None = None, environ=os.environ,
+                  today: dt.date | None = None) -> list[str]:
     """Fetch every feed (all at once), keep the ones that worked, and re-expand the window.
     Returns the labels that failed, so the caller can try again sooner."""
     sources = feeds(environ)
@@ -94,7 +95,7 @@ async def refresh(client: httpx.AsyncClient | None = None, environ=os.environ) -
             await client.aclose()
     for gone in set(feeds_raw) - set(sources):
         del feeds_raw[gone]
-    await asyncio.to_thread(_rebuild, dt.date.today())  # big feeds take a while to parse; keep the loop free
+    await asyncio.to_thread(_rebuild, today or dt.date.today())  # big feeds take a while to parse; keep the loop free
     return failed
 
 
