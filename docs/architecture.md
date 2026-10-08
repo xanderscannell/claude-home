@@ -418,7 +418,7 @@ claude-home/
   README.md
   docs/architecture.md
   brain/          Python service: brain.py (server, turns, alarms, pollers), tools.py, agenda.py,
-                  photos.py, spotify.py, tests, test_data/
+                  photos.py, spotify.py, fake_brain.py (canned data for display work), tests, test_data/
     display/      the display page: index.html, style.css, app.js, fonts/
   satellite/      Python audio client, its systemd unit, the kiosk unit and kiosk.html, asound.conf
 ```

@@ -52,6 +52,12 @@ On the Pi, the satellite's unit file sets `BRAIN_URL`, `DEVICE`, `AUDIO_IN`, and
 **Tests** (from `brain/`): `uv run python test_brain.py`, `test_server.py`, and `test_display.py`
 (Playwright, 800x480 with touch); from `satellite/`: `uv run python test_satellite.py`.
 
+**Display work without the Pi or Claude** (from `brain/`): `uv run python fake_brain.py`, then open
+http://localhost:8001/ at 800x480. It serves the real `display/` files with canned data and shows the mouse
+cursor. Visit `/scene/<name>` to push a screen to the page (`/scene` lists them: replies, every sheet, ringing,
+night, and more). To design a screen the brain can't drive yet, add a scene that sends the new message, then
+build it in `app.js`.
+
 ## Roadmap
 
 Each phase is usable on its own. Later phases add to earlier ones; nothing gets rewritten.
