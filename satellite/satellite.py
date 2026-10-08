@@ -37,6 +37,7 @@ END_SILENCE_S = 0.7  # this much silence after speech ends the utterance
 NO_SPEECH_TIMEOUT_S = 4.0  # wake word fired but nobody spoke
 MAX_UTTERANCE_S = 15.0
 MIC_TIMEOUT_S = 2.0  # no audio for this long means the mic is gone (unplugged)
+MIC_BACKLOG = int(5 / FRAME_S)  # mic frames kept for a reader that fell behind; older ones are dropped
 DUCK_PERCENT = 20  # music volume while listening and talking
 VOLUME = "Master"  # the speaker's volume: asound.conf's software control, the same whatever is plugged in
 
@@ -137,6 +138,14 @@ class Player:
                 raise SystemExit("audio output stopped (headset unplugged?); exiting so the service restarts")
             time.sleep(0.02)
         time.sleep(self.stream.latency)
+
+
+def push_latest(q: asyncio.Queue, item):
+    """Queue item, dropping the oldest when full. While the brain is down nothing reads the mic, and an
+    unbounded queue grew 32 KB/s (660 MB over a 6-hour outage), then took hours of CPU to chew through."""
+    if q.full():
+        q.get_nowait()
+    q.put_nowait(item)
 
 
 async def next_frame(mic: asyncio.Queue) -> np.ndarray:
@@ -262,10 +271,10 @@ async def main():
     vad = VAD()
     player = Player()
     loop = asyncio.get_running_loop()
-    mic: asyncio.Queue = asyncio.Queue()
+    mic: asyncio.Queue = asyncio.Queue(MIC_BACKLOG)
 
     def on_audio(data, *_):
-        loop.call_soon_threadsafe(mic.put_nowait, data[:, 0].copy())
+        loop.call_soon_threadsafe(push_latest, mic, data[:, 0].copy())
 
     url = f"{os.environ.get('BRAIN_URL', 'ws://localhost:8765')}/satellite?device={DEVICE}"
     with sd.InputStream(samplerate=RATE, channels=1, dtype="int16", blocksize=FRAME,

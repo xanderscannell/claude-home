@@ -1,5 +1,7 @@
 """Run: uv run python test_satellite.py"""
-from satellite import VOLUME, amixer_args, parse_level
+import asyncio
+
+from satellite import MIC_BACKLOG, VOLUME, amixer_args, parse_level, push_latest
 
 # amixer commands: read, set, clamped
 assert VOLUME == "Master", "the speaker volume is asound.conf's software control, not the device's own"
@@ -27,4 +29,11 @@ assert parse_level(PCM) == 82
 assert parse_level(MUSIC) == 20
 assert parse_level("amixer: Unable to find simple control 'Music',0") is None
 assert parse_level("") is None
+
+# The mic queue keeps only the newest frames when nobody reads it (the brain is down)
+q = asyncio.Queue(MIC_BACKLOG)
+for i in range(MIC_BACKLOG * 3):
+    push_latest(q, i)
+assert q.qsize() == MIC_BACKLOG and q.get_nowait() == MIC_BACKLOG * 2, "oldest dropped, newest kept"
+assert 50 <= MIC_BACKLOG <= 100, "a few seconds of 80 ms frames"
 print("ok")
