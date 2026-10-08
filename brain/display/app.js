@@ -315,7 +315,12 @@ function renderStrip() {
     const item = el("button", paused(t) ? "item timer paused" : "item timer");
     item.type = "button";
     if (!paused(t)) item.dataset.endsAt = t.ends_at;
-    item.append(el("span", "num", countdown(timeLeft(t, now))), el("span", "label", timerName(t)));
+    const num = el("span", "num", countdown(timeLeft(t, now)));
+    // Fraunces has no tabular digits ("1:11" is narrower than "0:00"), so the countdown gets the width of its
+    // widest digits, 0 (1ch each), plus its colons (0.24em): the strip doesn't shift every second
+    const colons = num.textContent.split(":").length - 1;
+    num.style.minWidth = `calc(${num.textContent.length - colons}ch + ${colons * 0.24}em)`;
+    item.append(num, el("span", "label", timerName(t)));
     item.addEventListener("click", () => send({ type: "open", sheet: "timers" }));
     els.strip.append(item);
   }

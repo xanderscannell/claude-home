@@ -93,7 +93,8 @@ body.talking .home { opacity: 0; pointer-events: none; }
 .strip {
   position: absolute; left: calc(var(--edge) + 4px); right: 130px; bottom: 12px;
   display: flex; gap: 34px; align-items: baseline;
-  font-size: 18px; text-shadow: var(--on-photo); white-space: nowrap; overflow: hidden;
+  font-size: 18px; text-shadow: var(--on-photo); white-space: nowrap;
+  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;  /* more than fits: swipe sideways */
 }
 .strip .item { display: flex; align-items: baseline; gap: 8px; min-height: 64px; padding: 18px 0; }
 .strip .num, .brief-facts .num {

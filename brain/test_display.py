@@ -211,6 +211,20 @@ def test_weather_and_timers(b):
     d.page.clock.run_for(5000)
     assert d.page.locator(".strip .num").all_inner_texts() == ["3:20", "9:55"]
     assert d.page.locator(".strip .timer.paused").count() == 1
+
+    # Lots of timers: the strip scrolls sideways, and ticking never shifts anything (the digits aren't tabular)
+    now = t0 + 85
+    many = [{"id": 10 + i, "label": f"batch {i}", "ends_at": now + 73 + i * 41, "duration": 600, "paused_left": None}
+            for i in range(6)]
+    d.push(ambient(many))
+    width, room = d.page.eval_on_selector(".strip", "s => [s.scrollWidth, s.clientWidth]")
+    assert width > room, (width, room)
+    xs = lambda: [round(b["x"]) for b in (d.page.locator(".strip .label").nth(i).bounding_box() for i in range(3))]  # noqa: E731
+    before = xs()
+    d.page.clock.run_for(3000)  # 1:13 ticks down through 1:11, the narrowest
+    assert xs() == before, (before, xs())
+    assert d.page.eval_on_selector(".strip", "s => { s.scrollLeft = 10000; return s.scrollLeft; }") > 0
+    d.shot("strip-many-timers")
     d.close()
 
 
