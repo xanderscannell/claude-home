@@ -1,5 +1,6 @@
 # systemd unit for the display on a Raspberry Pi: Chromium in kiosk mode under the cage compositor, on tty1.
-# Install:  copy kiosk.html to ~/claude-home/satellite/, then
+# Install:  copy kiosk.html and blank_cursor.py to ~/claude-home/satellite/, then
+#           python3 ~/claude-home/satellite/blank_cursor.py   (as claude-pi: hides cage's cursor)
 #           sudo cp claude-home-display.service /etc/systemd/system/
 #           sudo systemctl disable --now getty@tty1
 #           sudo systemctl enable --now claude-home-display
