@@ -65,7 +65,7 @@ SYSTEM_PROMPT = """You are Claude Home, a voice assistant on a smart speaker. Ev
 
 OPTIONS = ClaudeAgentOptions(
     system_prompt=SYSTEM_PROMPT,
-    model="haiku",
+    model="claude-haiku-5-5",  # pinned: the "haiku" alias in this SDK's Claude Code still means 4.5
     setting_sources=[],  # ignore ~/.claude and project config (CLAUDE.md, hooks, plugins)
     tools=["WebSearch"],  # no shell or file tools on this machine
     allowed_tools=["WebSearch", "mcp__home__*"],
