@@ -16,7 +16,9 @@ import urllib.parse
 TMP = tempfile.mkdtemp()
 PICS = os.path.join(TMP, "photos")
 os.environ.update(CLAUDE_HOME_FAKE_LLM="1", CLAUDE_HOME_DB=os.path.join(TMP, "test.db"),
-                  CLAUDE_HOME_LOG=os.path.join(TMP, "turns.jsonl"), PHOTOS_DIR=PICS)  # before importing the brain
+                  CLAUDE_HOME_LOG=os.path.join(TMP, "turns.jsonl"), PHOTOS_DIR=PICS,
+                  SPOTIFY_TOKEN=os.path.join(TMP, "no_spotify_token.json"))  # before importing the brain
+os.environ.pop("HOME_LOCATION", None)  # no forecasts: the briefing checks expect none
 
 import httpx  # noqa: E402
 import uvicorn  # noqa: E402

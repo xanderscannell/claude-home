@@ -43,6 +43,7 @@ Connect speaker; the brain controls it through the Spotify Web API. Open
 | `PHOTOS_DIR` | Folder of photos for the display (default `~/Pictures/Claude Home`) |
 | `NIGHT_START`, `NIGHT_END` | When the display becomes a dim night clock (default `22:00`, `07:00`) |
 | `SPOTIFY_CLIENT_ID`, `SPOTIFY_DEVICE` | A Spotify app's client ID, and the speaker's name in Spotify (default `Claude Home`) |
+| `SPOTIFY_TOKEN` | Where the Spotify sign-in is kept (default `brain/spotify_token.json`) |
 | `TODOIST_TOKEN`, `TODOIST_SHOPPING_PROJECT` | A Todoist API token (Settings > Integrations > Developer), and the project that is the shopping list (default `Shopping List`) |
 | `CLAUDE_HOME_DB` | Where the SQLite file lives (default `brain/home.db`) |
 

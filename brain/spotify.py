@@ -5,7 +5,8 @@ brain's own machine once (the redirect is http://127.0.0.1:8765/spotify/callback
 spotify_token.json as {"access_token", "refresh_token", "expires_at"} and refreshed within a minute of
 expiry. Never print or log them.
 
-Settings: SPOTIFY_CLIENT_ID, SPOTIFY_DEVICE (default "Claude Home", the speaker's name in Spotify).
+Settings: SPOTIFY_CLIENT_ID, SPOTIFY_DEVICE (default "Claude Home", the speaker's name in Spotify), SPOTIFY_TOKEN
+(where the tokens are kept; default brain/spotify_token.json).
 """
 
 import asyncio
@@ -24,7 +25,7 @@ API = "https://api.spotify.com/v1"
 ACCOUNTS = "https://accounts.spotify.com"
 SCOPES = "user-read-playback-state user-modify-playback-state user-read-currently-playing"
 REDIRECT = "http://127.0.0.1:8765/spotify/callback"
-TOKEN_PATH = Path(__file__).parent / "spotify_token.json"
+TOKEN_PATH = Path(os.environ.get("SPOTIFY_TOKEN") or Path(__file__).parent / "spotify_token.json")
 KINDS = ("track", "artist", "album", "playlist")
 
 
