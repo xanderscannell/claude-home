@@ -397,6 +397,9 @@ def test_sheets(b):
     d.page.clock.run_for(2000)
     assert d.text(".dial-time") == "4:10", "the dial isn't ticking"
     assert abs(offset() - (1 - 250 / 504)) < 0.01, offset()
+    box = d.page.locator(".dial-time").bounding_box()
+    d.page.clock.run_for(3000)  # 4:10 down to 4:07: different digit widths, same box
+    assert d.page.locator(".dial-time").bounding_box() == box, "the dial's time shouldn't shift as it ticks"
 
     # Pause shows at once and tells the brain; the time holds and blinks; Resume picks it up again
     d.page.locator(".tmr-btn.tmr-main").tap()
@@ -521,8 +524,10 @@ def test_menu(b):
     d.tap("#menu")
     assert d.visible("#sheet") and d.text("#sheet-title") == "Menu"
     assert d.page.locator(".menu-label").all_inner_texts() == ["Timers", "Alarms", "Shopping list", "Music", "Volume"]
-    last, body = d.page.locator(".menu-row").nth(4).bounding_box(), d.page.locator(".sheet-body").bounding_box()
-    assert last["y"] + last["height"] <= body["y"] + body["height"], f"every menu row should fit: {last} {body}"
+    overhang = d.page.evaluate("""() => {  // both measured at once: the sheet may still be sliding up
+      const rows = document.querySelectorAll(".menu-row"), body = document.querySelector(".sheet-body");
+      return rows[rows.length - 1].getBoundingClientRect().bottom - body.getBoundingClientRect().bottom; }""")
+    assert overhang <= 0, f"every menu row should fit; the last hangs {overhang}px below the sheet"
     d.shot("menu", settle=400)
     for i in range(3):
         d.page.locator(".menu-row").nth(i).tap()

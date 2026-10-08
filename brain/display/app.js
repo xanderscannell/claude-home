@@ -307,6 +307,16 @@ function shortLength(seconds) {
 // What a timer is called: its label, else its length ("5 min timer"), else just "Timer"
 const timerName = (t) => sentence(t.label) || (t.duration ? `${shortLength(t.duration)} timer` : "Timer");
 
+// A ticking countdown that holds still. Fraunces has no tabular digits ("1:11" is narrower than "0:00"), so it
+// gets the width of its widest digits, 0 (1ch each), plus its colons (0.24em), with the digits left-aligned in it.
+function steadyCountdown(className, seconds) {
+  const num = el("span", className, countdown(seconds));
+  const colons = num.textContent.split(":").length - 1;
+  num.style.minWidth = `calc(${num.textContent.length - colons}ch + ${colons * 0.24}em)`;
+  num.style.textAlign = "left";
+  return num;
+}
+
 function renderStrip() {
   els.strip.replaceChildren();
   const now = Date.now() / 1000;
@@ -315,12 +325,7 @@ function renderStrip() {
     const item = el("button", paused(t) ? "item timer paused" : "item timer");
     item.type = "button";
     if (!paused(t)) item.dataset.endsAt = t.ends_at;
-    const num = el("span", "num", countdown(timeLeft(t, now)));
-    // Fraunces has no tabular digits ("1:11" is narrower than "0:00"), so the countdown gets the width of its
-    // widest digits, 0 (1ch each), plus its colons (0.24em): the strip doesn't shift every second
-    const colons = num.textContent.split(":").length - 1;
-    num.style.minWidth = `calc(${num.textContent.length - colons}ch + ${colons * 0.24}em)`;
-    item.append(num, el("span", "label", timerName(t)));
+    item.append(steadyCountdown("num", timeLeft(t, now)), el("span", "label", timerName(t)));
     item.addEventListener("click", () => send({ type: "open", sheet: "timers" }));
     els.strip.append(item);
   }
@@ -622,7 +627,7 @@ const renderers = {
     if (c.next_alarm) fact(alarmTime(c.next_alarm.time, "num"), `${sentence(c.next_alarm.label) || "Alarm"}${dayWord(c.next_alarm.next_ring)}`);
     const live = liveTimers(c.timers, now);
     if (live.length === 1) {
-      const num = el("span", "num", countdown(timeLeft(live[0], now)));
+      const num = steadyCountdown("num", timeLeft(live[0], now));
       if (!paused(live[0])) num.dataset.endsAt = live[0].ends_at;  // ticks with the other countdowns
       fact(num, timerName(live[0]));
     } else if (live.length) fact(String(live.length), "timers running");
@@ -689,7 +694,7 @@ function timerDial(t, big) {
   if (!paused(t)) arc.dataset.arcEnd = t.ends_at;
   drain(arc, left);
   const face = el("div", "dial-face");
-  const time = el("span", left >= 3600 ? "dial-time long" : "dial-time", countdown(left));
+  const time = steadyCountdown(left >= 3600 ? "dial-time long" : "dial-time", left);
   if (!paused(t)) time.dataset.endsAt = t.ends_at;
   face.append(time, el("span", "dial-name", timerName(t)));
   dial.append(face);
