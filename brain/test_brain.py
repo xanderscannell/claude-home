@@ -9,9 +9,11 @@ import tempfile
 
 os.environ["CLAUDE_HOME_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")  # before importing tools
 
+import httpx
 from PIL import Image
 
 import photos
+import todoist
 import tools
 from brain import for_speech, pop_sentences
 
@@ -31,11 +33,42 @@ assert for_speech("Snacks, e.g. chips, etc.") == "Snacks, for example chips, et 
 assert for_speech("Drive to Mt. Hood vs. Mt. Rainier") == "Drive to Mount Hood versus Mount Rainier"
 assert for_speech("Drs. and Mrs.Smith") == "Drs. and Mrs.Smith"  # only whole tokens
 
-# Shopping list: no duplicates, case-insensitive removal, reports what wasn't there
-tools.shopping_add(["Milk", "eggs", "milk"])
-assert tools.shopping_items() == ["Milk", "eggs"]
-assert tools.shopping_remove(["MILK", "bread"]) == ["bread"]
-assert tools.shopping_items() == ["eggs"]
+# Shopping list (a fake Todoist): no duplicates, case-insensitive check-off, reports what wasn't there
+run = asyncio.run
+todo = todoist.fake()
+CATS = " Its categories: Produce, Household, Meat & Dairy."  # Todoist's order, ties kept
+assert run(tools.shopping_add([("Milk", "dairy"), ("eggs", ""), ("milk", ""), (" ", "")])) == []
+assert run(tools.shopping_items()) == ["eggs", "Milk"]  # no category first
+assert run(tools.shopping_remove(["MILK", "bread"])) == ["bread"]
+assert run(tools.shopping_items()) == ["eggs"] and [t["content"] for t in todo.values()] == ["eggs"]
+# Categories: matched loosely; kept in Todoist's order, items in theirs; a category that matches none is said
+assert todoist.match("PRODUCE", [{"name": "Produce"}]) and todoist.match("meat", [{"name": "Meat & Dairy"}])
+assert todoist.match("", [{"name": "Produce"}]) is None and todoist.match("Bakery", [{"name": "Produce"}]) is None
+shop = {t.name: t for t in tools.tool_list("shop")}
+said = lambda name, args: run(shop[name].handler(args))["content"][0]["text"]  # noqa: E731
+items = lambda *pairs: {"items": [{"item": i, "category": c} for i, c in pairs]}  # noqa: E731
+assert said("add_to_shopping_list", items(("bread", "Bakery"), ("straws", "household"), ("apples", "produce"),
+                                          ("pears", "Produce"), ("cheese", "Dairy"))) == (
+    "No matching category, so added with none: bread. Shopping list now: eggs, bread; Produce: apples, pears; "
+    "Household: straws; Meat & Dairy: cheese." + CATS)
+assert run(tools.shopping_card()) == {"kind": "shopping", "groups": [
+    {"name": "", "items": ["eggs", "bread"]}, {"name": "Produce", "items": ["apples", "pears"]},
+    {"name": "Household", "items": ["straws"]}, {"name": "Meat & Dairy", "items": ["cheese"]}]}
+assert said("remove_from_shopping_list", {"items": ["jam", "Eggs", "bread", "cheese", "straws"]}) == (
+    "Not on the list: jam. Shopping list now: Produce: apples, pears." + CATS)
+assert said("clear_shopping_list", {}) == "The shopping list is empty." + CATS and not todo
+assert run(tools.shopping_card()) == {"kind": "shopping", "groups": []}
+# Todoist missing, wrong, or down: Claude and the screen say so instead of failing
+token = os.environ.pop("TODOIST_TOKEN")
+assert said("get_shopping_list", {}) == "Couldn't update the shopping list: Todoist isn't set up."
+assert run(tools.shopping_card()) == tools.text_card("Shopping list", ["Todoist isn't set up."])
+os.environ.update(TODOIST_TOKEN=token, TODOIST_SHOPPING_PROJECT="Groceries")
+assert said("get_shopping_list", {}) == "Couldn't update the shopping list: There's no \"Groceries\" project in Todoist."
+del os.environ["TODOIST_SHOPPING_PROJECT"]
+saved_http = todoist.http
+todoist.http = httpx.AsyncClient(base_url=todoist.API, transport=httpx.MockTransport(lambda r: httpx.Response(401)))
+assert said("get_shopping_list", {}) == "Couldn't update the shopping list: Todoist turned down the API token."
+todoist.http = saved_http
 
 # Memory: forget matches any fact containing the text, case-insensitive
 tools.remember("Sam's birthday is May 3")
@@ -153,7 +186,6 @@ assert photos.cached(pics / "land.jpg", cache) == first and first.stat().st_mtim
 
 # Calendar: feeds from CALENDAR_* variables, recurrence, cancellations, all-day, another time zone
 import agenda  # noqa: E402
-import httpx  # noqa: E402
 
 assert agenda.feeds({"CALENDAR_WORK": "https://a", "CALENDAR_KIDS_SPORTS": "https://b", "CALENDAR_EMPTY": " ",
                      "HOME_LOCATION": "x"}) == {"Kids Sports": "https://b", "Work": "https://a"}
@@ -207,10 +239,9 @@ assert tools.agenda_text([], at_330) == "Nothing on the calendar."
 at_7 = local(2026, 10, 7, 7, 0)
 assert tools.greeting(at_7) == "Good morning" and tools.greeting(at_330) == "Good afternoon"
 assert tools.greeting(local(2026, 10, 7, 19, 0)) == "Good evening"
-tools.shopping_remove(tools.shopping_items())
 saved_events = list(agenda.events)
 agenda.events.clear()
-empty = tools.briefing_card("brief", None, at_7)
+empty = tools.briefing_card("brief", None, 0, at_7)
 assert empty == {"kind": "briefing", "greeting": "Good morning", "weather": None, "events": [], "next_alarm": None,
                  "timers": [], "shopping": 0}, empty
 assert tools.briefing_text(empty, at_7) == ("Good morning. It's Wednesday, October 7. The forecast isn't available "
@@ -219,8 +250,7 @@ agenda.events[:] = saved_events
 wx = tools.parse_forecast("Home", json.loads((pathlib.Path(__file__).parent / "test_data" / "openmeteo.json").read_text()))
 tools.alarm_add("brief", "06:30", "01234", "gym", now=datetime.datetime(2026, 10, 7, 7, 0))
 tools.q("INSERT INTO timers (device, label, ends_at) VALUES (?, ?, ?)", "brief", "pasta", at_7 + 252)
-tools.shopping_add(["milk", "eggs", "bread"])
-full = tools.briefing_card("brief", wx, at_7)
+full = tools.briefing_card("brief", wx, 3, at_7)
 assert [e["title"] for e in full["events"]] == ["Dentist", "Swim lessons"] and full["shopping"] == 3
 assert full["next_alarm"]["label"] == "gym" and [t["label"] for t in full["timers"]] == ["pasta"]
 day = wx["days"][0]
@@ -230,7 +260,7 @@ assert tools.briefing_text(full, at_7) == (
     f"{day['high']}F and a low of {day['low']}F{rain}. Today: 3 PM: Dentist (Family); 5:30 PM: Swim lessons (Family). "
     "Next alarm: 6:30 AM tomorrow (gym). Timers: pasta, 4 minutes 12 seconds left. The shopping list has 3 items."
 ), tools.briefing_text(full, at_7)
-tools.shopping_remove(["milk", "eggs", "bread"])
+assert tools.briefing_text({**empty, "shopping": None}, at_7).endswith("The shopping list isn't available right now.")
 
 # Recipes: one step at a time, stopping at either end; every move puts the recipe card on screen
 shown = []

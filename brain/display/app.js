@@ -434,25 +434,13 @@ const renderers = {
   },
 
   shopping: (c) => {
-    if (!c.items.length) {
+    if (!c.groups.length) {
       return ["Shopping list", [el("p", "quiet", "The shopping list is empty."),
                                 el("p", "hint", "Say “Hey Jarvis, add milk to the shopping list.”")]];
     }
-    const list = el("ul", "shop-list");
-    for (const item of c.items) {
-      const row = el("li", "shop-row");
-      const tick = el("button", "shop-item");
-      tick.type = "button";
-      tick.append(el("span", "shop-check"), el("span", "shop-name", sentence(item)));  // as said; shown like a list
-      tick.addEventListener("click", () => toggleItem(row, item));
-      const undo = el("button", "pill shop-undo", "Undo");
-      undo.type = "button";
-      undo.addEventListener("click", () => toggleItem(row, item));
-      row.append(tick, undo);
-      if (shopPending.has(item)) row.classList.add("done");
-      list.append(row);
-    }
-    return ["Shopping list", [list]];
+    // One list per Todoist section, uncategorized items first with no heading
+    return ["Shopping list", c.groups.flatMap((g) => [...(g.name ? [el("p", "group-label", g.name)] : []),
+                                                      shopList(g.items)])];
   },
 
   menu: () => {
@@ -706,6 +694,24 @@ function showRinging(r) {
   els.ringingTime.replaceChildren(...alarmTime(r.time, "t").childNodes);
   els.ringingLabel.textContent = sentence(r.label) || "Alarm";
   els.ringing.hidden = false;
+}
+
+function shopList(items) {
+  const list = el("ul", "shop-list");
+  for (const item of items) {
+    const row = el("li", "shop-row");
+    const tick = el("button", "shop-item");
+    tick.type = "button";
+    tick.append(el("span", "shop-check"), el("span", "shop-name", sentence(item)));  // as said; shown like a list
+    tick.addEventListener("click", () => toggleItem(row, item));
+    const undo = el("button", "pill shop-undo", "Undo");
+    undo.type = "button";
+    undo.addEventListener("click", () => toggleItem(row, item));
+    row.append(tick, undo);
+    if (shopPending.has(item)) row.classList.add("done");
+    list.append(row);
+  }
+  return list;
 }
 
 // Checking an item off: struck through right away, removed for good after 3 s unless Undo is tapped.

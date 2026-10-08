@@ -24,6 +24,9 @@ import websockets  # noqa: E402
 from PIL import Image  # noqa: E402
 
 import brain  # noqa: E402
+import todoist  # noqa: E402
+
+todoist.fake()
 
 
 class Errors(logging.Handler):
@@ -250,15 +253,18 @@ async def display_flow(port: int):
         assert brain.tools.timer_list("kitchen") == []
 
         # Shopping: Claude's tools show the list; checking an item off on one screen updates just that screen
-        await on_server(kitchen_tools["add_to_shopping_list"].handler({"items": ["Milk", "eggs", "Bread"]}))
-        assert await until_card(a, "shopping") == {"kind": "shopping", "items": ["Milk", "eggs", "Bread"]}
+        await on_server(kitchen_tools["add_to_shopping_list"].handler({"items": [
+            {"item": "Milk", "category": "dairy"}, {"item": "eggs", "category": "dairy"}, {"item": "Bread", "category": ""}]}))
+        assert await until_card(a, "shopping") == {"kind": "shopping", "groups": [
+            {"name": "", "items": ["Bread"]}, {"name": "Meat & Dairy", "items": ["Milk", "eggs"]}]}
         await until_card(b, "shopping")
         await a.send(json.dumps({"type": "shopping_remove", "item": "EGGS"}))
-        assert (await until_card(a, "shopping"))["items"] == ["Milk", "Bread"]
-        assert brain.tools.shopping_items() == ["Milk", "Bread"]
+        after = [{"name": "", "items": ["Bread"]}, {"name": "Meat & Dairy", "items": ["Milk"]}]
+        assert (await until_card(a, "shopping"))["groups"] == after
+        assert await on_server(brain.tools.shopping_items()) == ["Bread", "Milk"]
         await b.send(json.dumps({"type": "open", "sheet": "shopping"}))
-        assert (await until_card(b, "shopping"))["items"] == ["Milk", "Bread"], "b sees the change when it opens"
-        brain.tools.shopping_remove(["Milk", "Bread"])
+        assert (await until_card(b, "shopping"))["groups"] == after, "b sees the change when it opens"
+        await on_server(brain.tools.shopping_remove(["Milk", "Bread"]))
 
         # The agenda sheet opens with whatever the calendars have (no feeds here, so nothing)
         brain.agenda.events[:] = [{"title": "Dentist", "calendar": "Family", "start": time.time() + 3600,

@@ -5,6 +5,7 @@ arguments) inside make_tools(), and add it to the list at the bottom. Storage he
 so they can be tested without Claude.
 """
 
+import asyncio
 import datetime
 import os
 import sqlite3
@@ -18,12 +19,12 @@ from claude_agent_sdk import create_sdk_mcp_server, tool
 
 import agenda
 import spotify
+import todoist
 
 DB_PATH = Path(os.environ.get("CLAUDE_HOME_DB", Path(__file__).parent / "home.db"))
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS timers (id INTEGER PRIMARY KEY, device TEXT, label TEXT, ends_at REAL);
 CREATE TABLE IF NOT EXISTS memory (fact TEXT PRIMARY KEY);
-CREATE TABLE IF NOT EXISTS shopping (item TEXT PRIMARY KEY COLLATE NOCASE);
 CREATE TABLE IF NOT EXISTS alarms (id INTEGER PRIMARY KEY, device TEXT, time TEXT, days TEXT, label TEXT,
                                    enabled INTEGER DEFAULT 1, next_ring REAL);
 """
@@ -37,22 +38,26 @@ def q(sql: str, *args) -> list[tuple]:
 
 # --- Storage -----------------------------------------------------------------------------------
 
-def shopping_add(items: list[str]) -> None:
-    for item in items:
-        q("INSERT OR IGNORE INTO shopping VALUES (?)", item.strip())
+# The shopping list is a Todoist project (see todoist.py). These raise todoist.TodoistError when it can't be reached.
+
+async def shopping_add(items: list[tuple[str, str]]) -> list[str]:
+    """Add (item, category) pairs. Returns the items whose category isn't one of the list's, added with none."""
+    return await todoist.add(todoist.shopping(), items)
 
 
-def shopping_remove(items: list[str]) -> list[str]:
-    """Remove items (case-insensitive). Returns the ones that weren't on the list."""
-    missing = []
-    for item in items:
-        if not q("DELETE FROM shopping WHERE item = ? RETURNING item", item.strip()):
-            missing.append(item)
-    return missing
+async def shopping_remove(items: list[str]) -> list[str]:
+    """Check items off (case-insensitive). Returns the ones that weren't on the list."""
+    return await todoist.check_off(todoist.shopping(), items)
 
 
-def shopping_items() -> list[str]:
-    return [r[0] for r in q("SELECT item FROM shopping ORDER BY rowid")]
+async def shopping_items() -> list[str]:
+    return [t["content"] for t in await todoist.tasks(todoist.shopping())]
+
+
+async def shopping_groups() -> list[dict]:
+    """The list by category, in Todoist's order, uncategorized first: [{"name" ("" for none), "items"}]."""
+    return [{"name": name, "items": [t["content"] for t in group]}
+            for name, group in groupby(await todoist.tasks(todoist.shopping()), key=lambda t: t["section"])]
 
 
 def remember(fact: str) -> None:
@@ -298,8 +303,11 @@ def weather_card(w: dict) -> dict:
     return {"kind": "weather", **w}
 
 
-def shopping_card() -> dict:
-    return {"kind": "shopping", "items": shopping_items()}
+async def shopping_card() -> dict:
+    try:
+        return {"kind": "shopping", "groups": await shopping_groups()}
+    except todoist.TodoistError as e:
+        return text_card("Shopping list", [str(e)])
 
 
 def text_card(title: str, lines: list[str]) -> dict:
@@ -368,12 +376,13 @@ def greeting(now: float) -> str:
     return "Good morning" if h < 12 else "Good afternoon" if h < 17 else "Good evening"
 
 
-def briefing_card(device: str, weather: dict | None, now: float | None = None) -> dict:
-    """The day at a glance: the forecast, the rest of today's calendar, the next alarm, timers, the list."""
+def briefing_card(device: str, weather: dict | None, shopping: int | None, now: float | None = None) -> dict:
+    """The day at a glance: the forecast, the rest of today's calendar, the next alarm, timers, the list.
+    shopping is how many things are on the list (None: Todoist couldn't be reached)."""
     now = time.time() if now is None else now
     return {"kind": "briefing", "greeting": greeting(now), "weather": weather, "events": agenda.upcoming(now, 1),
             "next_alarm": next_alarm(device), "timers": [t for t in timer_list(device) if t["ends_at"] > now],
-            "shopping": len(shopping_items())}
+            "shopping": shopping}
 
 
 def briefing_text(card: dict, now: float) -> str:
@@ -394,7 +403,8 @@ def briefing_text(card: dict, now: float) -> str:
         parts.append("Timers: " + "; ".join(f"{t['label'] or 'unnamed'}, {spoken_duration(t['ends_at'] - now)} left"
                                             for t in card["timers"]) + ".")
     n = card["shopping"]
-    parts.append(f"The shopping list has {n} item{'s' if n != 1 else ''}." if n else "The shopping list is empty.")
+    parts.append("The shopping list isn't available right now." if n is None else
+                 f"The shopping list has {n} item{'s' if n != 1 else ''}." if n else "The shopping list is empty.")
     return " ".join(parts)
 
 
@@ -483,29 +493,47 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spo
         gone = forget(a["text"])
         return _text(f"Forgot: {'; '.join(gone)}" if gone else "No saved fact matched.")
 
-    @tool("add_to_shopping_list", "Add items to the shopping list.", _schema(items=STRINGS))
-    async def add_shopping(a):
-        shopping_add(a["items"])
-        await on_card(shopping_card())
-        return _text(f"Shopping list now: {', '.join(shopping_items())}")
+    async def on_list(change=None):
+        """Make a change to the shopping list (or none), show it, and say what's on it now and its categories."""
+        try:
+            said = await change() if change else ""
+            groups, categories = await asyncio.gather(shopping_groups(), todoist.sections(todoist.shopping()))
+        except todoist.TodoistError as e:
+            return _text(f"Couldn't update the shopping list: {e}")
+        await on_card({"kind": "shopping", "groups": groups})
+        now = "; ".join((f"{g['name']}: " if g["name"] else "") + ", ".join(g["items"]) for g in groups)
+        return _text(said + (f"Shopping list now: {now}." if now else "The shopping list is empty.")
+                     + (f" Its categories: {', '.join(c['name'] for c in categories)}." if categories else ""))
 
-    @tool("remove_from_shopping_list", "Remove items from the shopping list.", _schema(items=STRINGS))
+    @tool("add_to_shopping_list", "Add items to the shopping list (the Shopping List project in Todoist), each in "
+          "the list's category it belongs in (Produce, Pantry, and so on; the list's own categories are in every "
+          "shopping list result).",
+          _schema(items={"type": "array", "items": _schema(
+              item={"type": "string"},
+              category={"type": "string", "description": "the category it belongs in; empty if none fits"})}))
+    async def add_shopping(a):
+        async def change():
+            unplaced = await shopping_add([(x["item"], x["category"]) for x in a["items"]])
+            return f"No matching category, so added with none: {', '.join(unplaced)}. " if unplaced else ""
+        return await on_list(change)
+
+    @tool("remove_from_shopping_list", "Check items off the shopping list.", _schema(items=STRINGS))
     async def remove_shopping(a):
-        missing = shopping_remove(a["items"])
-        await on_card(shopping_card())
-        left = ", ".join(shopping_items()) or "empty"
-        return _text((f"Not on the list: {', '.join(missing)}. " if missing else "") + f"Shopping list now: {left}")
+        async def change():
+            missing = await shopping_remove(a["items"])
+            return f"Not on the list: {', '.join(missing)}. " if missing else ""
+        return await on_list(change)
 
     @tool("get_shopping_list", "Read the shopping list.", _schema())
     async def get_shopping(a):
-        await on_card(shopping_card())
-        return _text(", ".join(shopping_items()) or "The shopping list is empty.")
+        return await on_list()
 
-    @tool("clear_shopping_list", "Remove everything from the shopping list.", _schema())
+    @tool("clear_shopping_list", "Check off everything on the shopping list.", _schema())
     async def clear_shopping(a):
-        shopping_remove(shopping_items())
-        await on_card(shopping_card())
-        return _text("Shopping list cleared.")
+        async def change():
+            await shopping_remove(await shopping_items())
+            return ""
+        return await on_list(change)
 
     @tool("get_weather", "Current conditions and a 3-day forecast. Faster and more accurate than web search for weather.",
           _schema(place={"type": "string", "description": "city name; empty for home"}))
@@ -548,7 +576,11 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spo
             w = await weather_data(place) if place else None
         except (LookupError, httpx.HTTPError):
             w = None
-        card = briefing_card(device, w)
+        try:
+            shopping = len(await shopping_items())
+        except todoist.TodoistError:
+            shopping = None
+        card = briefing_card(device, w, shopping)
         await on_card(card)
         return _text(briefing_text(card, time.time()))
 

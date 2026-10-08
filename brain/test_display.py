@@ -410,9 +410,12 @@ def test_sheets(b):
 
 def test_shopping_list(b):
     d = Display(b)
-    d.push({"type": "card", "card": {"kind": "shopping", "items": ["Milk", "Eggs", "Sourdough bread", "Bananas"]}})
+    d.push({"type": "card", "card": {"kind": "shopping", "groups": [
+        {"name": "", "items": ["Milk"]}, {"name": "Meat & Dairy", "items": ["Eggs"]},
+        {"name": "Pantry", "items": ["Sourdough bread", "Bananas"]}]}})
     assert d.text("#sheet-title") == "Shopping list"
     assert d.page.locator(".shop-name").all_inner_texts() == ["Milk", "Eggs", "Sourdough bread", "Bananas"]
+    assert d.page.locator(".sheet-body .group-label").all_inner_texts() == ["Meat & Dairy", "Pantry"]  # none for no category
     box = d.page.locator(".shop-item").first.bounding_box()
     assert big(box, w=0), box
     d.shot("shopping", settle=400)
@@ -431,18 +434,18 @@ def test_shopping_list(b):
     d.page.locator(".shop-item").first.tap()
     d.page.clock.run_for(3100)
     assert {"type": "shopping_remove", "item": "Milk"} in d.sent, d.sent
-    d.push({"type": "card", "card": {"kind": "shopping", "items": ["Eggs", "Sourdough bread", "Bananas"]}})
+    d.push({"type": "card", "card": {"kind": "shopping", "groups": [{"name": "", "items": ["Eggs", "Sourdough bread", "Bananas"]}]}})
     assert d.page.locator(".shop-name").all_inner_texts() == ["Eggs", "Sourdough bread", "Bananas"]
 
     # Items are kept as said ("oat milk") but shown in sentence case; removal uses the item as stored
-    d.push({"type": "card", "card": {"kind": "shopping", "items": ["oat milk"]}})
+    d.push({"type": "card", "card": {"kind": "shopping", "groups": [{"name": "", "items": ["oat milk"]}]}})
     assert d.text(".shop-name") == "Oat milk"
     d.page.locator(".shop-item").first.tap()
     d.page.clock.run_for(3100)
     assert {"type": "shopping_remove", "item": "oat milk"} in d.sent
 
     # Empty list says how to add things
-    d.push({"type": "card", "card": {"kind": "shopping", "items": []}})
+    d.push({"type": "card", "card": {"kind": "shopping", "groups": []}})
     assert d.text(".sheet-body .quiet") == "The shopping list is empty." and "add milk" in d.text(".hint")
     d.shot("shopping-empty", settle=200)
     d.close()
@@ -515,7 +518,7 @@ def test_navigation_every_screen_gets_home(b):
     screens = {
         "weather": {"kind": "weather", **WEATHER},
         "timers": {"kind": "timers", "timers": [], "alarms": []},
-        "shopping": {"kind": "shopping", "items": ["Milk"]},
+        "shopping": {"kind": "shopping", "groups": [{"name": "", "items": ["Milk"]}]},
         "text": {"kind": "text", "title": "Note", "lines": ["Hello"]},
         "volume": {"kind": "volume", "level": 40},
         "agenda": {"kind": "agenda", "events": []},

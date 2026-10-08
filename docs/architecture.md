@@ -119,7 +119,7 @@ sequenceDiagram
 | TTS | Piper (local) | Free, faster than real time on a Pi, no network hop, still works offline | Cartesia or ElevenLabs streaming for a better voice; Kokoro on a server for good-and-local. Known Piper limit: each sentence is synthesized independently, so pitch and tone can shift between sentences (very noticeable with the Northern English voice). |
 | Home control, P2 | Home Assistant's MCP Server integration, passed to the Agent SDK as an HTTP MCP server | Claude gets Home Assistant's Assist tools for exactly the entities exposed to Assist. Scripts exposed to Assist appear as tools automatically, so most new abilities are Home Assistant config, not code. | Direct calls to Home Assistant's WebSocket/REST API for anything MCP doesn't cover |
 | Music | Spotify Connect: raspotify (librespot) on the Pi, controlled by the brain through the Spotify Web API | Spotify is what the household uses, and it needed no Home Assistant. Auth is PKCE, so there's no client secret. | Music Assistant (Home Assistant add-on) for a local library and radio, once Phase 2 is in |
-| Storage | SQLite (Python stdlib) | Timers, alarms, memory, shopping list; one file. The turn log is `turns.jsonl`. | |
+| Storage | SQLite (Python stdlib) | Timers, alarms, memory; one file. The turn log is `turns.jsonl`. | |
 | Display UI, P3 | Plain HTML, CSS, and ES modules (`brain/display/`), no build step, served by the brain, shown in Chromium kiosk under `cage`. Fraunces and Inter are bundled. | One page with a handful of screens didn't need a framework, and nothing to build means the Pi gets changes on the next brain restart | Svelte 5 + Vite if the page outgrows one script |
 | Deployment | systemd units | Simplest thing on a Pi | Docker, if the brain moves next to a Docker-based Home Assistant install |
 
@@ -179,7 +179,7 @@ Brain -> display:
 | `volume {level}` | The speaker's level |
 
 Card kinds: `weather` (the forecast), `timers` (timers with `ends_at` epoch seconds, and alarms),
-`shopping {items}`, `agenda {events}`, `briefing` (forecast, today's events, next alarm, timers,
+`shopping {groups}` (each `{name, items}`: a Todoist section, uncategorized first with name `""`), `agenda {events}`, `briefing` (forecast, today's events, next alarm, timers,
 shopping count), `recipe {title, ingredients, steps, step}` (step -1 is the ingredients),
 `text {title, lines}` (Claude's `show_on_screen`), `volume {level}`, and `music` (no data; the
 screen shows what it knows is playing).
@@ -270,7 +270,7 @@ run, so the picture arrives with or before the spoken answer.
 
 **Adding a tool** is one `@tool` function inside `tool_list()` in `brain/tools.py` (name, a description Claude reads to decide when to use it, and a JSON schema for its arguments), added to the list it returns.
 
-**The shopping list** lives in the brain's SQLite file for now. In Phase 2 it should move to a Home Assistant to-do list, so it also shows up in the Home Assistant phone app.
+**The shopping list** is a Todoist project (`TODOIST_SHOPPING_PROJECT`, default `Shopping List`), so it's the same list in the Todoist app. `brain/todoist.py` calls Todoist's REST API with a personal API token. The brain makes the calls itself, not Claude through a Todoist MCP server: the screen's check-offs never go through Claude, and the tools work the same whether Claude runs through the Agent SDK or the plain API. Removing an item checks it off, so it can be found under completed tasks in Todoist. The project's sections are the list's categories: Claude names one for each item it adds (matched loosely, so "dairy" finds "Meat & Dairy"), every shopping tool result lists the current ones, and the screen shows a heading per section.
 
 **Timers live in the brain**, not in Claude. Each is a SQLite row, and one loop checks for
 finished timers every half second, so timers survive restarts and ring without a network

@@ -44,6 +44,7 @@ from piper import PiperVoice
 import agenda
 import photos
 import spotify
+import todoist
 import tools
 
 RATE = 16000
@@ -596,7 +597,7 @@ async def serve_satellite(ws: WebSocket, dev: Device):
             await dev.show({"type": "volume", "level": dev.volume})
 
 
-def sheet_card(dev: Device, sheet: str) -> dict | None:
+async def sheet_card(dev: Device, sheet: str) -> dict | None:
     """The card for a sheet opened from the screen (the menu, or tapping something on the home screen)."""
     if sheet == "weather":
         return (tools.weather_card(weather_now) if weather_now else
@@ -604,7 +605,7 @@ def sheet_card(dev: Device, sheet: str) -> dict | None:
     if sheet == "timers":
         return tools.timers_card(dev.name)
     if sheet == "shopping":
-        return tools.shopping_card()
+        return await tools.shopping_card()
     if sheet == "agenda":
         return tools.agenda_card()
     return None
@@ -613,7 +614,7 @@ def sheet_card(dev: Device, sheet: str) -> dict | None:
 async def from_display(dev: Device, m: dict, ws: WebSocket):
     """A touch on the screen."""
     kind = m.get("type")
-    if kind == "open" and (card := sheet_card(dev, m.get("sheet"))):
+    if kind == "open" and (card := await sheet_card(dev, m.get("sheet"))):
         await ws.send_text(json.dumps({"type": "card", "card": card}))  # just the screen that asked
     elif kind == "timer_cancel" and isinstance(m.get("id"), int):
         tools.timer_cancel_id(dev.name, m["id"])  # the timer watcher updates every screen
@@ -624,10 +625,13 @@ async def from_display(dev: Device, m: dict, ws: WebSocket):
             tools.alarm_delete(dev.name, m["id"])
         await ws.send_text(json.dumps({"type": "card", "card": tools.timers_card(dev.name)}))  # refresh this sheet
     elif kind == "shopping_remove" and isinstance(m.get("item"), str):
-        tools.shopping_remove([m["item"]])
+        try:
+            await tools.shopping_remove([m["item"]])
+        except todoist.TodoistError:
+            pass  # the card below says what's wrong
         # Only this screen: a card opens the sheet, and other screens shouldn't pop open. They get a fresh list
         # whenever they open it.
-        await ws.send_text(json.dumps({"type": "card", "card": tools.shopping_card()}))
+        await ws.send_text(json.dumps({"type": "card", "card": await tools.shopping_card()}))
     elif kind == "recipe" and m.get("action") in ("next", "previous", "close"):
         if m["action"] == "close":
             tools.recipes.pop(dev.name, None)  # closing the sheet ends recipe mode

@@ -43,6 +43,7 @@ Connect speaker; the brain controls it through the Spotify Web API. Open
 | `PHOTOS_DIR` | Folder of photos for the display (default `~/Pictures/Claude Home`) |
 | `NIGHT_START`, `NIGHT_END` | When the display becomes a dim night clock (default `22:00`, `07:00`) |
 | `SPOTIFY_CLIENT_ID`, `SPOTIFY_DEVICE` | A Spotify app's client ID, and the speaker's name in Spotify (default `Claude Home`) |
+| `TODOIST_TOKEN`, `TODOIST_SHOPPING_PROJECT` | A Todoist API token (Settings > Integrations > Developer), and the project that is the shopping list (default `Shopping List`) |
 | `CLAUDE_HOME_DB` | Where the SQLite file lives (default `brain/home.db`) |
 
 On the Pi, the satellite's unit file sets `BRAIN_URL`, `DEVICE`, `AUDIO_IN`, and `AUDIO_OUT`;
@@ -117,8 +118,8 @@ than the Pi 5 build, with the brain on the PC:
   calendar event, and the song playing.
 - **Conversation:** listening, thinking, and speaking states, what you said, and Claude's reply as
   it's spoken, with a Stop button. Tap the mic to talk without the wake word.
-- **Screens Claude or a tap can open:** weather, timers and alarms, shopping list (tap to check
-  off), calendar, morning briefing, recipe steps, music with controls, volume, and anything else
+- **Screens Claude or a tap can open:** weather, timers and alarms, shopping list (the Todoist
+  project, by category; tap to check off), calendar, morning briefing, recipe steps, music with controls, volume, and anything else
   Claude wants to show.
 - **Alarms** that ring until stopped or snoozed, by touch or by voice.
 - **Spotify:** voice control of the Pi as a Spotify Connect speaker, now playing on screen, and
@@ -130,8 +131,8 @@ and hearing the wake word over loud music.
 
 ### Later (not committed)
 
-Multi-room announcements and intercom, routines beyond the morning briefing, calendar and
-shopping list via Home Assistant, speaker identification, cheaper audio-only satellites for
+Multi-room announcements and intercom, routines beyond the morning briefing, calendar via Home
+Assistant, more of Todoist than the shopping list, speaker identification, cheaper audio-only satellites for
 other rooms.
 
 ## Open questions
