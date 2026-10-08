@@ -32,6 +32,12 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 button:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
 svg { display: block; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 [hidden] { display: none !important; }
+/* Scrollbars: a slim frost pill that says "there's more", no track or arrows; on a touchscreen nobody drags it.
+   The ::-webkit- rules draw it the same on every platform (scrollbar-color would keep the Pi's own arrows). */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(238, 243, 247, .22); border-radius: 3px; }
+::-webkit-scrollbar-corner { background: transparent; }
 
 /* The room: the family's photos, crossfading, over a calm night gradient (all you see with no photos).
    The scrim keeps the clock and strip legible: dark at the bottom, a light touch at the top for the weather. */
