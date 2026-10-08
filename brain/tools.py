@@ -54,6 +54,14 @@ async def shopping_items() -> list[str]:
     return [t["content"] for t in await todoist.tasks(todoist.shopping())]
 
 
+async def shopping_categories() -> list[str]:
+    """The list's categories (its Todoist sections), or none when Todoist can't be reached."""
+    try:
+        return [x["name"] for x in await todoist.sections(todoist.shopping())]
+    except todoist.TodoistError:
+        return []
+
+
 async def shopping_groups() -> list[dict]:
     """The list by category, in Todoist's order, uncategorized first: [{"name" ("" for none), "items"}]."""
     return [{"name": name, "items": [t["content"] for t in group]}
@@ -416,11 +424,13 @@ async def _no_speaker(level: int, relative: bool) -> None:
     return None
 
 
-def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spotify.Spotify | None = None) -> list:
+def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spotify.Spotify | None = None,
+              categories: list[str] = ()) -> list:
     """Claude's tools for one satellite. Timers belong to the device they were set on.
     on_card(card) is awaited to put a result on that device's screens.
     on_volume(level, relative) sets the speaker's volume and returns the new level (None: no speaker).
-    music is the Spotify client (None: Spotify isn't set up)."""
+    music is the Spotify client (None: Spotify isn't set up).
+    categories are the shopping list's, as of the session's start (shopping results always list the current ones)."""
 
     async def via_spotify(action, say):
         if music is None:
@@ -506,8 +516,8 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spo
                      + (f" Its categories: {', '.join(c['name'] for c in categories)}." if categories else ""))
 
     @tool("add_to_shopping_list", "Add items to the shopping list (the Shopping List project in Todoist), each in "
-          "the list's category it belongs in (Produce, Pantry, and so on; the list's own categories are in every "
-          "shopping list result).",
+          "the list's category it belongs in. " + (f"Its categories: {', '.join(categories)}." if categories else
+                                                   "Every shopping list result names its categories."),
           _schema(items={"type": "array", "items": _schema(
               item={"type": "string"},
               category={"type": "string", "description": "the category it belongs in; empty if none fits"})}))
@@ -658,6 +668,7 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spo
             previous_track, whats_playing, set_volume]
 
 
-def make_tools(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spotify.Spotify | None = None):
+def make_tools(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spotify.Spotify | None = None,
+               categories: list[str] = ()):
     """The MCP tool server Claude's session uses for one satellite."""
-    return create_sdk_mcp_server("home", tools=tool_list(device, on_card, on_volume, music))
+    return create_sdk_mcp_server("home", tools=tool_list(device, on_card, on_volume, music, categories))

@@ -169,13 +169,14 @@ async def fake_ask(client, text: str):
     yield "Did you want anything else?" if "question" in text.lower() else "That is all."
 
 
-def options(device: str) -> ClaudeAgentOptions:
-    """Per-satellite session: its own timer tools, and saved facts baked into the prompt."""
+def options(device: str, categories: list[str] = ()) -> ClaudeAgentOptions:
+    """Per-satellite session: its own timer tools, the shopping list's categories, and saved facts baked into
+    the prompt."""
     known = tools.facts()
     memory = "\n\nThings you remember about this household:\n" + "\n".join(f"- {f}" for f in known) if known else ""
     return replace(OPTIONS, system_prompt=SYSTEM_PROMPT + memory,
                    mcp_servers={"home": tools.make_tools(device, on_card=show_card(device), on_volume=speaker(device),
-                                                         music=app.state.spotify)})
+                                                         music=app.state.spotify, categories=categories)})
 
 
 def show_card(name: str):
@@ -207,9 +208,9 @@ async def set_volume(dev: "Device", level: float):
     await dev.show({"type": "volume", "level": dev.volume})
 
 
-def session(device: str):
+def session(device: str, categories: list[str]):
     """One Claude conversation per satellite connection (nothing to start in fake mode)."""
-    return contextlib.nullcontext() if FAKE_LLM else ClaudeSDKClient(options=options(device))
+    return contextlib.nullcontext() if FAKE_LLM else ClaudeSDKClient(options=options(device, categories))
 
 
 def beeps(rate: int) -> bytes:
@@ -552,7 +553,7 @@ async def satellite(ws: WebSocket):
     dev.sat = ws
     print(f"[{dev.name}] connected")
     try:
-        async with session(dev.name) as client:
+        async with session(dev.name, await tools.shopping_categories()) as client:
             dev.client = client
             await serve_satellite(ws, dev)
     except GONE:

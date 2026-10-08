@@ -44,7 +44,13 @@ assert run(tools.shopping_items()) == ["eggs"] and [t["content"] for t in todo.v
 # Categories: matched loosely; kept in Todoist's order, items in theirs; a category that matches none is said
 assert todoist.match("PRODUCE", [{"name": "Produce"}]) and todoist.match("meat", [{"name": "Meat & Dairy"}])
 assert todoist.match("", [{"name": "Produce"}]) is None and todoist.match("Bakery", [{"name": "Produce"}]) is None
+# Claude's add tool names the list's real categories (fetched when its session starts), so a first add can use them
+cats = run(tools.shopping_categories())
+assert cats == ["Produce", "Household", "Meat & Dairy"]
+assert {t.name: t for t in tools.tool_list("shop", categories=cats)}["add_to_shopping_list"].description.endswith(
+    "Its categories: Produce, Household, Meat & Dairy.")
 shop = {t.name: t for t in tools.tool_list("shop")}
+assert shop["add_to_shopping_list"].description.endswith("Every shopping list result names its categories.")
 said = lambda name, args: run(shop[name].handler(args))["content"][0]["text"]  # noqa: E731
 items = lambda *pairs: {"items": [{"item": i, "category": c} for i, c in pairs]}  # noqa: E731
 assert said("add_to_shopping_list", items(("bread", "Bakery"), ("straws", "household"), ("apples", "produce"),
@@ -61,6 +67,7 @@ assert run(tools.shopping_card()) == {"kind": "shopping", "groups": []}
 # Todoist missing, wrong, or down: Claude and the screen say so instead of failing
 token = os.environ.pop("TODOIST_TOKEN")
 assert said("get_shopping_list", {}) == "Couldn't update the shopping list: Todoist isn't set up."
+assert run(tools.shopping_categories()) == []
 assert run(tools.shopping_card()) == tools.text_card("Shopping list", ["Todoist isn't set up."])
 os.environ.update(TODOIST_TOKEN=token, TODOIST_SHOPPING_PROJECT="Groceries")
 assert said("get_shopping_list", {}) == "Couldn't update the shopping list: There's no \"Groceries\" project in Todoist."
