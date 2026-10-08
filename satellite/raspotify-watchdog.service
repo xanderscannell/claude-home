@@ -1,0 +1,11 @@
+[Unit]
+Description=Restart raspotify when librespot loses its Spotify session
+After=raspotify.service
+
+[Service]
+ExecStart=/home/claude-pi/claude-home/satellite/raspotify-watchdog.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
