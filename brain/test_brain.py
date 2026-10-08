@@ -380,7 +380,7 @@ assert login["redirect_uri"] == ["http://127.0.0.1:8765/spotify/callback"] and l
 assert set(login["scope"][0].split()) == {"user-read-playback-state", "user-modify-playback-state",
                                          "user-read-currently-playing"}
 
-world = {"devices": [], "limit": False, "revoked": False}
+world = {"devices": [], "limit": False, "revoked": False, "playing": False, "lose": 0}
 calls = []
 clock = [1000.0]
 
@@ -396,6 +396,7 @@ def spotify_api(request):
     if world["limit"]:
         return httpx.Response(429, headers={"Retry-After": "30"})
     if path == "/v1/me/player/pause":  # seen for real: 200 with a body that isn't JSON
+        world["playing"] = False
         return httpx.Response(200, content=b"\x01not json")
     if world["revoked"]:
         world["revoked"] = False
@@ -406,6 +407,13 @@ def spotify_api(request):
             {"uri": f"spotify:{kind}:1", "name": "Blue", "artists": [{"name": "Joni Mitchell"}]}]}})
     if path == "/v1/me/player/devices":
         return httpx.Response(200, json={"devices": world["devices"]})
+    if path == "/v1/me/player/play" and request.method == "PUT":
+        if world["lose"]:  # librespot's session had quietly closed: the command wakes it but is lost
+            world["lose"] -= 1
+        else:
+            world["playing"] = True
+    if path == "/v1/me/player" and request.method == "GET" and world["playing"]:
+        return httpx.Response(200, json={"is_playing": True, "device": {"name": "Claude Home"}, "item": None})
     return httpx.Response(204)
 
 
@@ -413,6 +421,7 @@ async def spotify_checks():
     tok = pathlib.Path(tempfile.mkdtemp()) / "token.json"
     tok.write_text(json.dumps({"access_token": "stale-ok", "refresh_token": "keep", "expires_at": 1000 + 3600}))
     s = spotify.Spotify("cid", tok, transport=httpx.MockTransport(spotify_api), clock=lambda: clock[0])
+    s.poll_s = 0
 
     # Not due: no refresh. Due within a minute: one refresh, saved, refresh token kept
     await s.devices()
@@ -424,7 +433,8 @@ async def spotify_checks():
     saved = json.loads(tok.read_text())
     assert saved["access_token"] == "fresh" and saved["refresh_token"] == "keep" and saved["expires_at"] == clock[0] + 3600
 
-    # Play a track on the speaker while it's idle: search, find it, move playback there, then play that URI
+    # Play a track on the speaker while it's idle: search, find it, move playback there, play that URI, and
+    # check it started
     world["devices"] = [{"id": "phone1", "name": "Pixel", "is_active": True},
                         {"id": "pi1", "name": "Claude Home", "is_active": False}]
     calls.clear()
@@ -433,14 +443,30 @@ async def spotify_checks():
     assert calls == [("GET", "/v1/search", {"q": "blue joni mitchell", "type": "track", "limit": "1"}, None),
                      ("GET", "/v1/me/player/devices", {}, None),
                      ("PUT", "/v1/me/player", {}, {"device_ids": ["pi1"], "play": False}),
-                     ("PUT", "/v1/me/player/play", {"device_id": "pi1"}, {"uris": ["spotify:track:1"]})], calls
+                     ("PUT", "/v1/me/player/play", {"device_id": "pi1"}, {"uris": ["spotify:track:1"]}),
+                     ("GET", "/v1/me/player", {}, None)], calls
 
     # Already active: no transfer; an album plays as a context
     world["devices"][1]["is_active"] = True
     calls.clear()
     await s.play("blue", "album")
-    assert [c[:2] for c in calls] == [("GET", "/v1/search"), ("GET", "/v1/me/player/devices"), ("PUT", "/v1/me/player/play")]
-    assert calls[-1][3] == {"context_uri": "spotify:album:1"}
+    assert [c[:2] for c in calls] == [("GET", "/v1/search"), ("GET", "/v1/me/player/devices"),
+                                      ("PUT", "/v1/me/player/play"), ("GET", "/v1/me/player")]
+    assert calls[-2][3] == {"context_uri": "spotify:album:1"}
+
+    # The first play command is lost (librespot's session had closed): it's sent again once, then gives up
+    world["playing"], world["lose"] = False, 1
+    calls.clear()
+    assert (await s.play("blue"))["name"] == "Blue"
+    plays = [c for c in calls if c[:2] == ("PUT", "/v1/me/player/play")]
+    assert len(plays) == 2 and plays[0] == plays[1] and [c[1] for c in calls].count("/v1/me/player") == 13, calls
+    world["playing"], world["lose"] = False, 2
+    try:
+        await s.play("blue")
+        raise AssertionError("should have given up")
+    except spotify.SpotifyError as e:
+        assert "didn't start playing" in str(e), e
+    assert world["lose"] == 0, "two tries, no more"
 
     # Controls hit the right endpoints
     calls.clear()
@@ -468,7 +494,7 @@ async def spotify_checks():
     assert [c[1] for c in calls] == ["/v1/me/player/devices", "/api/token", "/v1/me/player/devices"], calls
 
     # 429: no more requests until Retry-After has passed
-    world["limit"] = True
+    world["playing"], world["limit"] = False, True
     for _ in range(2):
         try:
             await s.playback()
@@ -519,6 +545,7 @@ async def music_tool_checks():
     tok = pathlib.Path(tempfile.mkdtemp()) / "token.json"
     tok.write_text(json.dumps({"access_token": "a", "refresh_token": "r", "expires_at": 10**12}))
     s = spotify.Spotify("cid", tok, transport=httpx.MockTransport(spotify_api))
+    s.poll_s = 0
     shown = []
 
     async def on_card(card):
@@ -528,7 +555,7 @@ async def music_tool_checks():
     hear = lambda r: r["content"][0]["text"]  # noqa: E731
     calls.clear()
     assert hear(await music["play_music"].handler({"query": "blue", "kind": "track"})) == "Playing Blue by Joni Mitchell."
-    assert calls[-1][1:] == ("/v1/me/player/play", {"device_id": "pi1"}, {"uris": ["spotify:track:1"]})
+    assert ("PUT", "/v1/me/player/play", {"device_id": "pi1"}, {"uris": ["spotify:track:1"]}) in calls
     assert s.changed.is_set(), "a control pokes the now-playing poller"
     for name, endpoint, said in [("pause_music", "/v1/me/player/pause", "Paused."),
                                  ("resume_music", "/v1/me/player/play", "Playing."),

@@ -89,6 +89,7 @@ class Spotify:
         self.http = httpx.AsyncClient(transport=transport, timeout=10)
         self.blocked_until = 0.0  # after a 429, no requests until then
         self.changed = asyncio.Event()  # set after a control, so the now-playing poller looks again soon
+        self.poll_s = 0.5  # between looks while confirming that play started
 
     async def close(self):
         await self.http.aclose()
@@ -177,15 +178,30 @@ class Spotify:
                 return d
         raise SpotifyError(f"The {self.device_name} speaker isn't showing up on Spotify. Is raspotify running on the Pi?")
 
+    async def started(self) -> bool:
+        """Whether Spotify reports the speaker playing within 12 looks (6 s; it took about 1.5 s on the Pi)."""
+        for _ in range(12):
+            p = await self.playback()
+            if p and p.get("is_playing") and (p.get("device") or {}).get("name") == self.device_name:
+                return True
+            await asyncio.sleep(self.poll_s)
+        return False
+
     async def play(self, query: str, kind: str = "track") -> dict:
-        """Find something and play it on the speaker, moving playback there first if it isn't active."""
+        """Find something and play it on the speaker, moving playback there first if it isn't active.
+
+        Tried twice: librespot (0.8.0) only notices that Spotify closed its session when the next command arrives.
+        That command wakes it up (it logs in again in about 2 s) but is itself lost. Seen on the Pi 2026-10-08."""
         found = await self.search(query, kind)
-        dev = await self.speaker()
-        if not dev.get("is_active"):
-            await self.call("PUT", "/me/player", json={"device_ids": [dev["id"]], "play": False})
         body = {"uris": [found["uri"]]} if kind == "track" else {"context_uri": found["uri"]}
-        await self.call("PUT", "/me/player/play", params={"device_id": dev["id"]}, json=body)
-        return found
+        for _ in range(2):
+            dev = await self.speaker()
+            if not dev.get("is_active"):
+                await self.call("PUT", "/me/player", json={"device_ids": [dev["id"]], "play": False})
+            await self.call("PUT", "/me/player/play", params={"device_id": dev["id"]}, json=body)
+            if await self.started():
+                return found
+        raise SpotifyError(f"The {self.device_name} speaker didn't start playing. Try again in a moment.")
 
     async def pause(self):
         await self.call("PUT", "/me/player/pause")
