@@ -380,7 +380,7 @@ assert login["redirect_uri"] == ["http://127.0.0.1:8765/spotify/callback"] and l
 assert set(login["scope"][0].split()) == {"user-read-playback-state", "user-modify-playback-state",
                                          "user-read-currently-playing"}
 
-world = {"devices": [], "limit": False, "revoked": False, "playing": False, "lose": 0}
+world = {"devices": [], "limit": False, "revoked": False, "playing": False, "lose": 0, "stale": 0, "now": None}
 calls = []
 clock = [1000.0]
 
@@ -410,10 +410,18 @@ def spotify_api(request):
     if path == "/v1/me/player/play" and request.method == "PUT":
         if world["lose"]:  # librespot's session had quietly closed: the command wakes it but is lost
             world["lose"] -= 1
+        elif world["stale"]:  # Spotify reports the speaker's last track instead
+            world["stale"] -= 1
+            world["playing"], world["now"] = True, "spotify:track:old"
         else:
             world["playing"] = True
+            if body:
+                world["now"] = (body.get("uris") or [body.get("context_uri")])[0]
     if path == "/v1/me/player" and request.method == "GET" and world["playing"]:
-        return httpx.Response(200, json={"is_playing": True, "device": {"name": "Claude Home"}, "item": None})
+        now = world["now"]
+        return httpx.Response(200, json={"is_playing": True, "device": {"name": "Claude Home"},
+                                         "item": {"uri": now if ":track:" in now else "spotify:track:9"},
+                                         "context": {"uri": now} if ":track:" not in now else None})
     return httpx.Response(204)
 
 
@@ -433,8 +441,8 @@ async def spotify_checks():
     saved = json.loads(tok.read_text())
     assert saved["access_token"] == "fresh" and saved["refresh_token"] == "keep" and saved["expires_at"] == clock[0] + 3600
 
-    # Play a track on the speaker while it's idle: search, find it, move playback there, play that URI, and
-    # check it started
+    # Play a track on the speaker while it's idle: search, find it, play that URI on the speaker (no separate
+    # transfer), and check Spotify reports that track playing there
     world["devices"] = [{"id": "phone1", "name": "Pixel", "is_active": True},
                         {"id": "pi1", "name": "Claude Home", "is_active": False}]
     calls.clear()
@@ -442,11 +450,10 @@ async def spotify_checks():
     assert found == {"uri": "spotify:track:1", "name": "Blue", "by": "Joni Mitchell"}
     assert calls == [("GET", "/v1/search", {"q": "blue joni mitchell", "type": "track", "limit": "1"}, None),
                      ("GET", "/v1/me/player/devices", {}, None),
-                     ("PUT", "/v1/me/player", {}, {"device_ids": ["pi1"], "play": False}),
                      ("PUT", "/v1/me/player/play", {"device_id": "pi1"}, {"uris": ["spotify:track:1"]}),
                      ("GET", "/v1/me/player", {}, None)], calls
 
-    # Already active: no transfer; an album plays as a context
+    # An album plays as a context, and that context is what's checked
     world["devices"][1]["is_active"] = True
     calls.clear()
     await s.play("blue", "album")
@@ -467,6 +474,12 @@ async def spotify_checks():
     except spotify.SpotifyError as e:
         assert "didn't start playing" in str(e), e
     assert world["lose"] == 0, "two tries, no more"
+
+    # Spotify reports the speaker's old track instead of the one asked for: sent again, then right
+    world["playing"], world["stale"] = False, 1
+    calls.clear()
+    await s.play("blue")
+    assert [c[:2] for c in calls].count(("PUT", "/v1/me/player/play")) == 2 and world["now"] == "spotify:track:1"
 
     # Controls hit the right endpoints
     calls.clear()
@@ -562,6 +575,7 @@ async def music_tool_checks():
                                  ("skip_track", "/v1/me/player/next", "Skipped."),
                                  ("previous_track", "/v1/me/player/previous", "Gone back.")]:
         assert hear(await music[name].handler({})) == said and calls[-1][1] == endpoint, name
+    world["playing"] = False
     assert hear(await music["whats_playing"].handler({})) == "Nothing is playing." and shown[-1] == {"kind": "music"}
     world["devices"] = []
     assert "isn't showing up" in hear(await music["play_music"].handler({"query": "blue", "kind": "track"}))

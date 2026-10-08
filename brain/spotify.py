@@ -179,28 +179,30 @@ class Spotify:
                 return d
         raise SpotifyError(f"The {self.device_name} speaker isn't showing up on Spotify. Is raspotify running on the Pi?")
 
-    async def started(self) -> bool:
-        """Whether Spotify reports the speaker playing within 12 looks (6 s; it took about 1.5 s on the Pi)."""
+    async def started(self, uri: str) -> bool:
+        """Whether Spotify reports the speaker playing uri (the track, or the album, playlist, or artist it's playing
+        from) within 12 looks (6 s; it took about 1.5 s on the Pi)."""
         for _ in range(12):
-            p = await self.playback()
-            if p and p.get("is_playing") and (p.get("device") or {}).get("name") == self.device_name:
+            p = await self.playback() or {}
+            here = p.get("is_playing") and (p.get("device") or {}).get("name") == self.device_name
+            if here and uri in ((p.get("item") or {}).get("uri"), (p.get("context") or {}).get("uri")):
                 return True
             await asyncio.sleep(self.poll_s)
         return False
 
     async def play(self, query: str, kind: str = "track") -> dict:
-        """Find something and play it on the speaker, moving playback there first if it isn't active.
+        """Find something and play it on the speaker; the play command names the speaker, which also moves playback
+        there. No separate transfer first: an idle librespot (0.8.0) restores its last track on a transfer, and with
+        the play right behind it, Spotify went on reporting that old track while the new one played.
 
-        Tried twice: librespot (0.8.0) only notices that Spotify closed its session when the next command arrives.
-        That command wakes it up (it logs in again in about 2 s) but is itself lost. Seen on the Pi 2026-10-08."""
+        Tried twice: librespot only notices that Spotify closed its session when the next command arrives. That
+        command wakes it up (it logs in again in about 2 s) but is itself lost. Both seen on the Pi 2026-10-08."""
         found = await self.search(query, kind)
         body = {"uris": [found["uri"]]} if kind == "track" else {"context_uri": found["uri"]}
         for _ in range(2):
             dev = await self.speaker()
-            if not dev.get("is_active"):
-                await self.call("PUT", "/me/player", json={"device_ids": [dev["id"]], "play": False})
             await self.call("PUT", "/me/player/play", params={"device_id": dev["id"]}, json=body)
-            if await self.started():
+            if await self.started(found["uri"]):
                 return found
         raise SpotifyError(f"The {self.device_name} speaker didn't start playing. Try again in a moment.")
 
