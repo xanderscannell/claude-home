@@ -13,7 +13,7 @@ import urllib.parse
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 HERE = pathlib.Path(__file__).parent
@@ -192,6 +192,13 @@ async def photo_list():
 @app.get("/")
 async def root():
     return RedirectResponse("/display/?device=fake")
+
+
+@app.get("/display/")
+async def page():
+    """The real page with the cursor back: the kiosk hides it for its touchscreen, but here a mouse drives it."""
+    html = (HERE / "display" / "index.html").read_text(encoding="utf-8")
+    return HTMLResponse(html.replace("</head>", "<style>* { cursor: auto !important; }</style>\n</head>", 1))
 
 
 app.mount("/display", StaticFiles(directory=HERE / "display", html=True), name="display")
