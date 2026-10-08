@@ -104,6 +104,7 @@ body.talking .home { opacity: 0; pointer-events: none; }
   color: var(--accent);
 }
 .strip .label { font-size: 18px; }
+.digit { display: inline-block; width: 1ch; text-align: center; }  /* tabular digits Fraunces lacks (app.js) */
 
 .mic {
   position: absolute; right: 26px; bottom: 22px;

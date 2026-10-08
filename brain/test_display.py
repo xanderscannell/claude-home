@@ -400,6 +400,12 @@ def test_sheets(b):
     box = d.page.locator(".dial-time").bounding_box()
     d.page.clock.run_for(3000)  # 4:10 down to 4:07: different digit widths, same box
     assert d.page.locator(".dial-time").bounding_box() == box, "the dial's time shouldn't shift as it ticks"
+    off_center = d.page.evaluate("""() => {  // measured together: the sheet may still be sliding
+      const text = document.createRange();  // the digits themselves, not the box around them
+      text.selectNodeContents(document.querySelector(".dial-time"));
+      const t = text.getBoundingClientRect(), r = document.querySelector(".dial").getBoundingClientRect();
+      return (t.left + t.width / 2) - (r.left + r.width / 2); }""")
+    assert abs(off_center) < 1, f"the dial's time should be centered, it's {off_center}px off"
 
     # Pause shows at once and tells the brain; the time holds and blinks; Resume picks it up again
     d.page.locator(".tmr-btn.tmr-main").tap()

@@ -307,13 +307,16 @@ function shortLength(seconds) {
 // What a timer is called: its label, else its length ("5 min timer"), else just "Timer"
 const timerName = (t) => sentence(t.label) || (t.duration ? `${shortLength(t.duration)} timer` : "Timer");
 
-// A ticking countdown that holds still. Fraunces has no tabular digits ("1:11" is narrower than "0:00"), so it
-// gets the width of its widest digits, 0 (1ch each), plus its colons (0.24em), with the digits left-aligned in it.
+// A ticking countdown that holds still. Fraunces has no tabular digits ("1:11" is narrower than "0:00"), so each
+// digit gets a cell the width of the widest, 0 (1ch), centered in it: the number keeps one width as it ticks, so it
+// can sit centered (in a dial) or beside a label (on the strip) without shifting every second.
+function setCountdown(node, seconds) {
+  node.replaceChildren(...[...countdown(seconds)].map((c) => (c === ":" ? c : el("span", "digit", c))));
+}
+
 function steadyCountdown(className, seconds) {
-  const num = el("span", className, countdown(seconds));
-  const colons = num.textContent.split(":").length - 1;
-  num.style.minWidth = `calc(${num.textContent.length - colons}ch + ${colons * 0.24}em)`;
-  num.style.textAlign = "left";
+  const num = el("span", className);
+  setCountdown(num, seconds);
   return num;
 }
 
@@ -372,10 +375,10 @@ function tick() {
   for (const item of els.strip.querySelectorAll(".timer[data-ends-at]")) {
     const left = Number(item.dataset.endsAt) - now;
     if (left <= 0) { renderStrip(); return; }  // finished: drop it (the brain rings and confirms)
-    item.querySelector(".num").textContent = countdown(left);
+    setCountdown(item.querySelector(".num"), left);
   }
   for (const c of els.sheetBody.querySelectorAll("[data-ends-at]")) {
-    c.textContent = countdown(Number(c.dataset.endsAt) - now);
+    setCountdown(c, Number(c.dataset.endsAt) - now);
   }
   for (const arc of els.sheetBody.querySelectorAll(".dial-arc[data-arc-end]")) drain(arc, Number(arc.dataset.arcEnd) - now);
 }
