@@ -1,7 +1,9 @@
 """Run: uv run python test_satellite.py"""
 import asyncio
 
-from satellite import MIC_BACKLOG, VOLUME, amixer_args, parse_level, push_latest
+import numpy as np
+
+from satellite import FRAME, MIC_BACKLOG, VOLUME, Heard, amixer_args, parse_level, push_latest
 
 # amixer commands: read, set, clamped
 assert VOLUME == "Master", "the speaker volume is asound.conf's software control, not the device's own"
@@ -36,4 +38,27 @@ for i in range(MIC_BACKLOG * 3):
     push_latest(q, i)
 assert q.qsize() == MIC_BACKLOG and q.get_nowait() == MIC_BACKLOG * 2, "oldest dropped, newest kept"
 assert 50 <= MIC_BACKLOG <= 100, "a few seconds of 80 ms frames"
+
+
+# While ringing: speech is picked out without the wake word, with a little audio from before it started
+class FakeVAD:
+    """Calls a frame speech when its first sample is 1."""
+    def predict(self, frame, frame_size):
+        return float(frame[0] == 1)
+
+    def reset_states(self):
+        pass
+
+
+def frames(*kinds):
+    return [np.full(FRAME, k, dtype=np.int16) for k in kinds]
+
+
+heard = Heard(FakeVAD())
+got = [heard.feed(f) for f in frames(*[0] * 20, 1, 1, 1, *[0] * 9)]
+assert got[:-1] == [None] * 31 and got[-1] is not None, "speech counts once 0.7 s of quiet follows it"
+assert len(got[-1]) == (5 + 3 + 9) * FRAME * 2, "5 frames of pre-roll, the speech, and the quiet after"
+assert all(heard.feed(f) is None for f in frames(1, *[0] * 9)), "one 80 ms blip isn't speech"
+long = [heard.feed(f) for f in frames(*[1] * 60)]
+assert sum(x is not None for x in long) == 1, "endless talk is cut off and sent after 4 s"
 print("ok")

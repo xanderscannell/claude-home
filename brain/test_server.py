@@ -322,6 +322,7 @@ async def alarm_flow(port: int):
         once = due_now()
         r = await rings()
         assert r["id"] == once and r["label"] == "wake up" and r["time"] == "06:30", r
+        assert await recv_json(sat) == {"type": "ringing", "on": True}  # the satellite listens for "stop" meanwhile
         m = await recv_json(sat)
         assert m["type"] == "audio_start" and m.get("announce"), m
         await screen.send(json.dumps({"type": "stop"}))
@@ -349,6 +350,43 @@ async def alarm_flow(port: int):
         await sat.send(json.dumps({"type": "wake"}))
         await stops()
         await sat.send(json.dumps({"type": "cancel"}))
+
+        # Speech heard while ringing, no wake word (the satellite is told when to listen): "snooze" snoozes an alarm,
+        # "stop" stops a timer, anything else is ignored. Transcripts are canned; the audio doesn't matter.
+        heard = iter(["Snooze it.", "What time is it?", "Stop."])
+        brain.transcribe = lambda groq, pcm: next(heard)
+
+        async def say_while_ringing():
+            await sat.send(bytes(32000))
+            await sat.send(json.dumps({"type": "ring_speech"}))
+
+        async def satellite_told(on: bool):
+            while (await recv_json(sat)) != {"type": "ringing", "on": on}:
+                pass
+
+        weekday = due_now(days="01234", label="")
+        await rings()
+        await satellite_told(True)
+        await say_while_ringing()
+        await stops()
+        await satellite_told(False)
+        await asyncio.sleep(0.3)
+        [a] = [a for a in brain.tools.alarm_list("bedroom") if a["id"] == weekday]
+        assert abs(a["next_ring"] - (time.time() + 540)) < 5, a
+        brain.tools.alarm_delete("bedroom", weekday)
+
+        # A finished timer rings like an alarm, until stopped
+        brain.tools.timer_add("bedroom", "pasta", 0)
+        m = await until_type(screen, "ringing")
+        assert m["ringing"] == {"kind": "timer", "label": "pasta"}, m
+        await satellite_told(True)
+        await say_while_ringing()  # "What time is it?"
+        await asyncio.sleep(0.5)
+        assert brain.device("bedroom").ringing is not None, "only words like stop end it"
+        await say_while_ringing()  # "Stop."
+        await stops()
+        await satellite_told(False)
+        assert next(heard, None) is None
 
         # Left alone, it gives up after the limit, and the one-time alarm is done
         brain.RING_LIMIT_S = 1

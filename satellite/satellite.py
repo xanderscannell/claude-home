@@ -36,6 +36,9 @@ MIN_SPEECH_S = 0.25  # less speech than this after the wake word counts as nothi
 END_SILENCE_S = 0.7  # this much silence after speech ends the utterance
 NO_SPEECH_TIMEOUT_S = 4.0  # wake word fired but nobody spoke
 MAX_UTTERANCE_S = 15.0
+PRE_ROLL_S = 0.4  # audio kept from before speech starts, so a short "stop" heard while ringing isn't clipped
+RING_SPEECH_MAX_S = 4.0  # longest speech sent to the brain while ringing (it only listens for "stop" or "snooze")
+RING_MIN_SPEECH_S = 0.16  # a lone "stop" is short; the brain's transcript decides what it was
 MIC_TIMEOUT_S = 2.0  # no audio for this long means the mic is gone (unplugged)
 MIC_BACKLOG = int(5 / FRAME_S)  # mic frames kept for a reader that fell behind; older ones are dropped
 DUCK_PERCENT = 20  # music volume while listening and talking
@@ -156,6 +159,31 @@ async def next_frame(mic: asyncio.Queue) -> np.ndarray:
         raise SystemExit("no audio from the mic (unplugged?); exiting so the service restarts")
 
 
+class Heard:
+    """Speech picked out of the mic frames as they come, without the wake word: used while something rings, so
+    "stop" works on its own. feed() returns the int16 audio once a stretch of speech ends, else None."""
+
+    def __init__(self, vad: VAD):
+        self.vad = vad
+        self.frames: list[np.ndarray] = []
+        self.speech = self.silence = 0.0
+        vad.reset_states()
+
+    def feed(self, frame: np.ndarray) -> bytes | None:
+        self.frames.append(frame)
+        if self.vad.predict(frame, frame_size=640) >= SPEECH_PROB:
+            self.speech, self.silence = self.speech + FRAME_S, 0.0
+        elif self.speech:
+            self.silence += FRAME_S
+        else:
+            del self.frames[:-int(PRE_ROLL_S / FRAME_S)]  # nothing said yet: keep only the pre-roll
+        if self.speech and (self.silence >= END_SILENCE_S or len(self.frames) * FRAME_S >= RING_SPEECH_MAX_S):
+            said = self.speech >= RING_MIN_SPEECH_S and b"".join(f.tobytes() for f in self.frames)
+            self.frames, self.speech, self.silence = [], 0.0, 0.0
+            return said or None
+        return None
+
+
 async def report_volume(ws):
     level = await asyncio.to_thread(mixer, VOLUME)
     if level is not None:
@@ -172,7 +200,8 @@ async def finish_unasked(ws, player: Player, end: dict, listen_now: asyncio.Even
         await asyncio.to_thread(mixer, "Music", 100)
 
 
-async def receive(ws, player: Player, replies: asyncio.Queue, listen_now: asyncio.Event, awaiting: asyncio.Event):
+async def receive(ws, player: Player, replies: asyncio.Queue, listen_now: asyncio.Event, awaiting: asyncio.Event,
+                  ringing: asyncio.Event):
     """Everything the brain sends: replies, announcements (timers) at any time, and control messages."""
     rate = 22050
     pending = set()  # unasked-reply tasks, kept referenced
@@ -197,6 +226,8 @@ async def receive(ws, player: Player, replies: asyncio.Queue, listen_now: asynci
             listen_now.set()
         elif kind == "stop":
             player.clear()
+        elif kind == "ringing":  # an alarm or timer started or stopped ringing here
+            ringing.set() if m["on"] else ringing.clear()
         elif kind == "volume":
             await asyncio.to_thread(mixer, VOLUME, m["level"])
             await report_volume(ws)
@@ -204,13 +235,23 @@ async def receive(ws, player: Player, replies: asyncio.Queue, listen_now: asynci
 
 
 async def listen(ws, mic: asyncio.Queue, wake: Model, vad: VAD, player: Player, replies: asyncio.Queue,
-                 listen_now: asyncio.Event, awaiting: asyncio.Event):
+                 listen_now: asyncio.Event, awaiting: asyncio.Event, ringing: asyncio.Event):
     follow_up = False
     while True:
-        # 1. Wait for the wake word (or a tap on the screen), unless Claude just asked a question.
+        # 1. Wait for the wake word (or a tap on the screen), unless Claude just asked a question. While something
+        #    rings, any speech goes to the brain too, which stops the ringing if it hears "stop".
         if not follow_up:
-            while not listen_now.is_set() and wake.predict(await next_frame(mic))[WAKE_WORD] < WAKE_THRESHOLD:
-                pass
+            heard = Heard(vad)
+            while not listen_now.is_set():
+                frame = await next_frame(mic)
+                if wake.predict(frame)[WAKE_WORD] >= WAKE_THRESHOLD:
+                    break
+                if not ringing.is_set():
+                    if heard.frames:
+                        heard = Heard(vad)  # nothing stale left over for the next ring
+                elif said := heard.feed(frame):
+                    await ws.send(said)
+                    await ws.send(json.dumps({"type": "ring_speech"}))
             listen_now.clear()
             await asyncio.to_thread(mixer, "Music", DUCK_PERCENT)  # duck the music while we talk
         player.play(*chime(player.rate))
@@ -260,10 +301,11 @@ async def session(ws, mic: asyncio.Queue, wake: Model, vad: VAD, player: Player)
     replies: asyncio.Queue = asyncio.Queue()
     listen_now = asyncio.Event()  # the screen asked us to listen (tap-to-talk, or a question from Claude)
     awaiting = asyncio.Event()  # set while listen() waits for the reply to what it just sent
+    ringing = asyncio.Event()  # an alarm or timer is ringing here: "stop" works without the wake word
     await report_volume(ws)
     async with asyncio.TaskGroup() as tasks:  # if either ends (e.g. the brain disconnects), both stop
-        tasks.create_task(receive(ws, player, replies, listen_now, awaiting))
-        tasks.create_task(listen(ws, mic, wake, vad, player, replies, listen_now, awaiting))
+        tasks.create_task(receive(ws, player, replies, listen_now, awaiting, ringing))
+        tasks.create_task(listen(ws, mic, wake, vad, player, replies, listen_now, awaiting, ringing))
 
 
 async def main():

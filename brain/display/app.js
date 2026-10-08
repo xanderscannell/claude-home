@@ -691,8 +691,14 @@ function showRinging(r) {
     els.ringing.hidden = true;
     return;
   }
-  els.ringingTime.replaceChildren(...alarmTime(r.time, "t").childNodes);
-  els.ringingLabel.textContent = sentence(r.label) || "Alarm";
+  if (r.kind === "timer") {  // a timer has no time of day to show, and nothing to snooze
+    els.ringingTime.textContent = "Time’s up";
+    els.ringingLabel.textContent = r.label ? `${sentence(r.label)} timer` : "Timer";
+  } else {
+    els.ringingTime.replaceChildren(...alarmTime(r.time, "t").childNodes);
+    els.ringingLabel.textContent = sentence(r.label) || "Alarm";
+  }
+  els.snooze.hidden = r.kind === "timer";
   els.ringing.hidden = false;
 }
 

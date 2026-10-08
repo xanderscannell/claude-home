@@ -235,7 +235,7 @@ class Device:
         self.busy = False  # a turn is running
         self.stopped = False  # Stop was tapped during this turn
         self.volume: int | None = None  # the speaker's level, as last reported by the satellite
-        self.ringing: dict | None = None  # the alarm ringing right now, as shown on screens
+        self.ringing: dict | None = None  # the alarm or timer ringing right now, as shown on screens
         self.snoozed = False
         self.displays: set[WebSocket] = set()
         self.state = "idle"  # idle | listening | thinking | speaking
@@ -302,45 +302,86 @@ async def quietly(coro):
         await coro
 
 
-RING_LIMIT_S = 600  # an alarm rings at most this long
+RING_LIMIT_S = 600  # an alarm or timer rings at most this long
 BEEP_EVERY_S = 4  # between bursts of beeps while it rings
 SNOOZE_MIN = 9
 clock = time.time  # alarm timing reads this, so tests can steer it
+# Said while something rings, no wake word needed (the satellite listens for speech meanwhile)
+STOP_WORDS = re.compile(r"\b(stop|cancel|dismiss|enough|quiet|shut up|off)\b", re.I)
+SNOOZE_WORD = re.compile(r"\bsnooze\b", re.I)
 
 
-async def ring_alarm(dev: Device, alarm: dict):
-    """Ring until stopped, snoozed, answered (wake word or tap-to-talk), or RING_LIMIT_S runs out."""
-    ringing = {"kind": "alarm", "id": alarm["id"], "label": alarm["label"], "time": alarm["time"]}
-    dev.ringing, dev.snoozed = ringing, False
-    print(f"[{dev.name}] alarm ringing: {alarm['time']} {alarm['label']}")
+async def set_ringing(dev: Device, ringing: dict | None):
+    """What rings on this device now: its screens show it, and its satellite listens for "stop" meanwhile."""
+    dev.ringing = ringing
     await dev.show({"type": "ringing", "ringing": ringing})
+    if dev.sat is not None:
+        await quietly(send(dev.sat, json.dumps({"type": "ringing", "on": ringing is not None})))
+
+
+async def ring(dev: Device, ringing: dict, text: str):
+    """Ring until stopped (a tap, or "stop" said), snoozed, answered (wake word or tap-to-talk), or RING_LIMIT_S
+    runs out."""
+    dev.snoozed = False
+    await set_ringing(dev, ringing)
     start = clock()
     try:
-        await announce(dev, f"It's {tools.spoken_time(alarm['time'])}." + (f" {alarm['label']}." if alarm["label"] else ""))
+        await announce(dev, text)
         while dev.ringing is ringing and clock() - start < RING_LIMIT_S:
             await asyncio.sleep(BEEP_EVERY_S)
             if dev.ringing is ringing:
                 await announce(dev, None)
     finally:
         if dev.ringing is ringing:  # ran out on its own
-            dev.ringing = None
-            await dev.show({"type": "ringing", "ringing": None})
+            await set_ringing(dev, None)
+
+
+async def ring_alarm(dev: Device, alarm: dict):
+    print(f"[{dev.name}] alarm ringing: {alarm['time']} {alarm['label']}")
+    try:
+        await ring(dev, {"kind": "alarm", "id": alarm["id"], "label": alarm["label"], "time": alarm["time"]},
+                   f"It's {tools.spoken_time(alarm['time'])}." + (f" {alarm['label']}." if alarm["label"] else ""))
+    finally:
         if not dev.snoozed:
             tools.alarm_done(alarm["id"])
 
 
+async def ring_timer(dev: Device, label: str):
+    print(f"[{dev.name}] timer done: {label or 'unnamed'}")
+    text = f"Your {label} timer is done." if label else "Your timer is done."
+    if dev.ringing is not None:  # ponytail: one ring at a time, so a timer ending meanwhile is only announced
+        return await announce(dev, text)
+    await ring(dev, {"kind": "timer", "label": label}, text)
+
+
 async def stop_ringing(dev: Device, snooze: bool = False) -> bool:
-    """End a ringing alarm now (optionally snoozing it). Returns whether one was ringing."""
+    """End what's ringing now (snoozing it, if it's an alarm and snooze is asked). Returns whether anything rang."""
     if dev.ringing is None:
         return False
-    if snooze:
+    if snooze and dev.ringing["kind"] == "alarm":
         tools.alarm_snooze(dev.ringing["id"], SNOOZE_MIN, clock())
         dev.snoozed = True
-    dev.ringing = None
-    await dev.show({"type": "ringing", "ringing": None})
+    await set_ringing(dev, None)
     if dev.sat is not None:
         await send(dev.sat, json.dumps({"type": "stop"}))  # drop the beeps still queued
     return True
+
+
+async def heard_while_ringing(dev: Device, pcm: bytes):
+    """Speech the satellite heard while something rang, without the wake word: "stop" (or the like) stops it,
+    "snooze" snoozes an alarm, and anything else is ignored."""
+    if dev.ringing is None:
+        return
+    try:
+        text = await asyncio.to_thread(transcribe, app.state.groq, pcm)
+    except httpx.HTTPError as e:
+        print(f"[{dev.name}] couldn't transcribe speech while ringing: {e!r}")
+        return
+    print(f"[{dev.name}] heard while ringing: {text!r}")
+    if SNOOZE_WORD.search(text):
+        await stop_ringing(dev, snooze=True)
+    elif STOP_WORDS.search(text):
+        await stop_ringing(dev)
 
 
 async def stop(dev: Device):
@@ -518,8 +559,7 @@ async def ring_timers():
             continue
         for name, label in tools.timers_due():
             dev = devices.get(name) if name in devices and devices[name].sat else connected[0]
-            print(f"[{name}] timer done: {label or 'unnamed'}")
-            spawn(announce(dev, f"Your {label} timer is done." if label else "Your timer is done."))
+            spawn(ring_timer(dev, label))
 
 
 @contextlib.asynccontextmanager
@@ -552,6 +592,8 @@ async def satellite(ws: WebSocket):
     dev = device(ws.query_params.get("device", "unknown"))
     dev.sat = ws
     print(f"[{dev.name}] connected")
+    if dev.ringing is not None:  # back mid-ring: listen for "stop" again
+        await quietly(send(ws, json.dumps({"type": "ringing", "on": True})))
     try:
         async with session(dev.name, await tools.shopping_categories()) as client:
             dev.client = client
@@ -588,6 +630,9 @@ async def serve_satellite(ws: WebSocket, dev: Device):
             await dev.set_state("idle")
         elif kind == "speech_end":
             await turn(dev, pcm=b"".join(frames))
+            frames = []
+        elif kind == "ring_speech":  # the audio just sent is speech heard while ringing
+            spawn(heard_while_ringing(dev, b"".join(frames)))
             frames = []
         elif kind == "text":
             await turn(dev, text=m["text"])

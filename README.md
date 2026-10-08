@@ -121,7 +121,8 @@ than the Pi 5 build, with the brain on the PC:
 - **Screens Claude or a tap can open:** weather, timers and alarms, shopping list (the Todoist
   project, by category; tap to check off), calendar, morning briefing, recipe steps, music with controls, volume, and anything else
   Claude wants to show.
-- **Alarms** that ring until stopped or snoozed, by touch or by voice.
+- **Alarms and timers** that ring until stopped (alarms can snooze), by touch or by voice: just say
+  "stop", no wake word needed.
 - **Spotify:** voice control of the Pi as a Spotify Connect speaker, now playing on screen, and
   music that dips while Claude listens or talks.
 - **Night mode:** a dim clock on black overnight; a tap brings the home screen back for 30 s.

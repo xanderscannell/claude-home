@@ -621,6 +621,16 @@ def test_alarms_on_screen(b):
     d.push({"type": "ringing", "ringing": {"kind": "alarm", "id": 2, "label": "time for the gym", "time": "07:00"}})
     assert d.text("#ringing-label") == "Time for the gym"
     d.shot("ringing-label", settle=400)
+
+    # A finished timer: no time of day, its name, and nothing to snooze; an alarm after it gets Snooze back
+    d.push({"type": "ringing", "ringing": {"kind": "timer", "label": "pasta"}})
+    assert d.text("#ringing-time") == "Time’s up" and d.text("#ringing-label") == "Pasta timer"
+    assert not d.visible("#snooze") and d.visible("#ringing-stop")
+    d.shot("ringing-timer", settle=400)
+    d.push({"type": "ringing", "ringing": {"kind": "timer", "label": ""}})
+    assert d.text("#ringing-label") == "Timer"
+    d.push({"type": "ringing", "ringing": {"kind": "alarm", "id": 3, "label": "", "time": "07:00"}})
+    assert d.visible("#snooze") and d.text("#ringing-time") == "7:00am"
     d.close()
 
 

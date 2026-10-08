@@ -138,6 +138,7 @@ Satellite -> brain:
 | *binary* | Mic PCM |
 | `speech_end` | VAD heard the end of the utterance |
 | `cancel` | Wake word fired but nobody spoke |
+| `ring_speech` | The mic PCM just sent is speech heard while something rang, without the wake word. The brain transcribes it and stops (or snoozes) the ringing if it hears "stop" (or "snooze"); anything else is ignored, never sent to Claude. |
 | `text {text}` | A typed request; skips speech-to-text (testing) |
 | `played` | A reply finished playing (not sent for announcements, so a timer ending mid-conversation doesn't end it on screen) |
 | `volume {level}` | The speaker's volume (0-100, the `Master` control), on connect and after every change |
@@ -151,6 +152,7 @@ Brain -> satellite:
 | `audio_end {follow_up}` | If `follow_up` is true (the reply ended with a question), listen again without the wake word |
 | `audio_start` / `audio_end` with `announce: true` | Unprompted speech, such as a finished timer or an alarm. Can arrive at any time; the satellite always listens for it. |
 | `listen` | Start listening as if the wake word fired (tap-to-talk on a screen) |
+| `ringing {on}` | An alarm or timer started or stopped ringing here. While on, the satellite also sends any speech it hears (`ring_speech`), so "stop" works without the wake word. |
 | `stop` | Drop all queued audio now (Stop on a screen, a stopped reply, a silenced alarm) |
 | `volume {level}` | Set the speaker's volume: the `Master` software control from `asound.conf` (`amixer -c 2 sset Master`), not the USB device's own control, which some devices ignore |
 
@@ -175,7 +177,7 @@ Brain -> display:
 | `card {card}` | Open a sheet (kinds below) |
 | `ambient {weather, timers, next_alarm, agenda}` | Home screen data: on connect, when timers or the next alarm change, and on each weather or calendar refresh |
 | `now_playing {track}` | `null`, or `{title, artist, album, art, uri, is_playing, progress_ms, duration_ms}`; sent when the track, play state, or position really changes (screens advance the position themselves) |
-| `ringing {ringing}` | `null`, or the ringing alarm `{kind, id, label, time}` |
+| `ringing {ringing}` | `null`, the ringing alarm `{kind: "alarm", id, label, time}`, or a finished timer `{kind: "timer", label}` |
 | `volume {level}` | The speaker's level |
 
 Card kinds: `weather` (the forecast), `timers` (timers with `ends_at` epoch seconds, and alarms),
@@ -188,8 +190,8 @@ Display -> brain:
 
 | Message | Effect |
 |---|---|
-| `talk` | The satellite starts listening (and a ringing alarm stops) |
-| `stop` | Silence a ringing alarm, else cut the reply short, else drop queued audio |
+| `talk` | The satellite starts listening (and a ringing alarm or timer stops) |
+| `stop` | Silence a ringing alarm or timer, else cut the reply short, else drop queued audio |
 | `snooze` | Snooze the ringing alarm 9 minutes |
 | `open {sheet}` | Reply (to this screen only) with the card for `weather`, `timers`, `shopping`, or `agenda` |
 | `shopping_remove {item}` | Remove it; this screen gets the updated list |
@@ -274,14 +276,17 @@ run, so the picture arrives with or before the spoken answer.
 
 **Timers live in the brain**, not in Claude. Each is a SQLite row, and one loop checks for
 finished timers every half second, so timers survive restarts and ring without a network
-call. A timer that ran out while the brain was down rings as soon as a satellite connects.
-Claude only creates and cancels them.
+call. A finished timer rings like an alarm (below, without Snooze): its name is spoken, then
+beeps every 4 s until stopped or 10 minutes pass. A timer that ran out while the brain was down
+rings as soon as a satellite connects. Claude only creates and cancels them.
 
 **Alarms live in the brain too:** a SQLite row with a time (`"HH:MM"`), repeat days (weekday
 digits, Monday = 0: `"01234"` is weekdays, `""` is once), a label, an on/off flag, and the next
 ring time, computed by one pure function (`next_ring`). The same half-second loop rings them: the
 screens turn marigold, the time and label are spoken once, then beeps every 4 s until Stop, Snooze
-(9 minutes), the wake word, tap-to-talk, or 10 minutes pass. One-time alarms are deleted after;
+(9 minutes), the wake word, tap-to-talk, or 10 minutes pass. Saying "stop" or "snooze" works
+without the wake word: while something rings, the satellite sends any speech it hears to the brain,
+which checks the transcript for those words (and a few like them: cancel, off, enough). One-time alarms are deleted after;
 repeating ones get their next time. An alarm more than 10 minutes overdue (the brain was down) is
 skipped rather than rung late.
 
