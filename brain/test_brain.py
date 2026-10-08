@@ -5,7 +5,9 @@ import io
 import json
 import os
 import pathlib
+import sqlite3
 import tempfile
+import time
 
 os.environ["CLAUDE_HOME_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")  # before importing tools
 
@@ -87,20 +89,83 @@ assert tools.facts() == ["The wifi password is on the fridge"]
 tools.timer_add("kitchen", "pasta", 600)
 tools.timer_add("kitchen", "eggs", 0)
 tools.timer_add("office", "", 300)
-assert [label for label, _ in tools.timers("kitchen")] == ["eggs", "pasta"]
-assert tools.timers_due() == [("kitchen", "eggs")] and tools.timers_due() == []
-assert tools.timer_cancel("kitchen", "PAS") == 1 and tools.timers("kitchen") == []
+assert [t["label"] for t in tools.timer_list("kitchen")] == ["pasta", "eggs"]
+assert tools.timers_due() == [("kitchen", "eggs", 0)] and tools.timers_due() == []
+assert tools.timer_cancel("kitchen", "PAS") == 1 and tools.timer_list("kitchen") == []
 assert tools.timer_cancel("office", "") == 1
 assert tools.spoken_duration(3725) == "1 hour 2 minutes 5 seconds"
 assert tools.spoken_duration(60) == "1 minute"
+assert tools.spoken_duration(5400, singular=True) == "1 hour 30 minute"
 
-# Timers for the screen: ids, labels, end times, soonest first, per device
+# A timer's name: its label, else its length, else just "timer"; asked for by any of those
+assert tools.timer_name({"label": "pasta", "duration": 300}) == "pasta"
+assert tools.timer_name({"label": "", "duration": 300}) == "5 minute timer"
+assert tools.timer_name({"label": "", "duration": 5400}) == "1 hour 30 minute timer"
+assert tools.timer_name({"label": "", "duration": None}) == "timer"
+pasta, five = {"label": "pasta", "duration": 600}, {"label": "", "duration": 300}
+assert [tools.timer_matches(pasta, s) for s in ("Pasta", "pasta timer", "10 minute", "", "timer", "eggs")] == [
+    True, True, True, True, True, False]
+assert [tools.timer_matches(five, s) for s in ("5 minute timer", "5 minute", "timer", "10 minute", "pasta")] == [
+    True, True, True, False, False]
+assert tools.timer_matches({"label": "", "duration": None}, "timer")
+# A label that only restates the length isn't kept (the timer is named by its length); "timer" is dropped
+assert [tools.timer_label(s) for s in ("5 minute timer", "five minutes", "1 hour 30 minute timer", "an hour and a half",
+                                        "Timer", "", "pasta timer", "Pasta", "15-minute timer", "2 minute eggs")] == [
+    "", "", "", "", "", "", "pasta", "Pasta", "", "2 minute eggs"]
+tools.timer_add("names", "5 minute timer", 300)
+assert tools.timer_name(tools.timer_list("names")[0]) == "5 minute timer"
+tools.timer_cancel("names", "")
+
+# Timers for the screen: ids, labels, end times, how long they were set for, oldest first (they keep their
+# places), per device
 tools.timer_add("hall", "tea", 300)
 tools.timer_add("hall", "", 60)
 listed = tools.timer_list("hall")
-assert [t["label"] for t in listed] == ["", "tea"] and all({"id", "label", "ends_at"} == t.keys() for t in listed)
-assert listed[0]["ends_at"] < listed[1]["ends_at"] and tools.timer_list("nowhere") == []
+assert [(t["label"], t["duration"], t["paused_left"]) for t in listed] == [("tea", 300, None), ("", 60, None)]
+assert listed[0]["ends_at"] > listed[1]["ends_at"] and tools.timer_list("nowhere") == []
+
+# Pause and resume: a paused timer keeps its time left, never comes due, and picks up where it stopped
+tea_id, t0 = listed[0]["id"], listed[0]["ends_at"] - 300
+assert tools.timer_pause("hall", tea_id, now=t0 + 100) and not tools.timer_pause("hall", tea_id, now=t0 + 101)
+[tea] = [t for t in tools.timer_list("hall") if t["id"] == tea_id]
+assert tea["paused_left"] == 200 and tools.timer_left(tea, t0 + 9999) == 200
+assert tools.timer_text(tea, t0 + 9999) == "tea, 3 minutes 20 seconds left, paused"
+tools.q("UPDATE timers SET ends_at = 0 WHERE id = ?", tea_id)  # long past, but paused: not due
+assert ("hall", "tea") not in tools.timers_due()
+assert not tools.timer_pause("hall", tea_id) and not tools.timer_resume("nowhere", tea_id)
+now = time.time()
+assert tools.timer_resume("hall", tea_id, now=now) and not tools.timer_resume("hall", tea_id, now=now)
+[tea] = [t for t in tools.timer_list("hall") if t["id"] == tea_id]
+assert tea["paused_left"] is None and tea["ends_at"] == now + 200 and tools.timer_text(tea, now) == (
+    "tea, 3 minutes 20 seconds left")
 tools.timer_cancel("hall", "")
+
+# Claude pauses, resumes, and cancels timers by name, an unnamed one by its length
+tools.timer_add("lab", "pasta", 600)
+tools.timer_add("lab", "", 300)
+lab = {t.name: t for t in tools.tool_list("lab")}
+said = lambda name, args: asyncio.run(lab[name].handler(args))["content"][0]["text"]  # noqa: E731
+assert said("pause_timer", {"name": "5 minute timer"}) == "Paused 1 timer(s)."
+assert [t["paused_left"] is not None for t in tools.timer_list("lab")] == [False, True]
+assert said("list_timers", {}).startswith("pasta, 10 minutes left; 5 minute timer, 5 minutes left, paused")
+assert said("pause_timer", {"name": ""}) == "Paused 1 timer(s)."  # the one still running
+assert said("resume_timer", {"name": "pasta"}) == "Resumed 1 timer(s)."
+assert said("resume_timer", {"name": "eggs"}) == "Resumed 0 timer(s)."
+assert said("cancel_timer", {"name": "5 minute"}) == "Cancelled 1 timer(s)."
+assert [t["label"] for t in tools.timer_list("lab")] == ["pasta"]
+tools.timer_cancel("lab", "")
+
+# A database from before pause: the new columns are added, its timers carry on (with no duration)
+old_db = os.path.join(tempfile.mkdtemp(), "old.db")
+with sqlite3.connect(old_db) as con:
+    con.execute("CREATE TABLE timers (id INTEGER PRIMARY KEY, device TEXT, label TEXT, ends_at REAL)")
+    con.execute("INSERT INTO timers (device, label, ends_at) VALUES ('hall', 'old', 1e12)")
+con.close()
+tools.DB_PATH, saved_db = old_db, tools.DB_PATH
+tools.upgrade()
+tools.upgrade()  # twice is fine
+assert [(t["label"], t["duration"], t["paused_left"]) for t in tools.timer_list("hall")] == [("old", None, None)]
+tools.DB_PATH = saved_db
 
 # Weather: a real Open-Meteo response (New York, captured 2026-10-07) parsed for the screen and for Claude
 raw = json.load(open(pathlib.Path(__file__).parent / "test_data" / "openmeteo.json"))
@@ -120,7 +185,8 @@ assert asyncio.run(tools.locate(None, "40.71, -74.01")) == ("Home", 40.71, -74.0
 # Screen cards from tools, and cancelling one timer by id
 tools.timer_add("den", "tea", 120)
 tea = tools.timer_list("den")[0]
-assert tools.timers_card("den") == {"kind": "timers", "timers": [tea], "alarms": []}
+assert tools.timers_card("den") == {"kind": "timers", "timers": [tea]}
+assert tools.alarms_card("den") == {"kind": "alarms", "alarms": []}
 assert tools.timer_cancel_id("den", tea["id"]) and not tools.timer_cancel_id("den", tea["id"])
 shown_cards = []
 
@@ -295,7 +361,7 @@ tools.recipe_open("other", "Toast", ["bread"], [])  # no steps: stays on the ing
 assert tools.recipe_move("other", "next") and tools.recipe_move("other", "first") and tools.recipes["other"]["step"] == -1
 assert tools.recipes["kitchen"]["title"] == "Pancakes", "recipes are per device"
 assert not tools.recipe_move("nobody", "next")
-assert say("cancel_timer", {"label": "nothing by this name"}) == "Cancelled 0 timer(s)."
+assert say("cancel_timer", {"name": "nothing by this name"}) == "Cancelled 0 timer(s)."
 assert shown[-1]["kind"] == "timers", "cancelling shows the timers, like setting one does"
 
 # Spotify, all through a mock: PKCE, refresh only when due, search then play, a missing speaker, 429 back-off

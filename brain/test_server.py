@@ -244,8 +244,18 @@ async def display_flow(port: int):
         assert [t["label"] for t in (await until_type(a, "card"))["card"]["timers"]] == ["eggs"]
         await a.send(json.dumps({"type": "open", "sheet": "nonsense"}))  # ignored, nothing breaks
 
-        # Cancel from the screen by id; screens hear about it through the timer watcher
+        # Pause and resume from the screen by id; every screen hears through the timer watcher
         eggs = brain.tools.timer_list("kitchen")[0]["id"]
+        await a.send(json.dumps({"type": "timer_pause", "id": eggs}))
+        while (await until_type(b, "ambient"))["timers"][0]["paused_left"] is None:
+            pass
+        await a.send(json.dumps({"type": "timer_resume", "id": eggs}))
+        while (await until_type(b, "ambient"))["timers"][0]["paused_left"] is not None:
+            pass
+        await a.send(json.dumps({"type": "open", "sheet": "alarms"}))
+        assert (await until_card(a, "alarms")) == {"kind": "alarms", "alarms": []}
+
+        # Cancel from the screen by id; screens hear about it through the timer watcher
         await a.send(json.dumps({"type": "timer_cancel", "id": eggs}))
         m = await until_type(a, "ambient")
         while m["timers"]:
@@ -378,7 +388,7 @@ async def alarm_flow(port: int):
         # A finished timer rings like an alarm, until stopped
         brain.tools.timer_add("bedroom", "pasta", 0)
         m = await until_type(screen, "ringing")
-        assert m["ringing"] == {"kind": "timer", "label": "pasta"}, m
+        assert m["ringing"] == {"kind": "timer", "label": "pasta", "duration": 0}, m
         await satellite_told(True)
         await say_while_ringing()  # "What time is it?"
         await asyncio.sleep(0.5)
@@ -399,16 +409,16 @@ async def alarm_flow(port: int):
         # From the timers sheet: turn an alarm off and on, delete it; the sheet refreshes, home learns the next alarm
         later = brain.tools.alarm_add("bedroom", "21:15", "56", "weekend reading")
         await screen.send(json.dumps({"type": "alarm_toggle", "id": later, "enabled": False}))
-        card = await until_card(screen, "timers")
+        card = await until_card(screen, "alarms")
         assert [(a["id"], a["enabled"]) for a in card["alarms"]] == [(later, False)], card
         await screen.send(json.dumps({"type": "alarm_toggle", "id": later, "enabled": True}))
-        assert (await until_card(screen, "timers"))["alarms"][0]["enabled"] is True
+        assert (await until_card(screen, "alarms"))["alarms"][0]["enabled"] is True
         m = await until_type(screen, "ambient")
         while not m["next_alarm"]:
             m = await until_type(screen, "ambient")
         assert m["next_alarm"]["id"] == later and m["next_alarm"]["time"] == "21:15", m["next_alarm"]
         await screen.send(json.dumps({"type": "alarm_delete", "id": later}))
-        assert (await until_card(screen, "timers"))["alarms"] == []
+        assert (await until_card(screen, "alarms"))["alarms"] == []
 
         # An alarm missed by more than the limit (the brain was down) is skipped, not rung late
         late = brain.tools.alarm_add("bedroom", "06:30", "", "late")
@@ -492,6 +502,8 @@ def main():
     # Static display page, and / redirects to it
     r = httpx.get(f"{base}/display/")
     assert r.status_code == 200 and "Claude Home" in r.text, r.status_code
+    for path in ("", "style.css", "app.js"):  # checked on every load, so new code never mixes with an old stylesheet
+        assert httpx.get(f"{base}/display/{path}").headers["cache-control"] == "no-cache", path
     r = httpx.get(f"{base}/", follow_redirects=False)
     assert r.status_code in (302, 307) and r.headers["location"] == "/display/", (r.status_code, r.headers)
 

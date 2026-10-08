@@ -180,7 +180,7 @@ Brain -> display:
 | `ringing {ringing}` | `null`, the ringing alarm `{kind: "alarm", id, label, time}`, or a finished timer `{kind: "timer", label}` |
 | `volume {level}` | The speaker's level |
 
-Card kinds: `weather` (the forecast), `timers` (timers with `ends_at` epoch seconds, and alarms),
+Card kinds: `weather` (the forecast), `timers` (each with `ends_at` epoch seconds, `duration` in seconds, and `paused_left`: seconds left while paused, else null), `alarms`,
 `shopping {groups}` (each `{name, items}`: a Todoist section, uncategorized first with name `""`), `agenda {events}`, `briefing` (forecast, today's events, next alarm, timers,
 shopping count), `recipe {title, ingredients, steps, step}` (step -1 is the ingredients),
 `text {title, lines}` (Claude's `show_on_screen`), `volume {level}`, and `music` (no data; the
@@ -193,9 +193,10 @@ Display -> brain:
 | `talk` | The satellite starts listening (and a ringing alarm or timer stops) |
 | `stop` | Silence a ringing alarm or timer, else cut the reply short, else drop queued audio |
 | `snooze` | Snooze the ringing alarm 9 minutes |
-| `open {sheet}` | Reply (to this screen only) with the card for `weather`, `timers`, `shopping`, or `agenda` |
+| `open {sheet}` | Reply (to this screen only) with the card for `weather`, `timers`, `alarms`, `shopping`, or `agenda` |
 | `shopping_remove {item}` | Remove it; this screen gets the updated list |
-| `timer_cancel {id}`, `alarm_toggle {id, enabled}`, `alarm_delete {id}` | From the timers sheet |
+| `timer_pause {id}`, `timer_resume {id}`, `timer_cancel {id}` | From the timers sheet (Pause, Resume, Stop) |
+| `alarm_toggle {id, enabled}`, `alarm_delete {id}` | From the alarms sheet |
 | `media {action}` | `play`, `pause`, `next`, or `previous` on Spotify |
 | `volume {level}` | Set the speaker's level |
 | `recipe {action}` | `next` or `previous` (every screen of the device follows), or `close` (ends recipe mode) |
@@ -262,7 +263,7 @@ registered, plus an `mcp` client for Home Assistant.
 
 | Phase | Tools |
 |---|---|
-| 1 | `set_timer` / `list_timers` / `cancel_timer`, `remember` / `forget`, shopping list (`add_to_` / `remove_from_` / `get_` / `clear_shopping_list`), `get_weather` (Open-Meteo, no API key), web search (the SDK's built-in `WebSearch`) |
+| 1 | `set_timer` / `list_timers` / `cancel_timer` / `pause_timer` / `resume_timer` (by name; an unlabeled timer is named by its length, "5 minute timer"), `remember` / `forget`, shopping list (`add_to_` / `remove_from_` / `get_` / `clear_shopping_list`), `get_weather` (Open-Meteo, no API key), web search (the SDK's built-in `WebSearch`) |
 | 2 | Home Assistant MCP tools (automatic), `announce(device \| all, text)` (not started) |
 | 3 | `set_alarm` / `list_alarms` / `cancel_alarm`, `show_on_screen(title, lines)`, `get_agenda(days)`, `morning_briefing`, `show_recipe` / `recipe_step(direction)`, `play_music(query, kind)` / `pause_music` / `resume_music` / `skip_track` / `previous_track` / `whats_playing`, `set_volume(level, relative)` |
 
@@ -303,7 +304,7 @@ in the brain.
 Built so far on the Pi 3 with a 5" 800x480 HDMI touchscreen (USB touch), with the brain on the PC.
 
 - **The page** (`brain/display/`: `index.html`, `style.css`, `app.js`) is served by the brain and runs fullscreen in Chromium under the `cage` kiosk compositor. It is driven by pushed messages (the [display protocol](#display-protocol)), never by polling the brain, and reconnects by itself; after 5 s offline it says so.
-- **Screens:** home (clock, date, weather, and a strip of timers, the next alarm, the next event, and the song playing, over the photo slideshow); the conversation overlay (one "state light" for listening, thinking, and speaking; what was heard; the reply growing sentence by sentence; Stop); sheets that slide up for weather, timers and alarms, shopping list, calendar, briefing, recipe, music, volume, the menu, and Claude's `show_on_screen` text; the ringing screen; and night mode.
+- **Screens:** home (clock, date, weather, and a strip of timers, the next alarm, the next event, and the song playing, over the photo slideshow); the conversation overlay (one "state light" for listening, thinking, and speaking; what was heard; the reply growing sentence by sentence; Stop); sheets that slide up for weather, timers (a dial each that drains as time runs out, with Pause and Stop), alarms, shopping list, calendar, briefing, recipe, music, volume, the menu, and Claude's `show_on_screen` text; the ringing screen; and night mode.
 - **Navigation:** every screen has a visible close control, and every sheet returns home after 45 s untouched (a recipe after 30 minutes, since a step can simmer that long; ringing never times out on its own).
 - **Touch never goes through Claude:** checking off a shopping item, cancelling a timer, toggling an alarm, the media buttons, and the volume slider are messages straight to the brain. Flipping a switch must not cost an API call or a second of waiting.
 - **Night mode** is computed in the page from `hello.night` (`NIGHT_START` / `NIGHT_END`): pure black with a dim clock in the day clock's place, no photos fetched; a tap brings the home screen back for 30 s. Ringing, conversations, and sheets still come up over it.

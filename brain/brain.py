@@ -346,12 +346,13 @@ async def ring_alarm(dev: Device, alarm: dict):
             tools.alarm_done(alarm["id"])
 
 
-async def ring_timer(dev: Device, label: str):
-    print(f"[{dev.name}] timer done: {label or 'unnamed'}")
-    text = f"Your {label} timer is done." if label else "Your timer is done."
+async def ring_timer(dev: Device, label: str, duration: float | None):
+    name = tools.timer_name({"label": label, "duration": duration})
+    print(f"[{dev.name}] timer done: {name}")
+    text = f"Your {label} timer is done." if label else f"Your {name} is done."
     if dev.ringing is not None:  # ponytail: one ring at a time, so a timer ending meanwhile is only announced
         return await announce(dev, text)
-    await ring(dev, {"kind": "timer", "label": label}, text)
+    await ring(dev, {"kind": "timer", "label": label, "duration": duration}, text)
 
 
 async def stop_ringing(dev: Device, snooze: bool = False) -> bool:
@@ -557,9 +558,9 @@ async def ring_timers():
         connected = [d for d in devices.values() if d.sat is not None]
         if not connected:
             continue
-        for name, label in tools.timers_due():
+        for name, label, duration in tools.timers_due():
             dev = devices.get(name) if name in devices and devices[name].sat else connected[0]
-            spawn(ring_timer(dev, label))
+            spawn(ring_timer(dev, label, duration))
 
 
 @contextlib.asynccontextmanager
@@ -650,6 +651,8 @@ async def sheet_card(dev: Device, sheet: str) -> dict | None:
                 tools.text_card("Weather", ["The forecast hasn't loaded yet. Try again in a minute."]))
     if sheet == "timers":
         return tools.timers_card(dev.name)
+    if sheet == "alarms":
+        return tools.alarms_card(dev.name)
     if sheet == "shopping":
         return await tools.shopping_card()
     if sheet == "agenda":
@@ -664,12 +667,14 @@ async def from_display(dev: Device, m: dict, ws: WebSocket):
         await ws.send_text(json.dumps({"type": "card", "card": card}))  # just the screen that asked
     elif kind == "timer_cancel" and isinstance(m.get("id"), int):
         tools.timer_cancel_id(dev.name, m["id"])  # the timer watcher updates every screen
+    elif kind in ("timer_pause", "timer_resume") and isinstance(m.get("id"), int):
+        (tools.timer_pause if kind == "timer_pause" else tools.timer_resume)(dev.name, m["id"])  # the watcher too
     elif kind in ("alarm_toggle", "alarm_delete") and isinstance(m.get("id"), int):
         if kind == "alarm_toggle":
             tools.alarm_toggle(dev.name, m["id"], bool(m.get("enabled")))
         else:
             tools.alarm_delete(dev.name, m["id"])
-        await ws.send_text(json.dumps({"type": "card", "card": tools.timers_card(dev.name)}))  # refresh this sheet
+        await ws.send_text(json.dumps({"type": "card", "card": tools.alarms_card(dev.name)}))  # refresh this sheet
     elif kind == "shopping_remove" and isinstance(m.get("item"), str):
         try:
             await tools.shopping_remove([m["item"]])
@@ -782,8 +787,18 @@ async def photo(name: str):
         return Response(status_code=404)
 
 
+class Revalidated(StaticFiles):
+    """Files the browser must check before reusing (a quick 304 on the LAN). Without it Chromium guesses how long
+    they stay fresh, and the kiosk once reloaded for new display code with a new app.js but an old style.css."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 # Mounted last: routes above (including the WebSocket ones) match first.
-app.mount("/display", StaticFiles(directory=HERE / "display", html=True), name="display")
+app.mount("/display", Revalidated(directory=HERE / "display", html=True), name="display")
 
 
 if __name__ == "__main__":

@@ -203,6 +203,14 @@ def test_weather_and_timers(b):
     d.push(ambient([{"id": 3, "label": "roast", "ends_at": t0 + 80 + 3725}], weather=None))
     assert d.page.locator(".strip .num").all_inner_texts() == ["1:02:05"]
     assert d.page.locator(".weather-button").count() == 0
+
+    # A paused timer holds its time, greyed, and keeps its place by time left
+    d.push(ambient([{"id": 4, "label": "tea", "ends_at": t0, "duration": 300, "paused_left": 200},
+                    {"id": 5, "label": "rice", "ends_at": t0 + 80 + 600, "duration": 900, "paused_left": None}]))
+    assert d.page.locator(".strip .label").all_inner_texts() == ["Tea", "Rice"]
+    d.page.clock.run_for(5000)
+    assert d.page.locator(".strip .num").all_inner_texts() == ["3:20", "9:55"]
+    assert d.page.locator(".strip .timer.paused").count() == 1
     d.close()
 
 
@@ -361,21 +369,64 @@ def test_sheets(b):
     d.tap("#sheet-close")
     assert not sheet_open(d), "close didn't return home"
 
-    # Timers: live countdowns, Cancel sends the timer's id; the list follows ambient updates
-    timers = [{"id": 7, "label": "pasta", "ends_at": t0 + 252}, {"id": 8, "label": "", "ends_at": t0 + 1500}]
-    d.push({"type": "card", "card": {"kind": "timers", "timers": timers, "alarms": []}})
-    assert d.page.locator(".timer-row .countdown").all_inner_texts() == ["4:12", "25:00"]
-    assert d.page.locator(".timer-row .label").all_inner_texts() == ["Pasta", "Timer"]
-    d.shot("sheet-timers", settle=400)
+    # Timers: one gets a big dial, its arc what's left of it, with Pause and Stop stacked beside it
+    pasta = {"id": 7, "label": "pasta", "ends_at": t0 + 252, "duration": 504, "paused_left": None}
+    d.push({"type": "card", "card": {"kind": "timers", "timers": [pasta]}})
+    assert d.text("#sheet-title") == "Timers" and d.page.locator(".timers.one .tmr").count() == 1
+    assert d.text(".dial-time") == "4:12" and d.text(".dial-name") == "Pasta"
+    assert d.page.locator(".tmr-btn").all_inner_texts() == ["Pause", "Stop"]
+    offset = lambda: float(d.page.eval_on_selector(".dial-arc", "a => a.style.strokeDashoffset"))  # noqa: E731
+    assert abs(offset() - 0.5) < 0.01, offset()
+    dial, pause = d.page.locator(".dial").bounding_box(), d.page.locator(".tmr-btn.tmr-main").bounding_box()
+    assert pause["x"] > dial["x"] + dial["width"] and big(pause, w=240, h=96), (dial, pause)
+    d.shot("sheet-timer", settle=400)
     d.page.clock.run_for(2000)
-    assert d.page.locator(".timer-row .countdown").first.inner_text() == "4:10", "sheet countdown isn't ticking"
-    d.page.locator(".timer-row .pill").first.tap()
+    assert d.text(".dial-time") == "4:10", "the dial isn't ticking"
+    assert abs(offset() - (1 - 250 / 504)) < 0.01, offset()
+
+    # Pause shows at once and tells the brain; the time holds and blinks; Resume picks it up again
+    d.page.locator(".tmr-btn.tmr-main").tap()
+    d.page.wait_for_timeout(50)
+    assert {"type": "timer_pause", "id": 7} in d.sent, d.sent
+    assert d.page.locator(".tmr.paused").count() == 1 and d.text(".tmr-btn.tmr-main") == "Resume"
+    held = d.text(".dial-time")
+    d.page.clock.run_for(5000)
+    assert d.text(".dial-time") == held, "a paused timer shouldn't count down"
+    d.shot("sheet-timer-paused", settle=400)
+    d.page.locator(".tmr-btn.tmr-main").tap()
+    d.page.wait_for_timeout(50)
+    assert {"type": "timer_resume", "id": 7} in d.sent and d.page.locator(".tmr.paused").count() == 0
+
+    # Two: smaller dials side by side, round Pause and Stop under each
+    now = t0 + 7
+    pasta = dict(pasta, ends_at=now + 250)
+    eggs = {"id": 8, "label": "eggs", "ends_at": now + 400, "duration": 420, "paused_left": None}
+    d.push(ambient([pasta, eggs]))
+    assert d.page.locator(".timers.two .tmr").count() == 2
+    first, second = (d.page.locator(".dial").nth(i).bounding_box() for i in (0, 1))
+    assert first["y"] == second["y"] and second["x"] > first["x"] + first["width"], (first, second)
+    under = d.page.locator(".tmr").nth(0).locator(".tmr-btn")
+    assert under.count() == 2 and under.first.bounding_box()["y"] > first["y"] + first["height"]
+    assert under.all_inner_texts() == ["", ""] and big(under.first.bounding_box(), w=72, h=72)
+    d.shot("sheet-timers-two", settle=400)
+
+    # Three: smaller still, all on screen
+    rice = {"id": 9, "label": "", "ends_at": now + 900, "duration": 5400, "paused_left": None}
+    d.push(ambient([pasta, eggs, dict(rice, paused_left=600)]))
+    assert d.page.locator(".timers.many .tmr").count() == 3 and d.page.locator(".tmr.paused").count() == 1
+    assert d.page.locator(".dial-name").all_inner_texts() == ["Pasta", "Eggs", "1 hr 30 min timer"]
+    last = d.page.locator(".tmr").nth(2).bounding_box()
+    assert last["x"] + last["width"] <= 800, last
+    d.shot("sheet-timers-three", settle=400)
+
+    # Stop sends the timer's id; the list follows ambient updates
+    d.page.locator(".tmr-btn.tmr-stop").first.tap()
     d.page.wait_for_timeout(50)
     assert {"type": "timer_cancel", "id": 7} in d.sent, d.sent
-    d.push(ambient([timers[1]]))  # the brain confirms the cancel
-    assert d.page.locator(".timer-row").count() == 1
+    d.push(ambient([eggs]))  # the brain confirms the stop
+    assert d.page.locator(".timers.one .tmr").count() == 1
     d.push(ambient([]))
-    assert d.text(".sheet-body .quiet") == "No timers or alarms."
+    assert d.text(".sheet-body .quiet") == "No timers running."
     d.shot("sheet-timers-empty", settle=400)
 
     # Untouched for 45 s, the sheet goes home; a touch restarts the wait
@@ -455,13 +506,16 @@ def test_menu(b):
     d = Display(b)
     d.tap("#menu")
     assert d.visible("#sheet") and d.text("#sheet-title") == "Menu"
-    assert d.page.locator(".menu-label").all_inner_texts() == ["Timers and alarms", "Shopping list", "Music", "Volume"]
+    assert d.page.locator(".menu-label").all_inner_texts() == ["Timers", "Alarms", "Shopping list", "Music", "Volume"]
+    last, body = d.page.locator(".menu-row").nth(4).bounding_box(), d.page.locator(".sheet-body").bounding_box()
+    assert last["y"] + last["height"] <= body["y"] + body["height"], f"every menu row should fit: {last} {body}"
     d.shot("menu", settle=400)
-    d.page.locator(".menu-row").nth(0).tap()
-    d.page.locator(".menu-row").nth(1).tap()
+    for i in range(3):
+        d.page.locator(".menu-row").nth(i).tap()
     d.page.wait_for_timeout(50)
-    assert {"type": "open", "sheet": "timers"} in d.sent and {"type": "open", "sheet": "shopping"} in d.sent, d.sent
-    d.page.locator(".menu-row").nth(2).tap()  # Music: opens straight away, the page knows what's playing
+    assert [{"type": "open", "sheet": s} for s in ("timers", "alarms", "shopping")] == [
+        m for m in d.sent if m.get("type") == "open"], d.sent
+    d.page.locator(".menu-row").nth(3).tap()  # Music: opens straight away, the page knows what's playing
     d.page.wait_for_timeout(50)
     assert d.text("#sheet-title") == "Music" and d.text(".sheet-body .quiet") == "Nothing is playing."
     d.close()
@@ -473,7 +527,7 @@ def test_volume(b):
 
     # From the menu, before the speaker has reported a level: say so
     d.tap("#menu")
-    d.page.locator(".menu-row").nth(3).tap()
+    d.page.locator(".menu-row").nth(4).tap()
     d.page.wait_for_timeout(50)
     assert d.text("#sheet-title") == "Volume" and d.text(".sheet-body .quiet") == "The speaker isn't connected."
     d.shot("volume-unknown", settle=400)
@@ -517,7 +571,8 @@ def test_navigation_every_screen_gets_home(b):
     """From every screen there is a visible way home, and every sheet goes home on its own when left alone."""
     screens = {
         "weather": {"kind": "weather", **WEATHER},
-        "timers": {"kind": "timers", "timers": [], "alarms": []},
+        "timers": {"kind": "timers", "timers": []},
+        "alarms": {"kind": "alarms", "alarms": []},
         "shopping": {"kind": "shopping", "groups": [{"name": "", "items": ["Milk"]}]},
         "text": {"kind": "text", "title": "Note", "lines": ["Hello"]},
         "volume": {"kind": "volume", "level": 40},
@@ -573,15 +628,12 @@ def test_alarms_on_screen(b):
     d.push(dict(ambient([], weather=None), next_alarm=alarm(2, "07:00", "0", "gym", next_ring=monday_7)))
     assert d.text(".strip .alarm .label") == "Gym Monday"
     d.tap(".strip .alarm")
-    assert {"type": "open", "sheet": "timers"} in d.sent
+    assert {"type": "open", "sheet": "alarms"} in d.sent
 
-    # The sheet: timers and alarms in two labeled groups; each alarm with its days, a switch, Delete
-    d.push(ambient([{"id": 9, "label": "pasta", "ends_at": START.timestamp() + 252}], weather=None))
+    # The alarms sheet: each alarm with its days, a switch, Delete
     alarms = [alarm(1, "06:30", "01234", "", next_ring=tomorrow_630), alarm(2, "21:15", "56", "reading", enabled=False)]
-    d.push({"type": "card", "card": {"kind": "timers", "timers": ambient()["timers"] or
-                                     [{"id": 9, "label": "pasta", "ends_at": START.timestamp() + 252}], "alarms": alarms}})
-    assert d.text("#sheet-title") == "Timers and alarms"
-    assert d.page.locator(".group-label").all_inner_texts() == ["Timers", "Alarms"]
+    d.push({"type": "card", "card": {"kind": "alarms", "alarms": alarms}})
+    assert d.text("#sheet-title") == "Alarms" and d.page.locator(".group-label").count() == 0
     assert d.page.locator(".alarm-time").all_inner_texts() == ["6:30am", "9:15pm"]
     assert d.page.locator(".alarm-days").all_inner_texts() == ["Weekdays", "Weekends"]
     assert d.page.locator(".alarm-name").all_inner_texts() == ["Alarm", "Reading"]
@@ -598,10 +650,9 @@ def test_alarms_on_screen(b):
     d.page.wait_for_timeout(50)
     assert {"type": "alarm_delete", "id": 2} in d.sent, d.sent
 
-    # Only alarms: titled for what it holds, no group labels
-    d.push({"type": "card", "card": {"kind": "timers", "timers": [], "alarms": alarms[:1]}})
-    d.push(ambient([], weather=None))
-    assert d.text("#sheet-title") == "Alarms" and d.page.locator(".group-label").count() == 0
+    # No alarms: says so, and how to set one
+    d.push({"type": "card", "card": {"kind": "alarms", "alarms": []}})
+    assert d.text(".sheet-body .quiet") == "No alarms set." and "wake me up" in d.text(".hint")
 
     # Ringing: over everything (even an open sheet), Stop and Snooze send their messages, null clears it
     d.push({"type": "ringing", "ringing": {"kind": "alarm", "id": 1, "label": "", "time": "06:30"}})
@@ -627,7 +678,9 @@ def test_alarms_on_screen(b):
     assert d.text("#ringing-time") == "Time’s up" and d.text("#ringing-label") == "Pasta timer"
     assert not d.visible("#snooze") and d.visible("#ringing-stop")
     d.shot("ringing-timer", settle=400)
-    d.push({"type": "ringing", "ringing": {"kind": "timer", "label": ""}})
+    d.push({"type": "ringing", "ringing": {"kind": "timer", "label": "", "duration": 300}})
+    assert d.text("#ringing-label") == "5 min timer"
+    d.push({"type": "ringing", "ringing": {"kind": "timer", "label": "", "duration": None}})
     assert d.text("#ringing-label") == "Timer"
     d.push({"type": "ringing", "ringing": {"kind": "alarm", "id": 3, "label": "", "time": "07:00"}})
     assert d.visible("#snooze") and d.text("#ringing-time") == "7:00am"

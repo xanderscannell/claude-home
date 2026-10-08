@@ -292,24 +292,40 @@ function countdown(seconds) {
   return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
 }
 
+// A timer counts down to ends_at while it runs; paused, it holds paused_left
+const paused = (t) => t.paused_left !== null && t.paused_left !== undefined;
+const timeLeft = (t, now) => (paused(t) ? t.paused_left : t.ends_at - now);
+const liveTimers = (timers, now) => timers.filter((t) => timeLeft(t, now) > 0);
+
+// "1 hr 30 min", "45 sec": a timer's length, short enough for inside a dial
+function shortLength(seconds) {
+  const s = Math.round(seconds);
+  return [[Math.floor(s / 3600), "hr"], [Math.floor((s % 3600) / 60), "min"], [s % 60, "sec"]]
+    .filter(([n]) => n).map(([n, unit]) => `${n} ${unit}`).join(" ");
+}
+
+// What a timer is called: its label, else its length ("5 min timer"), else just "Timer"
+const timerName = (t) => sentence(t.label) || (t.duration ? `${shortLength(t.duration)} timer` : "Timer");
+
 function renderStrip() {
   els.strip.replaceChildren();
   const now = Date.now() / 1000;
-  const running = ambient.timers.filter((t) => t.ends_at > now);
-  for (const t of running) {
-    const item = el("button", "item timer");
+  const live = liveTimers(ambient.timers, now).sort((a, b) => timeLeft(a, now) - timeLeft(b, now));
+  for (const t of live) {
+    const item = el("button", paused(t) ? "item timer paused" : "item timer");
     item.type = "button";
-    item.dataset.endsAt = t.ends_at;
-    item.append(el("span", "num", countdown(t.ends_at - now)), el("span", "label", sentence(t.label) || "Timer"));
+    if (!paused(t)) item.dataset.endsAt = t.ends_at;
+    item.append(el("span", "num", countdown(timeLeft(t, now))), el("span", "label", timerName(t)));
     item.addEventListener("click", () => send({ type: "open", sheet: "timers" }));
     els.strip.append(item);
   }
+  const running = live.filter((t) => !paused(t));
   const a = ambient.next_alarm;
   if (a) {
     const item = el("button", "item alarm");
     item.type = "button";
     item.append(alarmTime(a.time, "num"), el("span", "label", `${sentence(a.label) || "Alarm"}${dayWord(a.next_ring)}`));
-    item.addEventListener("click", () => send({ type: "open", sheet: "timers" }));
+    item.addEventListener("click", () => send({ type: "open", sheet: "alarms" }));
     els.strip.append(item);
   }
   // The next thing on the calendar today: the next timed event (or the one under way), else an all-day one
@@ -343,7 +359,7 @@ function renderStrip() {
 
 function tick() {
   const now = Date.now() / 1000;
-  for (const item of els.strip.querySelectorAll(".timer")) {
+  for (const item of els.strip.querySelectorAll(".timer[data-ends-at]")) {
     const left = Number(item.dataset.endsAt) - now;
     if (left <= 0) { renderStrip(); return; }  // finished: drop it (the brain rings and confirms)
     item.querySelector(".num").textContent = countdown(left);
@@ -351,6 +367,7 @@ function tick() {
   for (const c of els.sheetBody.querySelectorAll("[data-ends-at]")) {
     c.textContent = countdown(Number(c.dataset.endsAt) - now);
   }
+  for (const arc of els.sheetBody.querySelectorAll(".dial-arc[data-arc-end]")) drain(arc, Number(arc.dataset.arcEnd) - now);
 }
 
 // --- Sheets -----------------------------------------------------------------------------------
@@ -416,21 +433,26 @@ const renderers = {
     return [title, [now, days]];
   },
 
-  timers: (c) => {
-    const now = Date.now() / 1000;
-    const running = ambient.timers.filter((t) => t.ends_at > now);  // live list, not the card's snapshot
-    const alarms = c.alarms || [];
-    if (!running.length && !alarms.length) {
-      return ["Timers and alarms", [el("p", "quiet", "No timers or alarms."),
-                                    el("p", "hint", "Say “Hey Jarvis, set a timer for ten minutes” or “wake me up at 7.”")]];
+  // Timers: each one a dial that drains as time runs out. One timer gets the whole sheet with big Pause and
+  // Stop beside it; several sit side by side, smaller, each with round Pause and Stop underneath.
+  timers: () => {
+    const live = liveTimers(ambient.timers, Date.now() / 1000);  // live list, not the card's snapshot
+    if (!live.length) {
+      return ["Timers", [el("p", "quiet", "No timers running."),
+                         el("p", "hint", "Say “Hey Jarvis, set a timer for ten minutes.”")]];
     }
-    const both = running.length && alarms.length;  // group labels only when there are two groups to tell apart
-    const nodes = [];
-    if (both) nodes.push(el("p", "group-label", "Timers"));
-    nodes.push(...running.map(timerRow));
-    if (both) nodes.push(el("p", "group-label", "Alarms"));
-    nodes.push(...alarms.map(alarmRow));
-    return [both ? "Timers and alarms" : running.length ? "Timers" : "Alarms", nodes];
+    const size = live.length === 1 ? "one" : live.length === 2 ? "two" : "many";
+    const wrap = el("div", `timers ${size}`);
+    wrap.append(...live.map((t) => timerDial(t, size === "one")));
+    return ["Timers", [wrap]];
+  },
+
+  alarms: (c) => {
+    if (!c.alarms.length) {
+      return ["Alarms", [el("p", "quiet", "No alarms set."),
+                         el("p", "hint", "Say “Hey Jarvis, wake me up at 7.”")]];
+    }
+    return ["Alarms", c.alarms.map(alarmRow)];
   },
 
   shopping: (c) => {
@@ -445,7 +467,8 @@ const renderers = {
 
   menu: () => {
     const entries = [
-      ["Timers and alarms", ICONS.timer, "timers"],
+      ["Timers", ICONS.timer, "timers"],
+      ["Alarms", ICONS.alarm, "alarms"],
       ["Shopping list", ICONS.list, "shopping"],
       ["Music", ICONS.music, () => openSheet({ kind: "music" })],  // these two the page already knows
       ["Volume", ICONS.volume, () => openSheet({ kind: "volume" })],
@@ -592,12 +615,12 @@ const renderers = {
       facts.append(item);
     };
     if (c.next_alarm) fact(alarmTime(c.next_alarm.time, "num"), `${sentence(c.next_alarm.label) || "Alarm"}${dayWord(c.next_alarm.next_ring)}`);
-    const running = c.timers.filter((t) => t.ends_at > now);
-    if (running.length === 1) {
-      const num = el("span", "num", countdown(running[0].ends_at - now));
-      num.dataset.endsAt = running[0].ends_at;  // ticks with the other countdowns
-      fact(num, sentence(running[0].label) || "Timer");
-    } else if (running.length) fact(String(running.length), "timers running");
+    const live = liveTimers(c.timers, now);
+    if (live.length === 1) {
+      const num = el("span", "num", countdown(timeLeft(live[0], now)));
+      if (!paused(live[0])) num.dataset.endsAt = live[0].ends_at;  // ticks with the other countdowns
+      fact(num, timerName(live[0]));
+    } else if (live.length) fact(String(live.length), "timers running");
     if (c.shopping) fact(String(c.shopping), c.shopping === 1 ? "thing on the shopping list" : "things on the shopping list");
 
     const top = el("div", "brief-top");
@@ -644,18 +667,59 @@ const renderers = {
   },
 };
 
-function timerRow(t) {
-  const row = el("div", "timer-row");
-  const num = el("span", "countdown", countdown(t.ends_at - Date.now() / 1000));
-  num.dataset.endsAt = t.ends_at;
-  const cancel = el("button", "pill", "Cancel");
-  cancel.type = "button";
-  cancel.addEventListener("click", () => {
-    row.classList.add("leaving");
-    send({ type: "timer_cancel", id: t.id });
-  });
-  row.append(num, el("span", "label", sentence(t.label) || "Timer"), cancel);
-  return row;
+// The arc is what's left of the timer, from 12 o'clock clockwise; it drains back toward 12 as time runs out
+function drain(arc, left) {
+  const total = Number(arc.dataset.duration);
+  arc.style.strokeDashoffset = total ? String(1 - Math.min(1, Math.max(0, left / total))) : "0";
+}
+
+function timerDial(t, big) {
+  const left = timeLeft(t, Date.now() / 1000);
+  const box = el("div", paused(t) ? "tmr paused" : "tmr");
+  const dial = el("div", "dial");
+  dial.innerHTML = '<svg viewBox="0 0 100 100" aria-hidden="true"><circle class="dial-track" cx="50" cy="50" r="46"/>'
+    + '<circle class="dial-arc" cx="50" cy="50" r="46" pathLength="1"/></svg>';  // fixed markup, never data
+  const arc = dial.querySelector(".dial-arc");
+  arc.dataset.duration = t.duration || 0;  // timers set before durations were kept show a full ring
+  if (!paused(t)) arc.dataset.arcEnd = t.ends_at;
+  drain(arc, left);
+  const face = el("div", "dial-face");
+  const time = el("span", left >= 3600 ? "dial-time long" : "dial-time", countdown(left));
+  if (!paused(t)) time.dataset.endsAt = t.ends_at;
+  face.append(time, el("span", "dial-name", timerName(t)));
+  dial.append(face);
+
+  const button = (cls, label, icon, onPress) => {
+    const b = el("button", `tmr-btn ${cls}`);
+    b.type = "button";
+    b.setAttribute("aria-label", `${label} the ${t.label ? `${t.label} timer` : timerName(t).toLowerCase()}`);
+    b.innerHTML = icon;  // fixed markup from ICONS
+    if (big) b.append(el("span", null, label));
+    b.addEventListener("click", onPress);
+    return b;
+  };
+  const actions = el("div", "tmr-actions");
+  actions.append(
+    paused(t) ? button("tmr-main", "Resume", ICONS.play, () => pauseTimer(t))
+              : button("tmr-main", "Pause", ICONS.pause, () => pauseTimer(t)),
+    button("tmr-stop", "Stop", ICONS.stop, () => {
+      box.classList.add("leaving");
+      send({ type: "timer_cancel", id: t.id });  // the brain's next ambient update drops it
+    }),
+  );
+  box.append(dial, actions);
+  return box;
+}
+
+// Pause and Resume show at once; the brain's next ambient update confirms it within half a second
+function pauseTimer(t) {
+  const now = Date.now() / 1000;
+  const changed = paused(t) ? { ...t, ends_at: now + t.paused_left, paused_left: null }
+                            : { ...t, paused_left: Math.max(0, t.ends_at - now) };
+  ambient = { ...ambient, timers: ambient.timers.map((x) => (x.id === t.id ? changed : x)) };
+  send({ type: paused(t) ? "timer_resume" : "timer_pause", id: t.id });
+  renderSheet();
+  renderStrip();
 }
 
 function alarmRow(a) {
@@ -693,7 +757,7 @@ function showRinging(r) {
   }
   if (r.kind === "timer") {  // a timer has no time of day to show, and nothing to snooze
     els.ringingTime.textContent = "Time’s up";
-    els.ringingLabel.textContent = r.label ? `${sentence(r.label)} timer` : "Timer";
+    els.ringingLabel.textContent = r.label ? `${sentence(r.label)} timer` : timerName(r);
   } else {
     els.ringingTime.replaceChildren(...alarmTime(r.time, "t").childNodes);
     els.ringingLabel.textContent = sentence(r.label) || "Alarm";
@@ -741,6 +805,8 @@ function toggleItem(row, item) {
 const svg = (body) => `<svg viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
 const ICONS = {
   timer: svg('<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9.5 2.5h5"/>'),
+  alarm: svg('<circle cx="12" cy="13" r="7.5"/><path d="M12 9.5V13l2.2 1.6M4.5 6l3-2.6M19.5 6l-3-2.6"/>'),
+  stop: svg('<rect x="6" y="6" width="12" height="12" rx="2"/>'),
   list: svg('<path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1.2 1.2L7 4.8M3.5 12l1.2 1.2L7 10.8M3.5 18l1.2 1.2L7 16.8"/>'),
   music: svg('<path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>'),
   volume: svg('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/>'),

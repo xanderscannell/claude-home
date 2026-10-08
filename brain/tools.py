@@ -23,7 +23,8 @@ import todoist
 
 DB_PATH = Path(os.environ.get("CLAUDE_HOME_DB", Path(__file__).parent / "home.db"))
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS timers (id INTEGER PRIMARY KEY, device TEXT, label TEXT, ends_at REAL);
+CREATE TABLE IF NOT EXISTS timers (id INTEGER PRIMARY KEY, device TEXT, label TEXT, ends_at REAL, duration REAL,
+                                   paused_left REAL);
 CREATE TABLE IF NOT EXISTS memory (fact TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS alarms (id INTEGER PRIMARY KEY, device TEXT, time TEXT, days TEXT, label TEXT,
                                    enabled INTEGER DEFAULT 1, next_ring REAL);
@@ -34,6 +35,17 @@ def q(sql: str, *args) -> list[tuple]:
     with closing(sqlite3.connect(DB_PATH)) as con, con:  # inner `with con` commits
         con.executescript(SCHEMA)
         return con.execute(sql, args).fetchall()
+
+
+def upgrade() -> None:
+    """Add columns that came after a database was made (CREATE TABLE IF NOT EXISTS leaves an old table alone)."""
+    have = {row[1] for row in q("PRAGMA table_info(timers)")}
+    for column in ("duration REAL", "paused_left REAL"):
+        if column.split()[0] not in have:
+            q(f"ALTER TABLE timers ADD COLUMN {column}")
+
+
+upgrade()
 
 
 # --- Storage -----------------------------------------------------------------------------------
@@ -81,26 +93,75 @@ def facts() -> list[str]:
     return [r[0] for r in q("SELECT fact FROM memory ORDER BY rowid")]
 
 
+# Words that only say how long something is ("five minute", "an hour and a half"), never what it's for
+LENGTH_WORDS = {"a", "an", "and", "half", "quarter", "one", "two", "three", "four", "five", "six", "seven", "eight",
+                "nine", "ten", "eleven", "twelve", "fifteen", "twenty", "thirty", "forty", "fifty",
+                "sixty", "ninety", "hour", "hours", "hr", "hrs", "minute", "minutes", "min", "mins", "second",
+                "seconds", "sec", "secs"}
+
+
+def timer_label(label: str) -> str:
+    """The name worth keeping: without a trailing "timer", and none at all when it only says how long the timer
+    is ('5 minute timer'): the timer is then named by its length, which can't disagree with it."""
+    label = label.strip()
+    if label.casefold().endswith("timer"):
+        label = label[:-5].strip()
+    words = label.casefold().replace("-", " ").split()
+    return "" if all(w.isdigit() or w in LENGTH_WORDS for w in words) else label
+
+
 def timer_add(device: str, label: str, seconds: float) -> None:
-    q("INSERT INTO timers (device, label, ends_at) VALUES (?, ?, ?)", device, label, time.time() + seconds)
-
-
-def timers(device: str) -> list[tuple[str, float]]:
-    """(label, seconds left) for a device's running timers, soonest first."""
-    now = time.time()
-    return [(label, ends - now) for label, ends in
-            q("SELECT label, ends_at FROM timers WHERE device = ? ORDER BY ends_at", device)]
+    q("INSERT INTO timers (device, label, ends_at, duration) VALUES (?, ?, ?, ?)",
+      device, timer_label(label), time.time() + seconds, seconds)
 
 
 def timer_list(device: str) -> list[dict]:
-    """A device's running timers for the screen, soonest first; the screen counts down from ends_at."""
-    return [{"id": i, "label": label, "ends_at": ends} for i, label, ends in
-            q("SELECT id, label, ends_at FROM timers WHERE device = ? ORDER BY ends_at", device)]
+    """A device's timers for the screen, oldest first (so they keep their places). A running one counts down to
+    ends_at; a paused one has paused_left seconds left. duration is how long it was set for (None: set before
+    that was kept)."""
+    return [{"id": i, "label": label, "ends_at": ends, "duration": duration, "paused_left": paused}
+            for i, label, ends, duration, paused in
+            q("SELECT id, label, ends_at, duration, paused_left FROM timers WHERE device = ? ORDER BY id", device)]
 
 
-def timer_cancel(device: str, label: str) -> int:
-    """Cancel timers whose label contains label (all of the device's timers if empty). Returns how many."""
-    return len(q("DELETE FROM timers WHERE device = ? AND instr(lower(label), lower(?)) RETURNING id", device, label))
+def timer_left(t: dict, now: float) -> float:
+    return t["ends_at"] - now if t["paused_left"] is None else t["paused_left"]
+
+
+def timer_pause(device: str, timer_id: int, now: float | None = None) -> bool:
+    """Pause a running timer (a Pause button). Returns whether one was paused."""
+    now = time.time() if now is None else now
+    return bool(q("UPDATE timers SET paused_left = max(0, ends_at - ?) WHERE device = ? AND id = ? "
+                  "AND paused_left IS NULL RETURNING id", now, device, timer_id))
+
+
+def timer_resume(device: str, timer_id: int, now: float | None = None) -> bool:
+    """Start a paused timer again from where it stopped. Returns whether one was resumed."""
+    now = time.time() if now is None else now
+    return bool(q("UPDATE timers SET ends_at = ? + paused_left, paused_left = NULL WHERE device = ? AND id = ? "
+                  "AND paused_left IS NOT NULL RETURNING id", now, device, timer_id))
+
+
+def timer_name(t: dict) -> str:
+    """What a timer is called: its label, else its length ('5 minute timer'), else just 'timer'."""
+    if t["label"]:
+        return t["label"]
+    return f"{spoken_duration(t['duration'], singular=True)} timer" if t.get("duration") else "timer"
+
+
+def timer_matches(t: dict, text: str) -> bool:
+    """Whether someone means this timer: by its label ('pasta', 'pasta timer') or its length ('5 minute timer').
+    Case-insensitive; empty text means every timer."""
+    text = text.strip().casefold()
+    names = [t["label"], f"{t['label']} timer"] if t["label"] else []
+    if t.get("duration"):
+        names.append(f"{spoken_duration(t['duration'], singular=True)} timer")
+    return not text or any(text in name.casefold() for name in names) or (not t["label"] and text == "timer")
+
+
+def timer_cancel(device: str, text: str) -> int:
+    """Cancel timers called text (see timer_matches; all of the device's timers if empty). Returns how many."""
+    return sum(timer_cancel_id(device, t["id"]) for t in timer_list(device) if timer_matches(t, text))
 
 
 def timer_cancel_id(device: str, timer_id: int) -> bool:
@@ -108,15 +169,24 @@ def timer_cancel_id(device: str, timer_id: int) -> bool:
     return bool(q("DELETE FROM timers WHERE device = ? AND id = ? RETURNING id", device, timer_id))
 
 
-def timers_due() -> list[tuple[str, str]]:
-    """Pop finished timers: [(device, label)]."""
-    return q("DELETE FROM timers WHERE ends_at <= ? RETURNING device, label", time.time())
+def timers_due() -> list[tuple[str, str, float | None]]:
+    """Pop finished timers: [(device, label, duration)]."""
+    return q("DELETE FROM timers WHERE ends_at <= ? AND paused_left IS NULL RETURNING device, label, duration",
+             time.time())
 
 
-def spoken_duration(seconds: float) -> str:
+def timer_text(t: dict, now: float) -> str:
+    """A timer as Claude says it: 'pasta, 4 minutes left', with ', paused' when it is."""
+    return (f"{timer_name(t)}, {spoken_duration(timer_left(t, now))} left"
+            + (", paused" if t["paused_left"] is not None else ""))
+
+
+def spoken_duration(seconds: float, singular: bool = False) -> str:
+    """'1 hour 2 minutes 5 seconds'; singular for before a noun: '5 minute timer'."""
     s = max(0, round(seconds))
     h, m, s = s // 3600, s % 3600 // 60, s % 60
-    parts = [f"{n} {unit}{'s' if n != 1 else ''}" for n, unit in ((h, "hour"), (m, "minute"), (s, "second")) if n]
+    parts = [f"{n} {unit}{'s' if n != 1 and not singular else ''}"
+             for n, unit in ((h, "hour"), (m, "minute"), (s, "second")) if n]
     return " ".join(parts) or "0 seconds"
 
 
@@ -304,7 +374,11 @@ STRINGS = {"type": "array", "items": {"type": "string"}}
 # --- Cards: what a screen shows after a tool runs, or when someone opens a sheet ------------------
 
 def timers_card(device: str) -> dict:
-    return {"kind": "timers", "timers": timer_list(device), "alarms": alarm_list(device)}
+    return {"kind": "timers", "timers": timer_list(device)}
+
+
+def alarms_card(device: str) -> dict:
+    return {"kind": "alarms", "alarms": alarm_list(device)}
 
 
 def weather_card(w: dict) -> dict:
@@ -389,7 +463,7 @@ def briefing_card(device: str, weather: dict | None, shopping: int | None, now: 
     shopping is how many things are on the list (None: Todoist couldn't be reached)."""
     now = time.time() if now is None else now
     return {"kind": "briefing", "greeting": greeting(now), "weather": weather, "events": agenda.upcoming(now, 1),
-            "next_alarm": next_alarm(device), "timers": [t for t in timer_list(device) if t["ends_at"] > now],
+            "next_alarm": next_alarm(device), "timers": [t for t in timer_list(device) if timer_left(t, now) > 0],
             "shopping": shopping}
 
 
@@ -408,8 +482,7 @@ def briefing_text(card: dict, now: float) -> str:
         when = day_name(datetime.date.fromtimestamp(a["next_ring"]), today.date()).lower()
         parts.append(f"Next alarm: {spoken_time(a['time'])} {when}" + (f" ({a['label']})." if a["label"] else "."))
     if card["timers"]:
-        parts.append("Timers: " + "; ".join(f"{t['label'] or 'unnamed'}, {spoken_duration(t['ends_at'] - now)} left"
-                                            for t in card["timers"]) + ".")
+        parts.append("Timers: " + "; ".join(timer_text(t, now) for t in card["timers"]) + ".")
     n = card["shopping"]
     parts.append("The shopping list isn't available right now." if n is None else
                  f"The shopping list has {n} item{'s' if n != 1 else ''}." if n else "The shopping list is empty.")
@@ -444,25 +517,40 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spo
 
     @tool("set_timer", "Start a countdown timer that rings on this speaker.",
           _schema(seconds={"type": "integer", "minimum": 1},
-                  label={"type": "string", "description": "short name, e.g. 'pasta'; empty if none given"}))
+                  label={"type": "string", "description": "what it's for, e.g. 'pasta', only if the person said; "
+                         "otherwise empty (the screen names it by its length)"}))
     async def set_timer(a):
         timer_add(device, a["label"], a["seconds"])
         await on_card(timers_card(device))
         return _text(f"Timer set for {spoken_duration(a['seconds'])}.")
 
-    @tool("list_timers", "List this speaker's running timers and the time left on each.", _schema())
+    @tool("list_timers", "List this speaker's timers and the time left on each.", _schema())
     async def list_timers(a):
-        running = timers(device)
+        now = time.time()
         await on_card(timers_card(device))
-        return _text("; ".join(f"{label or 'unnamed'}: {spoken_duration(left)} left" for label, left in running)
-                     or "No timers running.")
+        return _text("; ".join(timer_text(t, now) for t in timer_list(device)) or "No timers running.")
 
-    @tool("cancel_timer", "Cancel timers whose label contains the given text, or all timers if it is empty.",
-          _schema(label={"type": "string"}))
+    timer_called = {"type": "string", "description": "its name, as list_timers gives it (a timer with no label is "
+                    "called by its length, e.g. '5 minute timer'); empty for all of them"}
+
+    @tool("cancel_timer", "Cancel (stop) timers by name.", _schema(name=timer_called))
     async def cancel_timer(a):
-        n = timer_cancel(device, a["label"])
+        n = timer_cancel(device, a["name"])
         await on_card(timers_card(device))
         return _text(f"Cancelled {n} timer(s).")
+
+    @tool("pause_timer", "Pause running timers by name; they keep their time left until resumed.",
+          _schema(name=timer_called))
+    async def pause_timer(a):
+        n = sum(timer_pause(device, t["id"]) for t in timer_list(device) if timer_matches(t, a["name"]))
+        await on_card(timers_card(device))
+        return _text(f"Paused {n} timer(s).")
+
+    @tool("resume_timer", "Start paused timers again by name, from where they stopped.", _schema(name=timer_called))
+    async def resume_timer(a):
+        n = sum(timer_resume(device, t["id"]) for t in timer_list(device) if timer_matches(t, a["name"]))
+        await on_card(timers_card(device))
+        return _text(f"Resumed {n} timer(s).")
 
     @tool("set_alarm", "Set an alarm that rings on this speaker at a time of day, once or repeating.",
           _schema(time={"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$",
@@ -474,13 +562,13 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spo
         hhmm = "%02d:%02d" % tuple(int(x) for x in a["time"].split(":"))
         days = day_digits(a["days"])
         alarm_add(device, hhmm, days, a["label"])
-        await on_card(timers_card(device))
+        await on_card(alarms_card(device))
         return _text(f"Alarm set for {spoken_time(hhmm)} {spoken_days(days)}.")
 
     @tool("list_alarms", "List this speaker's alarms.", _schema())
     async def list_alarms(a):
         alarms = alarm_list(device)
-        await on_card(timers_card(device))
+        await on_card(alarms_card(device))
         return _text("; ".join(f"{spoken_time(x['time'])} {spoken_days(x['days'])}"
                                + (f" ({x['label']})" if x["label"] else "") + ("" if x["enabled"] else ", off")
                                for x in alarms) or "No alarms set.")
@@ -489,7 +577,7 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spo
           "all alarms if empty.", _schema(match={"type": "string"}))
     async def cancel_alarm(a):
         n = alarm_cancel(device, a["match"])
-        await on_card(timers_card(device))
+        await on_card(alarms_card(device))
         return _text(f"Deleted {n} alarm(s).")
 
     @tool("remember", "Save a fact about the household to remember in future conversations.",
@@ -662,7 +750,7 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spo
         level = await on_volume(a["level"], a["relative"])
         return _text("The speaker isn't connected." if level is None else f"Volume is now {level}.")
 
-    return [set_timer, list_timers, cancel_timer, set_alarm, list_alarms, cancel_alarm, remember_tool, forget_tool,
+    return [set_timer, list_timers, cancel_timer, pause_timer, resume_timer, set_alarm, list_alarms, cancel_alarm, remember_tool, forget_tool,
             add_shopping, remove_shopping, get_shopping, clear_shopping, get_weather, show_on_screen, get_agenda,
             morning_briefing, show_recipe, recipe_step, play_music, pause_music, resume_music, skip_track,
             previous_track, whats_playing, set_volume]

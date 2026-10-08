@@ -118,7 +118,7 @@ than the Pi 5 build, with the brain on the PC:
   calendar event, and the song playing.
 - **Conversation:** listening, thinking, and speaking states, what you said, and Claude's reply as
   it's spoken, with a Stop button. Tap the mic to talk without the wake word.
-- **Screens Claude or a tap can open:** weather, timers and alarms, shopping list (the Todoist
+- **Screens Claude or a tap can open:** weather, timers (a draining dial each, with Pause and Stop), alarms, shopping list (the Todoist
   project, by category; tap to check off), calendar, morning briefing, recipe steps, music with controls, volume, and anything else
   Claude wants to show.
 - **Alarms and timers** that ring until stopped (alarms can snooze), by touch or by voice: just say
