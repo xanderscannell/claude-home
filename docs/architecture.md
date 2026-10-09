@@ -187,6 +187,14 @@ shopping count), `recipe {title, ingredients, steps, step}` (step -1 is the ingr
 `text {title, lines}` (Claude's `show_on_screen`), `volume {level}`, and `music` (no data; the
 screen shows what it knows is playing).
 
+Home control (in `fake_brain.py` only so far; the brain doesn't send or answer these yet):
+`house {lights: {on, total, rooms}, climate: {temp, target, action}, media: {playing, total}, rooms, automations: {on, total}}`
+is the tile page, and `lights {rooms}` lists each room's `{name, lights}`, a light being
+`{entity, name, on, brightness}` (brightness 1-100, or null for a light that only switches).
+The screen sends `open {sheet}` for `house`, `lights`, and the other tiles' pages,
+`light {entity, on, brightness?}` for a tap or a drag, and `lights_off` for All off; the reply is
+the updated `lights` card.
+
 Display -> brain:
 
 | Message | Effect |

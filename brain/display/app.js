@@ -481,8 +481,50 @@ const renderers = {
                                                       shopList(g.items)])];
   },
 
+  // Home control: a tile per kind of thing in the house, each showing its state at a glance and opening its page.
+  // Lights is the tall one, and while any light is on it is lit itself.
+  house: (c) => {
+    const { lights, climate, media, rooms, automations } = c;
+    const grid = el("div", "house");
+    grid.append(
+      tile("lights", "Lights", ICONS.bulb, lights.on ? String(lights.on) : "Off", lights.on ? "on" : "",
+           lights.on ? lights.rooms.join(", ") : `All ${lights.total} lights`, lights.on > 0),
+      tile("climate", "Climate", ICONS.thermometer, `${climate.temp}°`, "",
+           climate.action === "idle" ? `Set to ${climate.target}°` : `${sentence(climate.action)} to ${climate.target}°`),
+      tile("media", "Speakers & TVs", ICONS.tv, media.playing.length ? String(media.playing.length) : "Off",
+           media.playing.length ? "playing" : "", media.playing.length ? media.playing.join(", ") : "Nothing playing"),
+      tile("rooms", "Rooms", ICONS.house, String(rooms.length), "", rooms.join(", ")),
+      tile("automations", "Automations", ICONS.automation, String(automations.on), "on",
+           automations.on === automations.total ? "All running" : `${automations.total - automations.on} off`),
+    );
+    return ["Home", [grid]];
+  },
+
+  // Lights by room, rooms scrolling sideways. A light that's on fills with the accent from the bottom, as high as
+  // it is bright: tap to switch it, drag up or down to dim it (a drag to the bottom turns it off).
+  lights: (c) => {
+    const rooms = el("div", "lights");
+    for (const r of c.rooms) {
+      const room = el("section", "lt-room"), grid = el("div", "lt-grid");
+      grid.append(...r.lights.map(lightTile));
+      room.append(el("h3", "lt-room-name", r.name), grid);
+      rooms.append(room);
+    }
+    const all = c.rooms.flatMap((r) => r.lights);
+    if (!all.some((l) => l.on)) return ["Lights", [rooms]];
+    const off = el("button", "pill lights-off", "All off");
+    off.type = "button";
+    off.addEventListener("click", () => {
+      for (const l of all) l.on = false;  // show it now; the brain's card confirms
+      renderSheet();
+      send({ type: "lights_off" });
+    });
+    return ["Lights", [rooms, off]];
+  },
+
   menu: () => {
     const entries = [
+      ["Home", ICONS.house, "house"],
       ["Timers", ICONS.timer, "timers"],
       ["Alarms", ICONS.alarm, "alarms"],
       ["Shopping list", ICONS.list, "shopping"],
@@ -683,6 +725,76 @@ const renderers = {
   },
 };
 
+// A home control tile: what it is up top, its state in the far-read type at the bottom, a detail line under that
+function tile(sheet, label, icon, num, unit, detail, lit = false) {
+  const b = el("button", `tile tile-${sheet}${lit ? " lit" : ""}`);
+  b.type = "button";
+  const head = el("span", "tile-head"), glyph = el("span", "tile-icon"), state = el("span", "tile-state");
+  glyph.innerHTML = icon;  // fixed markup from ICONS
+  head.append(glyph, el("span", null, label));
+  state.append(el("span", /\d/.test(num) ? "tile-num" : "tile-num word", num));  // "Off" stays quiet
+  if (unit) state.append(el("span", "tile-unit", unit));
+  b.append(head, state, el("span", "tile-detail", detail));
+  b.addEventListener("click", () => send({ type: "open", sheet }));
+  return b;
+}
+
+// One light. The face is drawn twice, frost on the tile and night on the accent fill clipped to the brightness,
+// so the name and level stay legible wherever the edge of the light falls across them.
+const DRAG_START_PX = 8;
+
+function lightTile(l) {
+  const dims = l.brightness !== null && l.brightness !== undefined;
+  const b = el("button", "lt");
+  b.type = "button";
+  b.setAttribute("role", "switch");
+  b.setAttribute("aria-label", l.name);
+  const faces = [el("span", "lt-face"), el("span", "lt-face lt-lit")];
+  faces[1].setAttribute("aria-hidden", "true");
+  for (const f of faces) f.append(el("span", "lt-name", l.name), el("span", "lt-level"));
+  b.append(...faces);
+  const paint = () => {
+    b.style.setProperty("--b", `${l.on ? (dims ? l.brightness : 100) : 0}%`);
+    b.setAttribute("aria-checked", String(l.on));
+    for (const f of faces) f.lastChild.textContent = l.on ? (dims ? `${l.brightness}%` : "On") : "Off";
+  };
+  paint();
+
+  let drag = null;  // {y, from, moved} while a finger is down on a dimmer
+  let dragged = false;  // the last touch was a drag, so the click (if one follows) mustn't switch the light
+  b.addEventListener("pointerdown", (e) => {
+    dragged = false;  // a drag on a touchscreen usually has no click after it to clear this
+    if (!dims) return;
+    drag = { y: e.clientY, from: l.on ? l.brightness : 0, moved: false };
+    b.setPointerCapture(e.pointerId);
+  });
+  b.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const dy = drag.y - e.clientY;
+    if (!drag.moved && Math.abs(dy) < DRAG_START_PX) return;
+    drag.moved = true;
+    const level = Math.round(Math.min(100, Math.max(0, drag.from + (dy / b.clientHeight) * 100)));
+    l.on = level > 0;
+    // Dragged off, it comes back on at the level it had before the drag (not one passed on the way down)
+    if (level > 0 || drag.from > 0) l.brightness = level || drag.from;
+    paint();
+  });
+  const lift = () => {
+    if (drag && drag.moved) send({ type: "light", entity: l.entity, on: l.on, ...(l.on && { brightness: l.brightness }) });
+    dragged = Boolean(drag && drag.moved);
+    drag = null;
+  };
+  b.addEventListener("pointerup", lift);
+  b.addEventListener("pointercancel", lift);
+  b.addEventListener("click", () => {
+    if (dragged) return;  // the drag already set it
+    l.on = !l.on;
+    paint();
+    send({ type: "light", entity: l.entity, on: l.on });
+  });
+  return b;
+}
+
 // The arc is what's left of the timer, from 12 o'clock clockwise; it drains back toward 12 as time runs out
 function drain(arc, left) {
   const total = Number(arc.dataset.duration);
@@ -831,6 +943,11 @@ const ICONS = {
   play: svg('<path d="M8 5v14l11-7z"/>'),
   pause: svg('<path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/>'),
   next: svg('<path d="M15.5 5H18v14h-2.5zM5 5.5v13l9.5-6.5z"/>'),
+  house: svg('<path d="M3.5 11L12 4l8.5 7"/><path d="M6 9.5V20h12V9.5"/><path d="M10 20v-5h4v5"/>'),
+  bulb: svg('<path d="M9.5 18h5M10.5 21h3"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.2h5c0-.9.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/>'),
+  thermometer: svg('<path d="M14 14.8V5.5a2 2 0 0 0-4 0v9.3a4 4 0 1 0 4 0z"/><path d="M12 11v6"/>'),
+  tv: svg('<rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8.5 21h7"/>'),
+  automation: svg('<path d="M17 2.5l3 3-3 3"/><path d="M4 11.5v-2a4 4 0 0 1 4-4h12M7 21.5l-3-3 3-3"/><path d="M20 12.5v2a4 4 0 0 1-4 4H4"/>'),
 };
 
 // --- Music ------------------------------------------------------------------------------------

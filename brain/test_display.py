@@ -529,18 +529,18 @@ def test_menu(b):
     d = Display(b)
     d.tap("#menu")
     assert d.visible("#sheet") and d.text("#sheet-title") == "Menu"
-    assert d.page.locator(".menu-label").all_inner_texts() == ["Timers", "Alarms", "Shopping list", "Music", "Volume"]
+    assert d.page.locator(".menu-label").all_inner_texts() == ["Home", "Timers", "Alarms", "Shopping list", "Music", "Volume"]
     overhang = d.page.evaluate("""() => {  // both measured at once: the sheet may still be sliding up
       const rows = document.querySelectorAll(".menu-row"), body = document.querySelector(".sheet-body");
       return rows[rows.length - 1].getBoundingClientRect().bottom - body.getBoundingClientRect().bottom; }""")
     assert overhang <= 0, f"every menu row should fit; the last hangs {overhang}px below the sheet"
     d.shot("menu", settle=400)
-    for i in range(3):
+    for i in range(4):
         d.page.locator(".menu-row").nth(i).tap()
     d.page.wait_for_timeout(50)
-    assert [{"type": "open", "sheet": s} for s in ("timers", "alarms", "shopping")] == [
+    assert [{"type": "open", "sheet": s} for s in ("house", "timers", "alarms", "shopping")] == [
         m for m in d.sent if m.get("type") == "open"], d.sent
-    d.page.locator(".menu-row").nth(3).tap()  # Music: opens straight away, the page knows what's playing
+    d.page.locator(".menu-row").nth(4).tap()  # Music: opens straight away, the page knows what's playing
     d.page.wait_for_timeout(50)
     assert d.text("#sheet-title") == "Music" and d.text(".sheet-body .quiet") == "Nothing is playing."
     d.close()
@@ -552,7 +552,7 @@ def test_volume(b):
 
     # From the menu, before the speaker has reported a level: say so
     d.tap("#menu")
-    d.page.locator(".menu-row").nth(4).tap()
+    d.page.locator(".menu-row").nth(5).tap()
     d.page.wait_for_timeout(50)
     assert d.text("#sheet-title") == "Volume" and d.text(".sheet-body .quiet") == "The speaker isn't connected."
     d.shot("volume-unknown", settle=400)
@@ -592,6 +592,90 @@ def test_volume(b):
     d.close()
 
 
+HOUSE = {"kind": "house", "lights": {"on": 3, "total": 11, "rooms": ["Kitchen", "Living room"]},
+         "climate": {"temp": 68, "target": 70, "action": "heating"},
+         "media": {"playing": ["Living room TV"], "total": 4},
+         "rooms": ["Kitchen", "Living room", "Porch"], "automations": {"on": 12, "total": 14}}
+
+
+def test_home_control(b):
+    d = Display(b)
+    opened = lambda: [m["sheet"] for m in d.sent if m.get("type") == "open"]  # noqa: E731
+    lights_sent = lambda: [m for m in d.sent if m.get("type") in ("light", "lights_off")]  # noqa: E731
+
+    # Home: a tile each, its state at a glance; Lights is lit while any light is on
+    d.push({"type": "card", "card": HOUSE})
+    assert d.text("#sheet-title") == "Home"
+    assert d.page.locator(".tile-num").all_inner_texts() == ["3", "68°", "1", "3", "12"]
+    assert d.page.locator(".tile-detail").all_inner_texts() == [
+        "Kitchen, Living room", "Heating to 70°", "Living room TV", "Kitchen, Living room, Porch", "2 off"]
+    assert d.page.locator(".tile.lit").count() == 1 and d.page.locator(".tile-lights.lit").count() == 1
+    for tile in d.page.locator(".tile").all():
+        assert big(tile.bounding_box(), w=200, h=160), tile.bounding_box()
+    d.shot("house", settle=400)
+    d.tap(".tile-lights")
+    d.tap(".tile-rooms")
+    assert opened() == ["lights", "rooms"]
+    off = dict(HOUSE, lights={"on": 0, "total": 11, "rooms": []}, media={"playing": [], "total": 4},
+               climate={"temp": 66, "target": 66, "action": "idle"})
+    d.push({"type": "card", "card": off})
+    assert not d.page.locator(".tile.lit").count()
+    assert d.page.locator(".tile-num").all_inner_texts()[:3] == ["Off", "66°", "Off"]
+    assert d.page.locator(".tile-detail").all_inner_texts()[:3] == ["All 11 lights", "Set to 66°", "Nothing playing"]
+
+    # Lights: by room; each tile filled as high as it's bright. Tap switches, a drag dims, All off clears them.
+    lamp = {"entity": "light.lamp", "name": "Reading lamp", "on": True, "brightness": 40}
+    floor = {"entity": "light.floor", "name": "Floor lamp", "on": False, "brightness": 70}
+    porch = {"entity": "light.porch", "name": "Porch light", "on": False, "brightness": None}
+    d.push({"type": "card", "card": {"kind": "lights", "rooms": [{"name": "Living room", "lights": [lamp, floor]},
+                                                                   {"name": "Porch", "lights": [porch]}]}})
+    assert d.text("#sheet-title") == "Lights"
+    assert d.page.locator(".lt-room-name").all_inner_texts() == ["Living room", "Porch"]
+    tile = lambda name: d.page.locator(f'.lt[aria-label="{name}"]')  # noqa: E731
+    level = lambda name: tile(name).locator(".lt-level").first.inner_text()  # noqa: E731
+    fill = lambda name: tile(name).evaluate("t => t.style.getPropertyValue('--b')")  # noqa: E731
+    assert (level("Reading lamp"), fill("Reading lamp")) == ("40%", "40%")
+    assert (level("Floor lamp"), fill("Floor lamp")) == ("Off", "0%")
+    for name in ("Reading lamp", "Floor lamp", "Porch light"):
+        assert big(tile(name).bounding_box(), w=140, h=140), name
+    porch_box, floor_box = tile("Porch light").bounding_box(), tile("Floor lamp").bounding_box()
+    assert porch_box["height"] > 2 * floor_box["height"], "a room's only light should be one tall tile"
+    d.shot("lights", settle=400)
+
+    tile("Floor lamp").tap()
+    tile("Porch light").tap()
+    d.page.wait_for_timeout(50)
+    assert (level("Floor lamp"), level("Porch light"), fill("Porch light")) == ("70%", "On", "100%")
+    assert lights_sent() == [{"type": "light", "entity": "light.floor", "on": True},
+                             {"type": "light", "entity": "light.porch", "on": True}]
+
+    box = tile("Reading lamp").bounding_box()
+    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] - 20
+    d.page.mouse.move(x, y)
+    d.page.mouse.down()
+    d.page.mouse.move(x, y - box["height"] * .3, steps=5)  # up 30% of the tile
+    d.page.mouse.up()
+    d.page.wait_for_timeout(50)
+    assert level("Reading lamp") == "70%", level("Reading lamp")
+    assert lights_sent()[-1] == {"type": "light", "entity": "light.lamp", "on": True, "brightness": 70}, d.sent
+    assert len(lights_sent()) == 3, "the drag's own click shouldn't switch the light too"
+    d.page.mouse.move(x, y - box["height"] * .3)
+    d.page.mouse.down()
+    d.page.mouse.move(x, y + box["height"], steps=5)  # all the way down: off
+    d.page.mouse.up()
+    d.page.wait_for_timeout(50)
+    assert (level("Reading lamp"), lights_sent()[-1]["on"]) == ("Off", False)
+    tile("Reading lamp").tap()
+    d.page.wait_for_timeout(50)
+    assert level("Reading lamp") == "70%", "back on at the level it had before the drag"
+
+    assert d.visible(".lights-off") and big(d.page.locator(".lights-off").bounding_box())
+    d.tap(".lights-off")
+    assert lights_sent()[-1] == {"type": "lights_off"}
+    assert not d.page.locator('.lt[aria-checked="true"]').count() and not d.visible(".lights-off")
+    d.close()
+
+
 def test_navigation_every_screen_gets_home(b):
     """From every screen there is a visible way home, and every sheet goes home on its own when left alone."""
     screens = {
@@ -604,6 +688,8 @@ def test_navigation_every_screen_gets_home(b):
         "agenda": {"kind": "agenda", "events": []},
         "briefing": briefing()["card"],
         "music": {"kind": "music"},
+        "house": HOUSE,
+        "lights": {"kind": "lights", "rooms": []},
     }
     d = Display(b)
     home = lambda: not d.visible("#sheet") and not d.visible("#overlay")  # noqa: E731
