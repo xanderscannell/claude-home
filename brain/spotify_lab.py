@@ -92,7 +92,8 @@ def parse(text: str) -> dict:
     # Logged in: librespot's last word on its access point session (on 4070, or 443 after "Try another
     # access point", so the sockets can't tell). Needs the info log, i.e. not the "quiet" variant.
     s["ap"] = any(p.endswith(":4070") for p in s["peers"])
-    s["login"] = s["session"] == "Authenticated as"
+    # Neither line in the log (it rotated them out; on 2026-10-09 the Pi kept about 10 hours): trust the socket.
+    s["login"] = s["session"] == "Authenticated as" or (not s["session"] and s["ap"])
     return s
 
 
@@ -229,6 +230,8 @@ def selftest():
     assert first_broken({**closed, "listed": True}) == "login" and closed["errors"] == 6
     fallback = parse("active active\npid 5\nsock 34.158.255.62:443\nsession Authenticated as\n")  # AP on 443
     assert fallback["login"] and not fallback["ap"]
+    rotated = parse("active active\npid 5\nsock 34.158.255.62:4070\n")  # login line gone from the log, AP still up
+    assert rotated["login"] and not parse("active active\npid 5\nsock [2600:1901:1:3b2::]:443\n")["login"]
     print("selftest ok")
 
 
