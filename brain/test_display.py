@@ -275,6 +275,10 @@ def test_slideshow_and_accent(b):
     r, g, bl = (int(x) for x in cool[4:-1].split(","))
     assert bl > r, f"a lake should give a cool accent, got {cool}"
     d.shot("photo-lake", settle=2300)
+    # Swiped aside, the dashboard is drawn as a sheet with the photo showing now as the one thing on it
+    swipe(d, 500, frm=700, y=200, release=False)
+    assert "lake.jpg" in d.page.get_attribute("#dash-photo", "style")
+    d.page.mouse.up()
     d.close()
 
 
@@ -789,15 +793,20 @@ def test_swiping_between_sheets(b):
     d.push(ambient([{"id": 1, "label": "pasta", "ends_at": START.timestamp() + 300, "duration": 600,
                      "paused_left": None}], weather=None))
 
-    # Partway: the dashboard and Home side by side, both 250px along; Home just its title (it's never been opened)
+    # Partway: the dashboard, drawn as a sheet (its title, the room's photo in a sheet's margins), and Home side by
+    # side, both 250px along; Home just its title (it's never been opened)
     swipe(d, 450, frm=700, y=200, release=False)
     assert d.visible("#sheet-under") and d.text("#under-title") == "Home" and not d.text("#under-body")
-    assert 530 <= left("#sheet-under") <= 570 and -270 <= left("#dashboard") <= -230, (left("#sheet-under"), left("#dashboard"))
+    assert d.visible("#sheet-dash") and d.text("#sheet-dash .sheet-title") == "Dashboard"
+    assert 530 <= left("#sheet-under") <= 570 and -270 <= left("#sheet-dash") <= -230, (left("#sheet-under"), left("#sheet-dash"))
+    photo = d.page.locator("#dash-photo").bounding_box()
+    assert round(photo["x"] - left("#sheet-dash")) == 36 and round(photo["width"]) == 800 - 2 * 36, photo
     assert not d.visible("#swipe-dim"), "side by side, nothing is covered, so nothing dims"
     d.page.mouse.up()
     d.page.clock.run_for(300)
     d.page.wait_for_timeout(300)
     assert title() == "Home" and opened() == ["house"] and left("#sheet") == 0 and not d.visible("#swipe-dim")
+    assert not d.visible("#sheet-dash")
     d.push({"type": "card", "card": HOUSE})
     assert d.page.locator("#sheet-body .tile").count() == 5
     assert d.page.locator("#sheet-edge").is_hidden(), "a row page has no back swipe"
@@ -818,6 +827,7 @@ def test_swiping_between_sheets(b):
         swipe(d, 500, frm=100, y=200)
         seen.append(title())
     assert seen == ["Music", "Shopping list", "Alarms", "Timers", "Home", "dashboard", "dashboard"], seen
+    assert not d.visible("#sheet-dash") and d.visible("#home"), "landed: the real dashboard again"
 
     # A page seen before shows its last card while it's swiped in
     swipe(d, 300, frm=700, y=200)

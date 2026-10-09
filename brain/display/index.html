@@ -8,7 +8,6 @@
   <script type="module" src="app.js"></script>
 </head>
 <body>
-  <div id="dashboard" class="dashboard">
   <div class="backdrop" aria-hidden="true"></div>
   <div id="photo-a" class="photo" aria-hidden="true"></div>
   <div id="photo-b" class="photo" aria-hidden="true"></div>
@@ -28,7 +27,12 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
     </button>
   </main>
-  </div>
+
+  <!-- The dashboard drawn as a sheet, while it's swiped: its title and the room's photo, in a sheet's margins -->
+  <section id="sheet-dash" class="sheet under" hidden aria-hidden="true">
+    <h2 class="sheet-title">Dashboard</h2>
+    <div class="sheet-body"><div id="dash-photo" class="dash-photo"></div></div>
+  </section>
 
   <section id="night" class="night" aria-label="Night clock">
     <time id="night-time" class="night-time"></time>

@@ -214,7 +214,14 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 .dragging { transition: none !important; }
 .settling { transition: transform .22s ease-out, opacity .22s ease-out !important; }
 .under { transform: none; pointer-events: none; }
-.dashboard { position: fixed; inset: 0; }  /* the room and its clock, moved as one when swiped aside */
+/* The dashboard as a sheet while it's swiped: the room's photo the one thing on it, in the tiles' corners; with no
+   photos, the backdrop's gradient */
+.dash-photo {
+  height: 100%; border-radius: 14px;
+  background: center / cover no-repeat,
+    radial-gradient(120% 90% at 85% 10%, #1f3347 0%, transparent 60%),
+    radial-gradient(90% 80% at 10% 100%, #0d1823 0%, transparent 70%), #0f1a26;
+}
 .swipe-dim { position: fixed; inset: 0; background: rgba(0, 0, 0, .45); pointer-events: none; }
 /* Sideways on the dashboard and the row's pages is a swipe between them, so the browser only takes up and down */
 .home, .sheet-body { touch-action: pan-y; }

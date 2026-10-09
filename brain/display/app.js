@@ -11,7 +11,7 @@ const els = {
   overlay: $("overlay"), heard: $("heard"), reply: $("reply"), stop: $("stop"), close: $("close-overlay"),
   sheet: $("sheet"), sheetTitle: $("sheet-title"), sheetBody: $("sheet-body"), sheetClose: $("sheet-close"),
   edge: $("sheet-edge"), under: $("sheet-under"), underTitle: $("under-title"), underBody: $("under-body"),
-  swipeDim: $("swipe-dim"), dashboard: $("dashboard"),
+  swipeDim: $("swipe-dim"), dash: $("sheet-dash"), dashPhoto: $("dash-photo"),
   ringing: $("ringing"), ringingTime: $("ringing-time"), ringingLabel: $("ringing-label"),
   ringingStop: $("ringing-stop"), snooze: $("snooze"),
   offline: $("offline"), nightTime: $("night-time"),
@@ -465,7 +465,7 @@ function rowIndex() {
 
 // --- Swiping ----------------------------------------------------------------------------------
 // Along the row, pages sit side by side: the page you're on and the next (or previous) one move together with the
-// finger, like a strip of film. Back from a subpage is different, a page lifted off the one under it: it slides off
+// finger, like a strip of film; the dashboard joins them drawn as a sheet too (showDash). Back from a subpage is different, a page lifted off the one under it: it slides off
 // to the right over the page it opened over, which drifts a fifth of the way in and brightens as it's uncovered.
 // Either way, let go past a third of the screen (or flick) and the move happens; short of that it springs back. Past
 // the end of the row the page gives a little and springs back.
@@ -500,12 +500,21 @@ function showUnder(card) {
   els.under.hidden = false;
 }
 
+// The dashboard as a sheet while it's swiped (its title, and the photo showing now as the one thing on it)
+function showDash() {
+  els.dashPhoto.style.backgroundImage = frontLayer.classList.contains("shown") ? frontLayer.style.backgroundImage : "";
+  els.dash.hidden = false;
+}
+
 const layers = () => [slide.page, slide.next, slide.mode === "over" ? els.swipeDim : null].filter(Boolean);
 
 // Start moving: which pages move, and what landing does. False: nothing to swipe to.
 function beginSlide(back) {
   const i = gesture.row;
-  const side = (next, land) => ({ mode: "side", page: i ? els.sheet : els.dashboard, next, ahead: back ? 1 : -1, land });
+  const side = (next, land) => {
+    if (!i || next === els.dash) showDash();
+    return { mode: "side", page: i ? els.sheet : els.dash, next, ahead: back ? 1 : -1, land };
+  };
   if (i === undefined) {  // a subpage's edge: back to the page it opened over
     showUnder(sheetStack.at(-1));
     slide = { mode: "over", page: els.sheet, next: els.under, ahead: 1, land: goBack };
@@ -513,7 +522,7 @@ function beginSlide(back) {
     els.swipeDim.style.zIndex = "2";
     els.swipeDim.hidden = false;
   } else if (back && i === 1) {
-    slide = side(els.dashboard, closeSheet);
+    slide = side(els.dash, closeSheet);
   } else if (back && i >= 2) {
     showUnder(rowCard(ROW[i - 2].kind));
     slide = side(els.under, () => landRow(ROW[i - 2].kind));
@@ -537,7 +546,7 @@ function endSlide() {
   for (const l of layers()) l.style.transform = l.style.zIndex = "";
   void els.sheet.offsetWidth;  // apply that before transitions come back on, or a page would slide in from the side
   for (const l of layers()) l.classList.remove("dragging", "settling");
-  els.swipeDim.hidden = els.under.hidden = true;
+  els.swipeDim.hidden = els.under.hidden = els.dash.hidden = true;
   els.underBody.replaceChildren();
   slide = null;
 }
