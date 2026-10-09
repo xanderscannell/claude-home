@@ -5,8 +5,9 @@ Home Assistant. It replaces a Google Home / Nest Hub.
 
 **Status:** Phase 1 works on a Raspberry Pi 3 with a USB headset, talking to a brain on a
 Windows PC. Most of Phase 3's display runs on the same Pi's 5" touchscreen (see
-[Phase 3 progress](#phase-3-progress)). Phase 2 has started: Claude controls Home Assistant through its MCP Server. See
-[docs/architecture.md](docs/architecture.md) for the system design.
+[Phase 3 progress](#phase-3-progress)). Phase 2 has started: Claude controls Home Assistant through its MCP Server
+(see [Phase 2 progress](#phase-2-progress)). See [docs/architecture.md](docs/architecture.md) for the system design
+and [docs/pi.md](docs/pi.md) for working on the Pi.
 
 ## Running it
 
@@ -47,12 +48,17 @@ Connect speaker; the brain controls it through the Spotify Web API. Open
 | `TODOIST_TOKEN`, `TODOIST_SHOPPING_PROJECT` | A Todoist API token (Settings > Integrations > Developer), and the project that is the shopping list (default `Shopping List`) |
 | `HA_URL`, `HA_TOKEN` | Home Assistant's address (e.g. `http://homeassistant.local:8123`, with the Model Context Protocol Server integration added) and a long-lived access token. Claude sees the entities exposed to Assist. |
 | `CLAUDE_HOME_DB` | Where the SQLite file lives (default `brain/home.db`) |
+| `CLAUDE_HOME_LOG` | Where the turn log goes (default `brain/turns.jsonl`); `ha_actions.jsonl` is written beside it |
 
 On the Pi, the satellite's unit file sets `BRAIN_URL`, `DEVICE`, `AUDIO_IN`, and `AUDIO_OUT`;
 `MIXER_CARD` (default `2`) and `WAKE_THRESHOLD` (default `0.5`) are optional.
 
+**Logs** (git-ignored, in `brain/`): `turns.jsonl` has every turn's transcript, reply, and stage timings;
+`ha_actions.jsonl` has every Home Assistant action Claude took and what it heard first.
+
 **Tests** (from `brain/`): `uv run python test_brain.py`, `test_server.py`, and `test_display.py`
-(Playwright, 800x480 with touch); from `satellite/`: `uv run python test_satellite.py`.
+(Playwright, 800x480 with touch); from `satellite/`: `uv run python test_satellite.py`. They use canned
+Claude replies (`CLAUDE_HOME_FAKE_LLM=1`) and a temporary database.
 
 **Display work without the Pi or Claude** (from `brain/`): `uv run python fake_brain.py`, then open
 http://localhost:8001/ at 800x480. It serves the real `display/` files with canned data and shows the mouse
@@ -84,6 +90,13 @@ Done when:
 - Follow-ups work ("what about tomorrow?").
 - It has replaced the Google Home for questions and timers for a week.
 
+#### Phase 1 progress
+
+Steps 1 to 5 are built; step 6 isn't (it still runs on the Claude Code subscription). Timers survive a
+restart and follow-ups work. Latency misses the target: over 77 spoken turns (2026-10-06 to 10-08), the
+median from end of speech to first audio was 3.1 s, most of it waiting for Claude's first sentence (see
+[Latency budget](docs/architecture.md#latency-budget)).
+
 ### Phase 2: Home control
 
 Claude controls Home Assistant, and Home Assistant can make Claude Home speak.
@@ -101,6 +114,15 @@ Done when:
 - Lights, scenes, and media are voice controlled; fast-path commands respond in under 1 s.
 - Home Assistant automations can trigger announcements.
 - It has fully replaced the Google Home in its room.
+
+#### Phase 2 progress
+
+- **Step 1 is built:** with `HA_URL` and `HA_TOKEN` set, Claude gets Home Assistant's tools for the
+  entities exposed to Assist, minus the ones the brain already does (timers, lists, the time, broadcasts).
+  Every action it takes is logged to `ha_actions.jsonl`.
+- **Cameras:** Claude can open a camera's live view on the screen, and `POST /show` lets an automation do it.
+- Not built: the local fast path, spoken confirmation for locks (so don't expose locks, alarm panels, or
+  garage doors to Assist yet), and `/announce`. Music went to Spotify instead of Music Assistant.
 
 ### Phase 3: Smart display
 
@@ -134,9 +156,11 @@ than the Pi 5 build, with the brain on the PC:
 - **Spotify:** voice control of the Pi as a Spotify Connect speaker, now playing on screen, and
   music that dips while Claude listens or talks.
 - **Night mode:** a dim clock on black overnight; a tap brings the home screen back for 30 s.
+- **Cameras:** a full-screen live view of a Home Assistant camera, asked for by voice ("show me the front
+  yard") or opened by an automation through `POST /show` (the doorbell popup).
 
-Not done yet: the Pi 5 hardware with the mic array, Home Assistant tiles, the doorbell camera,
-and hearing the wake word over loud music.
+Not done yet: the Pi 5 hardware with the mic array, Home Assistant tiles, and hearing the wake word over
+loud music.
 
 ### Later (not committed)
 
@@ -150,6 +174,6 @@ These were written before Phase 1; the ones still open change the plan:
 
 1. **Where does Home Assistant run today, and on what hardware?** Decides whether the brain can live next to it.
 2. **Is there an always-on machine with a GPU?** If yes, local STT and a better local TTS become viable, which also improves offline behavior.
-3. **Cloud STT/TTS or local?** Default is cloud STT (Groq) and local TTS (Piper). Cloud is faster to build and costs a few dollars a month; local is more private.
+3. ~~**Cloud STT/TTS or local?**~~ Settled by building it: cloud STT (Groq) and local TTS (Piper).
 4. **Which Google Home features do you actually use?** Ranks the Phase 1 tool list.
 5. **One room or several?** Several rooms moves the "audio-only satellite" work earlier.

@@ -34,8 +34,8 @@ There are two pieces: a **satellite** in each room and one **brain** per house.
 
 ```mermaid
 flowchart LR
-  subgraph Satellite["Satellite (Pi 5, in the room)"]
-    MIC[Mic array + echo cancel] --> WW[openWakeWord]
+  subgraph Satellite["Satellite (Pi 3 today, Pi 5 planned; in the room)"]
+    MIC["Mic (USB headset today;<br/>array + echo cancel planned)"] --> WW[openWakeWord]
     WW --> VAD[Silero VAD]
     SPK[Speaker]
     UI["Chromium kiosk<br/>(display UI, phase 3)"]
@@ -81,7 +81,7 @@ sequenceDiagram
   participant S as Satellite
   participant B as Brain
   participant STT
-  participant C as Claude API
+  participant C as Claude (Agent SDK)
   participant T as TTS
 
   S->>S: wake word fires, play chime
@@ -89,7 +89,7 @@ sequenceDiagram
   S->>B: speech_end (VAD heard silence)
   B->>STT: utterance audio
   STT-->>B: transcript
-  B->>C: messages.stream(history + transcript, tools)
+  B->>C: query("[time] transcript") on the device's session
   loop while Claude calls tools
     C-->>B: tool_use
     B->>B: run tool
@@ -119,7 +119,7 @@ sequenceDiagram
 | TTS | Piper (local) | Free, faster than real time on a Pi, no network hop, still works offline | Cartesia or ElevenLabs streaming for a better voice; Kokoro on a server for good-and-local. Known Piper limit: each sentence is synthesized independently, so pitch and tone can shift between sentences (very noticeable with the Northern English voice). |
 | Home control, P2 | Home Assistant's MCP Server integration, passed to the Agent SDK as an HTTP MCP server | Claude gets Home Assistant's Assist tools for exactly the entities exposed to Assist. Scripts exposed to Assist appear as tools automatically, so most new abilities are Home Assistant config, not code. | Direct calls to Home Assistant's WebSocket/REST API for anything MCP doesn't cover |
 | Music | Spotify Connect: raspotify (librespot) on the Pi, controlled by the brain through the Spotify Web API | Spotify is what the household uses, and it needed no Home Assistant. Auth is PKCE, so there's no client secret. | Music Assistant (Home Assistant add-on) for a local library and radio, once Phase 2 is in |
-| Storage | SQLite (Python stdlib) | Timers, alarms, memory; one file. The turn log is `turns.jsonl`. | |
+| Storage | SQLite (Python stdlib) | Timers, alarms, memory; one file. Two append-only logs sit beside it: `turns.jsonl` (each turn's transcript, reply, and stage timings) and `ha_actions.jsonl` (each Home Assistant action Claude takes, with what was heard). | |
 | Display UI, P3 | Plain HTML, CSS, and ES modules (`brain/display/`), no build step, served by the brain, shown in Chromium kiosk under `cage`. Fraunces and Inter are bundled. | One page with a handful of screens didn't need a framework, and nothing to build means the Pi gets changes on the next brain restart | Svelte 5 + Vite if the page outgrows one script |
 | Deployment | systemd units | Simplest thing on a Pi | Docker, if the brain moves next to a Docker-based Home Assistant install |
 
@@ -222,7 +222,10 @@ Out of the box it behaves like a coding agent, so it gets locked down:
 | `system_prompt` | Our voice prompt, as a plain string | Replaces Claude Code's coding prompt |
 | `setting_sources` | `[]` | Don't load CLAUDE.md, hooks, plugins, or skills from `~/.claude` or the project |
 | `tools` | No built-ins except `WebSearch` | No shell or file access on the brain machine. Confirm in the session's `system/init` message. |
-| `mcp_servers` | Our tools (in-process, via `create_sdk_mcp_server`) and, in Phase 2, Home Assistant over HTTP | |
+| `allowed_tools`, `permission_mode` | `WebSearch`, `mcp__home__*`, `mcp__ha__*`; `"dontAsk"` | Nobody is there to approve a tool call; anything not allowed is refused |
+| `disallowed_tools` | Home Assistant's timer, to-do list, time, and broadcast tools | The brain already does these itself: timers ring here, the shopping list is Todoist, and the time is in every message |
+| `mcp_servers` | Our tools (in-process, via `create_sdk_mcp_server`) and Home Assistant's MCP Server over HTTP when `HA_URL` is set | |
+| `hooks` | `PostToolUse` and `PostToolUseFailure` on `mcp__ha__.*` | Appends each Home Assistant action (not `GetLiveContext` lookups) to `ha_actions.jsonl` |
 | `env` / `extra_args` | `ENABLE_CLAUDEAI_MCP_SERVERS=false` and `--strict-mcp-config` | On a subscription login, the account's claude.ai connectors (Gmail, Drive, and so on) load into every session, and `setting_sources=[]` does not stop them. Verified: without these, the init tool list included them. |
 | `model` | `claude-haiku-5-5` | |
 | `include_partial_messages` | `True` | Text deltas for sentence streaming |
@@ -245,7 +248,7 @@ registered, plus an `mcp` client for Home Assistant.
 
 1. Transcript arrives. If it is empty or only a word or two of noise (a false wake), drop it without calling Claude.
 2. **Instant commands.** "stop", "cancel", "never mind", and Whisper's usual noise transcripts ("you", "thank you") are dropped without calling Claude. Volume changes go through Claude's `set_volume` tool for now.
-3. **Home fast path (Phase 2).** Send the transcript to Home Assistant's built-in conversation agent (`POST /api/conversation/process`, agent `conversation.home_assistant`). If it matched an intent, speak its reply and stop. Otherwise fall through to Claude. Fast-path commands are appended to the session history so Claude knows they happened.
+3. **Home fast path (Phase 2, not built yet).** Send the transcript to Home Assistant's built-in conversation agent (`POST /api/conversation/process`, agent `conversation.home_assistant`). If it matched an intent, speak its reply and stop. Otherwise fall through to Claude. Fast-path commands are appended to the session history so Claude knows they happened.
 4. **Claude.** Send the transcript to the device's `ClaudeSDKClient`. The SDK holds the history and runs the tool loop; the brain consumes the text deltas.
 5. **Speech.** Split the text stream at sentence boundaries and send each sentence to TTS as soon as it completes. Playing sentence one while sentence two generates is the biggest single latency win.
 
@@ -265,7 +268,7 @@ registered, plus an `mcp` client for Home Assistant.
 | Phase | Tools |
 |---|---|
 | 1 | `set_timer` / `list_timers` / `cancel_timer` / `pause_timer` / `resume_timer` (by name; an unlabeled timer is named by its length, "5 minute timer"), `remember` / `forget`, shopping list (`add_to_` / `remove_from_` / `get_` / `clear_shopping_list`), `get_weather` (Open-Meteo, no API key), web search (the SDK's built-in `WebSearch`) |
-| 2 | Home Assistant MCP tools (automatic), `announce(device \| all, text)` (not started) |
+| 2 | Home Assistant MCP tools (automatic, minus the ones the brain already does; see [LLM backend](#llm-backend)), `announce(device \| all, text)` (not started) |
 | 3 | `set_alarm` / `list_alarms` / `cancel_alarm`, `show_on_screen(title, lines)`, `get_agenda(days)`, `morning_briefing`, `show_recipe` / `recipe_step(direction)`, `play_music(query, kind)` / `pause_music` / `resume_music` / `skip_track` / `previous_track` / `whats_playing`, `set_volume(level, relative)`, `show_camera(camera)` / `close_camera` |
 
 Tools whose result belongs on the screen (timers, alarms, weather, the shopping list, the
@@ -325,37 +328,44 @@ Built so far on the Pi 3 with a 5" 800x480 HDMI touchscreen (USB touch), with th
 
 ## Latency budget
 
-These are targets to measure against, not measured numbers. Every stage is logged per turn
-from day one.
+Every stage is logged per turn in `turns.jsonl`. Measured: medians (and 90th percentiles) over
+the 77 spoken turns with a reply from 2026-10-06 to 2026-10-08, with the brain on the PC and
+Claude on the Agent SDK.
 
-| Stage | Target |
-|---|---|
-| End-of-speech detection (VAD silence tail) | 400-600 ms |
-| STT | under 400 ms |
-| Claude, time to first complete sentence | under 900 ms |
-| TTS, first audio | under 150 ms |
-| **End of speech to first audio** | **under 2 s** (fast path: under 1 s) |
+| Stage | Target | Measured |
+|---|---|---|
+| End-of-speech detection (VAD silence tail) | 400-600 ms | 700 ms (`END_SILENCE_S`; not in the log) |
+| STT | under 400 ms | 0.67 s (1.12 s) |
+| Claude, time to first complete sentence | under 900 ms | 2.31 s (4.65 s) |
+| TTS, first audio | under 150 ms | 0.12 s (0.29 s) |
+| **End of speech to first audio** | **under 2 s** (fast path: under 1 s) | **3.10 s (5.64 s)**, not counting the silence tail |
+
+Claude's first sentence is most of the gap. The log doesn't record which turns called a tool or
+searched the web, so those are mixed into the same numbers. If that stage doesn't come down, the
+next step is the direct Messages API (see [LLM backend](#llm-backend)).
 
 Perceived latency also matters: chime on wake, a short sound at end of speech, and the
 `thinking` state on the LEDs or screen. Reuse HTTP clients so connections stay warm.
 
 ## Security and privacy
 
-- Audio before the wake word never leaves the satellite. A physical mute switch cuts the mic.
+- Audio before the wake word never leaves the satellite, with one exception: while an alarm or timer rings, speech is sent to the brain so "stop" works without the wake word (that transcript is only checked for stop and snooze words, never sent to Claude). Planned: a physical mute switch on the Pi 5 build.
 - API keys live only on the brain, in a `.env` file that is never committed. Satellites hold none.
 - **No built-in Claude Code tools** (shell, file read/edit) are enabled on the brain. Claude can only call our tools and Home Assistant's.
-- The brain uses a **dedicated non-admin Home Assistant user** with its own long-lived token.
+- The brain should use a **dedicated non-admin Home Assistant user** with its own long-lived token.
 - **Claude only sees entities exposed to Assist** (Home Assistant's per-entity exposure setting). This is the main permission boundary: don't expose a lock unless you want it voice controlled.
-- **Locks, alarm panels, and garage doors require spoken confirmation**, enforced in the brain's tool dispatch, not just requested in the prompt. Web search results can carry prompt injection, so the rule must not depend on Claude's cooperation.
+- **Not built yet: spoken confirmation for locks, alarm panels, and garage doors**, to be enforced in the brain (a `PreToolUse` hook on `mcp__ha__*` is the natural place), not just requested in the prompt. Web search results can carry prompt injection, so the rule must not depend on Claude's cooperation. Until it exists, don't expose those to Assist.
+- Every Home Assistant action Claude takes is logged to `ha_actions.jsonl` with the transcript that led to it, so a surprise in the house can be traced to a mishearing or to Claude's choice.
 - The brain listens on the LAN only. No port forwarding. Remote access, if ever needed, goes through Home Assistant's own remote access or Tailscale.
-- Turn logs contain transcripts. They stay local and get rotated.
+- Turn logs contain transcripts. They stay local (git-ignored). Not rotated yet; `turns.jsonl` grows by about 330 bytes a turn.
 
 ## Failure behavior
 
 | Failure | Behavior |
 |---|---|
 | Internet down | Wake word, timers, and alarms still work. Planned: Piper says "I can't reach Claude right now." The home fast path also needs STT, so it only works offline if STT is local (`faster-whisper`). |
-| Claude API error or timeout | Planned: one retry, then a spoken apology |
+| Claude API error or timeout | A spoken apology ("Claude is rate limited right now" for a 429), unless part of the reply was already spoken. No retry. |
+| Speech to text fails (Groq down or unreachable) | Not handled yet: the error ends the satellite's connection, which reconnects within seconds, and nothing is said |
 | Brain down | The satellite reconnects every few seconds (no error tone yet). Screens say "Can't reach Claude Home" after 5 s and reconnect on their own; the kiosk waits on its start page if the brain is down when the Pi boots. |
 | A calendar feed or the weather fails | The last good copy stays on screen; calendars retry after 1 minute, weather after 2 |
 | Spotify unreachable or the speaker missing | Claude says what Spotify reported (for example, that the Claude Home speaker isn't showing up); the rest works |
@@ -365,9 +375,10 @@ Perceived latency also matters: chime on wake, a short sound at end of speech, a
 
 While on the subscription backend there is no per-request cost; usage counts against the plan's limits. The numbers below apply once on an API key.
 
-Prices checked 2026-10-06: Haiku 4.5 at $1 / $5 per million input/output tokens, Sonnet 5.5
-at $2 / $10, web search at $10 per 1,000 searches, Groq Whisper turbo at $0.04 per audio
-hour with a 10 s minimum per request.
+Prices: Haiku 5.5 at $0.10 / $0.50 per million input/output tokens for prompts up to 100k
+tokens (checked 2026-10-09 on anthropic.com/claude-haiku-5-5); Sonnet 5.5 at $2 / $10, web
+search at $10 per 1,000 searches, and Groq Whisper turbo at $0.04 per audio hour with a 10 s
+minimum per request (checked 2026-10-06).
 
 **Assumptions per turn:** about 3.5k input tokens (system prompt, tools, short history) and
 about 100 output tokens. A tool call roughly doubles input, because the tool loop sends a
@@ -378,19 +389,21 @@ sparse, so most turns pay the 1.25x cache write rather than the 0.1x read. Cachi
 helps inside a turn (the tool loop's second request) and during back-and-forth
 conversations. The numbers below assume no cache savings.
 
-| Turn type | Haiku 4.5 | Sonnet 5.5 |
+| Turn type | Haiku 5.5 | Sonnet 5.5 |
 |---|---|---|
-| Simple answer | ~$0.004 | ~$0.008 |
-| One tool call | ~$0.008 | ~$0.015 |
-| Web search (search fee plus result tokens) | ~$0.025 | ~$0.035 |
+| Simple answer | ~$0.0004 | ~$0.008 |
+| One tool call | ~$0.0008 | ~$0.015 |
+| Web search (search fee plus result tokens) | ~$0.012 | ~$0.035 |
 
 Monthly, assuming half of turns call a tool:
 
-| Usage | Turns/day | Searches/day | Haiku 4.5 | Sonnet 5.5 |
+| Usage | Turns/day | Searches/day | Haiku 5.5 | Sonnet 5.5 |
 |---|---|---|---|---|
-| Light | 10 | 1 | ~$2.50 | ~$4 |
-| Typical | 30 | 3 | ~$7 | ~$13 |
-| Heavy | 100 | 8 | ~$23 | ~$40 |
+| Light | 10 | 1 | ~$0.50 | ~$4 |
+| Typical | 30 | 3 | ~$1.60 | ~$13 |
+| Heavy | 100 | 8 | ~$4.70 | ~$40 |
+
+On Haiku 5.5 the $0.01 web search fee is most of the bill.
 
 **Phase 2** adds Home Assistant tool definitions and live device state to each request,
 which could raise per-turn cost by 50-100% for a large home. The fast path partly offsets
@@ -410,18 +423,33 @@ run up a bill.
 | Home Assistant's Assist pipeline as the core | Covered in [Baseline to beat](#baseline-to-beat): great benchmark, but no display and no control over the Claude side |
 | Claude API calling Home Assistant's MCP server directly (MCP connector) | Requires exposing Home Assistant to the internet and adds a network hop. A local MCP client in the brain does the same job. |
 | Direct Messages API from day one | Deferred, not rejected. It is the fallback if Agent SDK overhead shows up in latency logs. Starting on the Agent SDK allows running on a subscription during development. |
-| Wyoming protocol between satellite and brain | Models Home Assistant's pipeline stages and has no concept of display content. Our protocol is ten messages. |
+| Wyoming protocol between satellite and brain | Models Home Assistant's pipeline stages and has no concept of display content. Ours is a few small JSON messages each way plus raw PCM. |
 | ESP32 satellites (Voice PE) | Good hardware, but they speak ESPHome's API to Home Assistant, not to our brain. Revisit for cheap audio-only rooms. |
-| Node/TypeScript brain | The voice and ML libraries are Python. TypeScript is used only for the display UI. |
+| Node/TypeScript brain | The voice and ML libraries are Python. The display UI is plain JavaScript. |
 
 ## Repo layout
 
 ```
 claude-home/
   README.md
-  docs/architecture.md
-  brain/          Python service: brain.py (server, turns, alarms, pollers), tools.py, agenda.py,
-                  photos.py, spotify.py, fake_brain.py (canned data for display work), tests, test_data/
-    display/      the display page: index.html, style.css, app.js, fonts/
-  satellite/      Python audio client, its systemd unit, the kiosk unit and kiosk.html, asound.conf, the raspotify watchdog
+  docs/
+    architecture.md   this file
+    pi.md             working on the Pi: access, deploying, logs, and rebuilding it
+  brain/              Python service (the PC)
+    brain.py          server, turns, ringing, background pollers, the camera relay
+    tools.py          Claude's tools, plus timers, alarms, memory, and weather storage
+    agenda.py         calendar feeds
+    todoist.py        the shopping list
+    spotify.py        Spotify Web API and login
+    photos.py         the slideshow's photos
+    fake_brain.py     canned data for display work, no Claude or Pi
+    spotify_lab.py    checks raspotify on the Pi layer by layer
+    test_*.py, test_data/
+    display/          the display page: index.html, style.css, app.js, fonts/
+  satellite/          the Pi
+    satellite.py      mic, wake word, playback, ducking
+    *.service         systemd units: satellite, kiosk, raspotify watchdog
+    kiosk.html        start page that waits for the brain
+    blank_cursor.py   hides the kiosk's cursor
+    asound.conf, raspotify-watchdog.sh
 ```
