@@ -382,10 +382,10 @@ def test_sheets(b):
     assert d.page.locator(".wx-label").all_inner_texts() == ["Today", "Tomorrow", "Friday"]
     assert d.page.locator(".wx-rain").all_inner_texts() == ["60% chance of rain"], "rain shown only when likely"
     d.shot("sheet-weather", settle=400)
-    box = d.page.locator("#sheet-close").bounding_box()
-    assert big(box), box
-    d.tap("#sheet-close")
-    assert not sheet_open(d), "close didn't return home"
+    assert d.page.locator("#sheet-edge").is_visible(), "a card over the dashboard goes back to it from the edge"
+    swipe(d, 500)
+    assert not sheet_open(d), "the edge swipe didn't return home"
+    t0 = d.page.evaluate("Date.now() / 1000")  # (the swipe's settle moved the clock on)
 
     # Timers: one gets a big dial, its arc what's left of it, with Pause and Stop stacked beside it
     pasta = {"id": 7, "label": "pasta", "ends_at": t0 + 252, "duration": 504, "paused_left": None}
@@ -591,7 +591,7 @@ def test_volume(b):
     assert len(volumes()) == 1, "a report from the brain must not echo back"
 
     # Claude turning it up opens the sheet at the new level
-    d.tap("#sheet-close")
+    d.page.clock.run_for(46_000)  # (left alone, the sheet goes home)
     d.push({"type": "card", "card": {"kind": "volume", "level": 65}})
     assert d.visible("#sheet") and d.text(".vol-level") == "65"
     d.close()
@@ -683,6 +683,8 @@ def test_home_control(b):
 
 def swipe(d, to, frm=8, y=240, pause=0, release=True):
     """A finger from x=frm (the left edge) to x=to. pause: real ms between moves (slow, so not a flick)."""
+    if frm < 30:
+        d.page.wait_for_timeout(300)  # a sheet just opened is still sliding up (real time), its edge not there yet
     d.page.mouse.move(frm, y)
     d.page.mouse.down()
     for x in range(frm, to, 24 if to > frm else -24):
@@ -702,7 +704,7 @@ def test_rooms_and_back(b):
 
     # Rooms: each room's name, and what's on in it; a room with a light on is lit
     d.tap("#menu")
-    assert d.page.locator("#sheet-edge").is_hidden(), "nothing to go back to from the menu"
+    assert d.page.locator("#sheet-edge").is_visible(), "the menu goes back to the dashboard from the edge"
     d.page.locator(".menu-row").first.tap()  # Home
     d.push({"type": "card", "card": HOUSE})
     assert d.text("#sheet-title") == "Home" and d.page.locator("#sheet-edge").is_hidden(), "a row page has no back"
@@ -771,14 +773,14 @@ def test_rooms_and_back(b):
     d.page.keyboard.press("Enter")  # no swiping from a keyboard: the edge is a Back button
     d.page.wait_for_timeout(50)
     assert d.text("#sheet-title") == "Home"
-    assert big(d.page.locator("#sheet-close").bounding_box())
 
-    # Close forgets the way back: the next sheet starts fresh
+    # Going home forgets the way back: the next sheet opens over the dashboard, not the Home it was over before
     d.tap(".tile-rooms")
     d.push({"type": "card", "card": {"kind": "rooms", "rooms": rooms}})
-    d.tap("#sheet-close")
+    d.page.clock.run_for(46_000)  # (left alone, the sheet goes home)
     d.push({"type": "card", "card": {"kind": "rooms", "rooms": rooms}})
-    assert d.page.locator("#sheet-edge").is_hidden()
+    swipe(d, 500)
+    assert not d.visible("#sheet")
     d.close()
 
 
@@ -815,7 +817,10 @@ def test_swiping_between_sheets(b):
     assert not d.visible("#swipe-dim"), "side by side, nothing is covered, so nothing dims"
     d.page.mouse.up()
     d.page.clock.run_for(300)
-    d.page.wait_for_timeout(300)
+    top = lambda: d.page.eval_on_selector("#sheet", "s => s.getBoundingClientRect().top")  # noqa: E731
+    tops = [top()] + [d.page.wait_for_timeout(40) or top() for _ in range(5)]
+    assert tops == [0] * 6, f"landed in place, not sliding up from the bottom: {tops}"
+    d.page.wait_for_timeout(100)
     assert title() == "Home" and opened() == ["house"] and left("#sheet") == 0 and not d.visible("#swipe-dim")
     assert not d.visible("#sheet-dash") and d.page.locator("#sheet-body .tile").count() == 5
     assert d.page.locator("#sheet-edge").is_hidden(), "a row page has no back swipe"
@@ -887,7 +892,7 @@ def test_swiping_between_sheets(b):
     assert title() == "Shopping list" and left("#sheet") == 0
 
     # A subpage has only its edge; a card Claude puts up isn't in the row; the menu still works
-    d.page.locator("#sheet-close").tap()
+    d.page.clock.run_for(46_000)  # (left alone, the sheet goes home)
     d.push({"type": "card", "card": HOUSE})
     d.tap(".tile-lights")
     d.push({"type": "card", "card": {"kind": "lights", "rooms": []}})
@@ -896,7 +901,7 @@ def test_swiping_between_sheets(b):
     d.push({"type": "card", "card": {"kind": "weather", **WEATHER}})
     swipe(d, 300, frm=700, y=200)
     assert title() == "New York"
-    d.tap("#sheet-close")
+    d.page.clock.run_for(46_000)
     d.tap("#menu")
     assert title() == "Menu"
     swipe(d, 300, frm=700, y=200)
@@ -952,7 +957,7 @@ def test_climate(b):
     assert d.page.locator(".thermostats").evaluate("p => p.scrollLeft") == left > 0
 
     # Opened from a room's thermostat tile, that thermostat shows first
-    d.tap("#sheet-close")
+    swipe(d, 500)  # (back from the edge, to the dashboard it opened over)
     d.push({"type": "card", "card": {"kind": "room", "name": "Bedroom", "lights": [], "media": [],
                                      "climate": [ac], "switches": []}})
     d.page.locator('.dev[aria-label="Air conditioner"]').tap()
@@ -1006,7 +1011,7 @@ def test_speakers_and_tvs(b):
     assert d.page.locator(".player.lit").count() == 1 and "lit" in panel(0).get_attribute("class")
 
     # Opened from a room's TV, that one shows first
-    d.tap("#sheet-close")
+    swipe(d, 500)  # (back from the edge, to the dashboard it opened over)
     d.push({"type": "card", "card": {"kind": "room", "name": "Bedroom", "lights": [], "climate": [], "switches": [],
                                      "media": [{"entity": "media_player.bedroom", "name": "TV", "state": "off"}]}})
     d.page.locator('.dev[aria-label="TV"]').tap()
@@ -1052,6 +1057,78 @@ def test_automations(b):
     d.close()
 
 
+def test_header(b):
+    """Over every sheet a header with the time on the right. Along the row: every row page's title, the one you're on
+    at the left and underlined, sliding under the underline as you swipe. Elsewhere: the sheet's own title."""
+    d = Display(b)
+    opacity = lambda sel: d.page.eval_on_selector(sel, "e => getComputedStyle(e).opacity")  # noqa: E731
+    tab = lambda i: d.page.locator(".tab").nth(i).bounding_box()  # noqa: E731
+    line = lambda: d.page.locator("#tab-line").bounding_box()  # noqa: E731
+    assert opacity("#header-home") == "0" and opacity("#header-tabs") == "0", "the dashboard has no header"
+
+    d.push({"type": "card", "card": HOUSE})
+    d.page.wait_for_timeout(300)  # its fade (real time)
+    assert opacity("#header-home") == "1" and d.text("#header-time") == "9:41"
+    assert d.page.locator(".tab").all_inner_texts() == [
+        "Dashboard", "Home", "Timers", "Alarms", "Shopping list", "Music", "Volume"]
+    assert round(tab(1)["x"]) == 36 and round(line()["x"]) == 36 and abs(line()["width"] - tab(1)["width"]) < 1
+    assert d.page.eval_on_selector("#sheet-title", "t => getComputedStyle(t).color") == "rgba(0, 0, 0, 0)", \
+        "a row page's own title gives way to the header's"
+    d.page.clock.run_for(60_000)  # (the sheet goes home after 45 s of it: open it again)
+    d.push({"type": "card", "card": HOUSE})
+    assert d.text("#header-time") == "9:42", "the time keeps up"
+
+    # Halfway through a swipe the titles are halfway along, and the underline halfway between the two widths
+    home_w, timers_x, timers_w = tab(1)["width"], tab(2)["x"], tab(2)["width"]
+    swipe(d, 300, frm=700, y=200, release=False)
+    assert abs(tab(2)["x"] - (timers_x - (timers_x - 36) / 2)) < 2, tab(2)
+    assert abs(line()["width"] - (home_w + timers_w) / 2) < 2 and round(line()["x"]) == 36
+    d.shot("header-swipe", settle=0)
+    d.page.mouse.up()
+    d.page.clock.run_for(600)
+    d.page.wait_for_timeout(300)
+    assert d.text("#sheet-title") == "Timers" and round(tab(2)["x"]) == 36 and abs(line()["width"] - timers_w) < 1
+    assert opacity(".tab:nth-child(3)") == "1" and float(opacity(".tab:nth-child(2)")) < 1
+
+    # A subpage, or a card: its own title, no row titles, the time still there
+    d.push({"type": "card", "card": {"kind": "lights", "rooms": []}})
+    assert d.text("#sheet-title") == "Lights" and opacity(".tabs-wrap") == "0" and opacity("#header-home") == "1"
+    assert d.page.eval_on_selector("#sheet-title", "t => getComputedStyle(t).color") != "rgba(0, 0, 0, 0)"
+    d.shot("header-subpage", settle=300)
+    # Back from the edge: the page sliding off takes its own copy of the time; the header's is under it with Timers
+    swipe(d, 300, release=False)
+    sheet_time = d.page.locator("#sheet-time").bounding_box()
+    assert d.text("#sheet-time") == "9:42" and round(sheet_time["x"] + sheet_time["width"]) == (300 - 8) + 800 - 36, sheet_time
+    assert d.page.eval_on_selector("#header-home", "h => getComputedStyle(h).zIndex") == "2"
+    d.page.mouse.up()
+    d.page.clock.run_for(600)
+    d.page.wait_for_timeout(300)
+    assert d.text("#sheet-title") == "Timers" and opacity(".tabs-wrap") == "1"
+    assert not d.visible("#sheet-time") and d.page.eval_on_selector("#header-home", "h => getComputedStyle(h).zIndex") == "5"
+
+    # The time takes you back to the dashboard, from anywhere along the row
+    swipe(d, 300, frm=700, y=200)
+    swipe(d, 300, frm=700, y=200)
+    assert d.text("#sheet-title") == "Shopping list"
+    assert big(d.page.locator("#header-home").bounding_box(), w=64, h=64)
+    d.tap("#header-home")
+    assert not d.visible("#sheet")
+
+    # The menu, and a card Claude puts up, open over the dashboard and go back to it from the edge
+    d.page.clock.run_for(46_000)
+    d.tap("#menu")
+    assert d.page.locator("#sheet-edge").is_visible() and opacity(".tabs-wrap") == "0"
+    swipe(d, 500)
+    assert not d.visible("#sheet")
+    d.push({"type": "card", "card": {"kind": "text", "title": "Note", "lines": ["Hello"]}})
+    assert d.page.locator("#sheet-edge").is_visible()
+    swipe(d, 500)
+    assert not d.visible("#sheet")
+    d.page.wait_for_timeout(300)
+    assert opacity("#header-home") == "0", "back on the dashboard, no header"
+    d.close()
+
+
 def test_navigation_every_screen_gets_home(b):
     """From every screen there is a visible way home, and every sheet goes home on its own when left alone."""
     screens = {
@@ -1084,10 +1161,16 @@ def test_navigation_every_screen_gets_home(b):
 
     for name in [*screens, "menu"]:
         open_screen(name)
-        box = d.page.locator("#sheet-close").bounding_box()  # (may be mid-slide: sub-pixel sizes, so round)
-        assert big(box), (name, box)
-        d.tap("#sheet-close")
-        assert home(), f"close didn't return home from {name}"
+        if d.page.locator("#sheet-edge").is_visible():  # a card, a subpage, the menu: back from the edge
+            box = d.page.locator("#sheet-edge").bounding_box()
+            assert round(box["height"]) == 480, (name, box)  # (may be mid-slide: sub-pixel sizes)
+            swipe(d, 500)
+        else:  # a row page: along the row, left to right, to the dashboard
+            for _ in range(7):
+                if home():
+                    break
+                swipe(d, 500, frm=100, y=200)
+        assert home(), f"no way home from {name}"
         open_screen(name)
         d.page.clock.run_for(45_500)
         assert home(), f"{name} didn't return home after 45 s"
@@ -1339,7 +1422,7 @@ def test_recipe(b):
     d.push({"type": "card", "card": dict(PANCAKES, step=0)})
     d.tap(".recipe-prev")
     assert d.page.locator(".ingredients li").count() == 8 and not d.visible(".recipe-prev")
-    d.tap("#sheet-close")
+    swipe(d, 500)  # back from the edge, to the dashboard: that ends recipe mode
     assert recipe()[-1] == {"type": "recipe", "action": "close"}
     d.close()
 

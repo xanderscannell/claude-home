@@ -9,7 +9,9 @@ const $ = (id) => document.getElementById(id);
 const els = {
   time: $("time"), date: $("date"), mic: $("mic"), menu: $("menu"), weather: $("weather"), strip: $("strip"),
   overlay: $("overlay"), heard: $("heard"), reply: $("reply"), stop: $("stop"), close: $("close-overlay"),
-  sheet: $("sheet"), sheetTitle: $("sheet-title"), sheetBody: $("sheet-body"), sheetClose: $("sheet-close"),
+  sheet: $("sheet"), sheetTitle: $("sheet-title"), sheetBody: $("sheet-body"),
+  headerTabs: $("header-tabs"), headerHome: $("header-home"), sheetTime: $("sheet-time"), tabs: $("tabs"), tabLine: $("tab-line"), headerTime: $("header-time"),
+  tabsWrap: document.querySelector(".tabs-wrap"),
   edge: $("sheet-edge"), under: $("sheet-under"), underTitle: $("under-title"), underBody: $("under-body"),
   swipeDim: $("swipe-dim"), dash: $("sheet-dash"), dashPhoto: $("dash-photo"), dashPic: $("dash-pic"), dashboard: $("dashboard"),
   ringing: $("ringing"), ringingTime: $("ringing-time"), ringingLabel: $("ringing-label"),
@@ -96,7 +98,7 @@ function renderClock() {
   els.time.textContent = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).replace(/\s?[AP]M$/i, "");
   els.time.dateTime = now.toISOString();
   els.date.textContent = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
-  els.nightTime.textContent = els.time.textContent;
+  els.nightTime.textContent = els.headerTime.textContent = els.time.textContent;
   applyNight();
   renderStrip();  // calendar events drop off the strip when they end
 }
@@ -410,16 +412,22 @@ const rowAt = (kind) => ROW.findIndex((r) => r.kind === kind);
 
 // The pages a subpage opened over (Home, then Rooms, then a room), for going back. A card the brain sent in answer
 // to an open keeps that request, so going back can ask again and show it fresh rather than as it was. A row page is
-// top level: it opens over nothing, so it has no back.
+// top level: it opens over nothing, so it has no back. Anything else opened with no sheet up (a card Claude puts up,
+// the menu) opens over the dashboard itself, and goes back to it.
+const DASHBOARD = { kind: "dashboard" };
 let sheetStack = [];
 let lastOpen = null;
 const rowCards = {};  // the last card of each row page the brain serves, to draw it while it's swiped into view
 
-function openSheet(card) {
+// back: going back to card, so the stack is already as it should be
+function openSheet(card, back = false) {
   if (lastOpen && lastOpen.sheet === card.kind) [card.request, lastOpen] = [lastOpen, null];
-  if (rowAt(card.kind) >= 0) sheetStack = [];
-  else if (sheetCard && sheetCard.kind !== card.kind) sheetStack.push(sheetCard);
-  else if (sheetCard && !card.request) card.request = sheetCard.request;  // the same kind is a refresh of it
+  if (back) {
+    // as it is
+  } else if (rowAt(card.kind) >= 0) sheetStack = [];
+  else if (!sheetCard) sheetStack = [DASHBOARD];
+  else if (sheetCard.kind !== card.kind) sheetStack.push(sheetCard);
+  else if (!card.request) card.request = sheetCard.request;  // the same kind is a refresh of it
   if (rowAt(card.kind) >= 0 && !card.placeholder) rowCards[card.kind] = card;
   els.edge.hidden = !sheetStack.length;
   sheetCard = card;
@@ -430,13 +438,17 @@ function openSheet(card) {
   renderSheet();
   requestAnimationFrame(() => els.sheet.classList.add("shown"));
   touchSheet();
+  syncHeader();
 }
 
 function goBack() {
-  if (sheetCard.kind === "recipe") send({ type: "recipe", action: "close" });  // ends recipe mode
   const prev = sheetStack.pop();
-  sheetCard = null;  // so reopening prev doesn't stack the one being left
-  openSheet(prev);
+  if (prev === DASHBOARD) {
+    closeSheet();
+    return;
+  }
+  if (sheetCard.kind === "recipe") send({ type: "recipe", action: "close" });  // ends recipe mode
+  openSheet(prev, true);
   if (prev.request) send(prev.request);
 }
 
@@ -449,10 +461,9 @@ function rowCard(kind) {
 // Land on a row page from a swipe: show it at once from what's known, and ask the brain for it fresh, and for the
 // pages either side of it, so the next swipe shows them as they are now
 function landRow(kind) {
-  const wasHidden = els.sheet.hidden;
   sheetCard = null;
+  els.sheet.classList.add("shown");  // in place before it's shown (from the dashboard): no slide up from the bottom
   openSheet(rowCard(kind));
-  if (wasHidden) els.sheet.classList.add("shown");  // now, not next frame: no slide up from the bottom
   if (!ROW[rowAt(kind)].local) send({ type: "open", sheet: kind });
   const i = rowAt(kind);
   fetchRow([ROW[i - 1], ROW[i + 1]].filter(Boolean).map((r) => r.kind));
@@ -482,6 +493,32 @@ function rowIndex() {
   return i >= 0 && !sheetStack.length ? i + 1 : null;
 }
 
+// --- Header -----------------------------------------------------------------------------------
+// Along the row: every row page's title (the dashboard's first), the one you're on at the left, underlined. Mid-swipe
+// the titles slide so the one coming moves under the underline, which stays put and eases to its width.
+const TABS = [DASHBOARD.kind, ...ROW.map((r) => r.kind)];
+els.tabs.append(...["Dashboard", ...ROW.map((r) => r.label)].map((label) => el("span", "tab", label)));
+
+function setTabs(pos) {  // pos: where along the row, 0 the dashboard; between two whole numbers mid-swipe
+  const tabs = els.tabs.children, i = Math.min(Math.floor(pos), tabs.length - 1), f = pos - i;
+  const a = tabs[i], b = tabs[Math.min(i + 1, tabs.length - 1)], mix = (x, y) => x + (y - x) * f;
+  els.tabs.style.transform = `translateX(${tabs[0].offsetLeft - mix(a.offsetLeft, b.offsetLeft)}px)`;
+  els.tabLine.style.transform = `scaleX(${mix(a.offsetWidth, b.offsetWidth)})`;
+  [...tabs].forEach((t, k) => { t.style.opacity = String(1 - Math.min(1, Math.abs(k - pos)) * 0.6); });
+}
+
+// The header for what's showing: there over any sheet, and over the dashboard while it's drawn as one; the titles
+// along the row (where a row page's own title gives way to them), else just the time over the sheet's own title
+function syncHeader() {
+  const framed = els.dashboard.classList.contains("framed");
+  const row = sheetCard ? (rowAt(sheetCard.kind) >= 0 && !sheetStack.length ? rowAt(sheetCard.kind) + 1 : null)
+                        : framed ? 0 : null;
+  for (const h of [els.headerTabs, els.headerHome]) h.classList.toggle("shown", Boolean(sheetCard) || framed);
+  els.sheet.classList.toggle("row", row !== null);
+  els.tabsWrap.style.opacity = row === null ? "0" : "1";
+  if (row !== null) setTabs(row);
+}
+
 // --- Swiping ----------------------------------------------------------------------------------
 // Along the row, pages sit side by side: the page you're on and the next (or previous) one move together with the
 // finger, like a strip of film; the dashboard joins them drawn as a sheet too (showDash). Back from a subpage is different, a page lifted off the one under it: it slides off
@@ -505,15 +542,18 @@ function place(q) {  // q: how far the move has gone, 0 to 1; for rubber, px the
   } else if (s.mode === "side") {
     s.page.style.transform = `translateX(${s.ahead * q * 100}%)`;
     s.next.style.transform = `translateX(${s.ahead * (q - 1) * 100}%)`;
+    setTabs(s.row - s.ahead * q);  // the titles along with the pages
   } else {
     s.page.style.transform = `translateX(${q * 100}%)`;
-    s.next.style.transform = `translateX(${(q - 1) * 20}%)`;
+    if (s.next) s.next.style.transform = `translateX(${(q - 1) * 20}%)`;  // (none: the dashboard, which stays)
     els.swipeDim.style.opacity = String(1 - q);
+    if (s.toRow !== null) els.tabsWrap.style.opacity = String(q);  // back to a row page: its titles come up
   }
 }
 
 function showUnder(card) {
   els.under.dataset.kind = card.kind;
+  els.under.classList.toggle("row", rowAt(card.kind) >= 0);
   const [title, nodes] = renderCard(card);
   els.underTitle.textContent = title;
   els.underBody.replaceChildren(...nodes);
@@ -564,6 +604,7 @@ function setFramed(on, animate) {
   els.dashboard.classList.toggle("framed", on);
   void els.dashboard.offsetWidth;
   els.dashboard.classList.remove("snap");
+  syncHeader();
 }
 
 function hideDash(animate) {
@@ -577,20 +618,33 @@ function hideDash(animate) {
   dashHiding = setTimeout(() => { els.dash.hidden = true; }, DASH_MS);
 }
 
-const layers = () => [slide.page, slide.next, slide.mode === "over" ? els.swipeDim : null].filter(Boolean);
+const layers = () => [slide.page, slide.next,
+  ...(slide.mode === "side" ? [els.tabs, els.tabLine] : []),
+  ...(slide.mode === "over" ? [els.swipeDim, els.headerTabs, els.headerHome, slide.toRow !== null ? els.tabsWrap : null]
+                            : [])]
+  .filter(Boolean);
 
 // Start moving: which pages move, and what landing does. False: nothing to swipe to.
 function beginSlide(back) {
   const i = gesture.row;
   const side = (next, land) => {
     if (!i || next === els.dashboard) showDash(!i);
-    return { mode: "side", page: i ? els.sheet : els.dashboard, next, ahead: back ? 1 : -1, land };
+    return { mode: "side", page: i ? els.sheet : els.dashboard, next, ahead: back ? 1 : -1, land, row: i };
   };
-  if (i === undefined) {  // a subpage's edge: back to the page it opened over
-    showUnder(sheetStack.at(-1));
-    slide = { mode: "over", page: els.sheet, next: els.under, ahead: 1, land: goBack };
-    els.sheet.style.zIndex = "3";
-    els.swipeDim.style.zIndex = "2";
+  if (i === undefined) {  // a subpage's edge: back to the page it opened over (the dashboard: nothing to draw)
+    const to = sheetStack.at(-1), toRow = to !== DASHBOARD && rowAt(to.kind) >= 0 ? rowAt(to.kind) + 1 : null;
+    if (to !== DASHBOARD) showUnder(to);
+    if (toRow !== null) setTabs(toRow);
+    slide = { mode: "over", page: els.sheet, next: to === DASHBOARD ? null : els.under, ahead: 1, land: goBack, toRow };
+    // From the bottom: the page underneath, its header, the dim over both, the page sliding off, carrying its own copy
+    // of the time (the dashboard underneath has its own clock, and no header)
+    els.under.style.zIndex = "1";
+    els.headerTabs.style.zIndex = els.headerHome.style.zIndex = "2";
+    if (to === DASHBOARD) els.headerHome.style.opacity = "0";
+    els.sheetTime.textContent = els.headerTime.textContent;
+    els.sheet.classList.add("carry-time");
+    els.swipeDim.style.zIndex = "3";
+    els.sheet.style.zIndex = "4";
     els.swipeDim.hidden = false;
   } else if (back && i === 1) {
     slide = side(els.dashboard, closeSheet);
@@ -621,7 +675,10 @@ function endSlide(dashLands) {
   hideDash(dashLands);
   els.swipeDim.hidden = els.under.hidden = true;
   els.underBody.replaceChildren();
+  els.sheet.classList.remove("carry-time");
+  els.headerHome.style.opacity = "";
   slide = null;
+  syncHeader();
 }
 
 function letGo() {
@@ -697,6 +754,7 @@ function closeSheet() {
   els.sheet.classList.remove("shown");
   els.sheet.hidden = true;
   els.sheetBody.replaceChildren();
+  syncHeader();
 }
 
 // Untouched for 45 s, a sheet goes away and the room comes back. A recipe waits 30 minutes: a step can
@@ -1710,8 +1768,8 @@ function closeCamera() {
 els.mic.addEventListener("click", () => send({ type: "talk" }));
 els.stop.addEventListener("click", () => send({ type: "stop" }));
 els.close.addEventListener("click", hideOverlay);
-els.sheetClose.addEventListener("click", closeSheet);
 els.edge.addEventListener("click", (e) => { if (e.detail === 0) goBack(); });  // Enter or Space; a tap does nothing
+els.headerHome.addEventListener("click", closeSheet);  // the time: back to the dashboard
 els.cameraClose.addEventListener("click", closeCamera);
 els.menu.addEventListener("click", () => openSheet({ kind: "menu" }));
 els.ringingStop.addEventListener("click", () => send({ type: "stop" }));

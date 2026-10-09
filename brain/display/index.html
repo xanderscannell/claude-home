@@ -42,7 +42,6 @@
   </section>
 
   <section id="sheet-under" class="sheet under" hidden aria-hidden="true">
-    <span class="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span>  <!-- looks only -->
     <h2 id="under-title" class="sheet-title"></h2>
     <div id="under-body" class="sheet-body"></div>
   </section>
@@ -51,11 +50,19 @@
   <section id="sheet" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheet-title">
     <button id="sheet-edge" class="edge" type="button" aria-label="Back" hidden></button>
     <h2 id="sheet-title" class="sheet-title"></h2>
-    <button id="sheet-close" class="close" type="button" aria-label="Close">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
-    </button>
+    <span id="sheet-time" class="sheet-time" aria-hidden="true"></span>  <!-- carried off in a back swipe -->
     <div id="sheet-body" class="sheet-body"></div>
   </section>
+
+  <!-- The sheets' header, over whichever is showing: along the row, every row page's title with the one you're on
+       underlined (the titles slide under the line as you swipe); elsewhere the sheet's own title shows through.
+       The time on the right. -->
+  <div id="header-tabs" class="header header-tabs" aria-hidden="true">
+    <div class="tabs-wrap"><div id="tabs" class="tabs"></div><i id="tab-line" class="tab-line"></i></div>
+  </div>
+  <button id="header-home" class="header header-time" type="button" aria-label="Back to the dashboard">
+    <time id="header-time"></time>
+  </button>
 
   <section id="overlay" class="overlay" data-state="idle" hidden aria-live="polite">
     <button id="close-overlay" class="close" type="button" aria-label="Close">

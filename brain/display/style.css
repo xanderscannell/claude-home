@@ -127,6 +127,7 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 /* --- Conversation overlay ------------------------------------------------------------- */
 
 .overlay {
+  z-index: 10;  /* over the header */
   position: fixed; inset: 0;
   background: rgba(19, 32, 46, .9);
   padding: 34px 36px 0;
@@ -194,11 +195,51 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 }
 .sheet.shown { transform: none; }
 .sheet-title {
-  padding-right: 72px;
+  padding-right: 130px;  /* the header's time */
   font: 380 34px/1.15 var(--far);
   font-variation-settings: "opsz" 36, "SOFT" 100;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* A row page's own title gives way to the header's titles (kept for its height, and for screen readers) */
+.sheet.row .sheet-title, .dash .sheet-title { color: transparent; }
+
+/* The header: the same type and place as a sheet's title, over every sheet. Along the row, the row pages' titles
+   in a line, the one you're on at the left in full and underlined, the rest dimmer, fading out before the time;
+   swiping, the line of titles slides so the next one comes under the underline (app.js setTabs). Elsewhere just the
+   time, the sheet's own title showing through. Two layers, so a swipe back from a subpage can put the titles (the
+   page underneath's) under the page sliding off while the time stays on top. Below the conversation, the ringing
+   alarm, and the camera. */
+.header { position: fixed; pointer-events: none; opacity: 0; transition: opacity .26s ease-out; }
+.header.shown { opacity: 1; }
+.header-tabs { z-index: 4; top: 0; left: 0; right: 130px; height: 80px; }
+/* The time takes you back to the dashboard (the clock): a 64 px target round the text, which sits where a title does */
+.header-time, .sheet-time {
+  font: 380 34px/1.15 var(--far);
+  font-variation-settings: "opsz" 36, "SOFT" 100;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  color: var(--mist);
+}
+.header-time { z-index: 5; top: 14px; right: 24px; padding: 12px; min-height: 64px; }
+.header-time.shown { pointer-events: auto; }
+/* A sheet sliding off in a back swipe takes its own copy of the time with it; the header's goes under it, with the
+   page being uncovered (app.js beginSlide) */
+.sheet-time { display: none; position: absolute; top: 26px; right: 36px; }
+.sheet.carry-time .sheet-time { display: block; }
+/* The titles fade out at either end: a mask, not night painted over them, since the dashboard's photo can be under
+   them while it shrinks */
+.tabs-wrap {
+  position: absolute; top: 26px; left: 0; right: 0; height: 54px; overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 36px, #000 calc(100% - 56px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 36px, #000 calc(100% - 56px), transparent);
+}
+.tabs {
+  display: flex; gap: 30px; padding-left: 36px; white-space: nowrap;
+  font: 380 34px/1.15 var(--far);
+  font-variation-settings: "opsz" 36, "SOFT" 100;
+}
+.tab { flex: none; opacity: .4; }
+.tabs.settling .tab { transition: opacity .22s ease-out; }
+.tab-line { position: absolute; left: 36px; top: 44px; width: 1px; height: 3px; background: var(--accent); transform-origin: left; }
 /* Back, when this sheet opened over another (Home > Rooms > a room): a swipe in from the left edge slides this
    sheet off to the right, uncovering the one underneath. The edge strip sits inside the sheet's left padding so it
    covers nothing, and takes the whole gesture (touch-action: none) so a sideways scroller under it can't. */
@@ -505,8 +546,8 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 .sheet-body .auto-when { font-size: 17px; color: var(--mist); margin-top: 2px; }
 .auto-row.off .auto-name, .auto-row.off .auto-when { opacity: .4; }
 
-/* In the title row, left of the close button (positioned against the sheet, so it doesn't scroll with the rooms) */
-.lights-off { position: absolute; top: 14px; right: 88px; }
+/* In the title row, left of the header's time (positioned against the sheet, so it doesn't scroll with the rooms) */
+.lights-off { position: absolute; top: 14px; right: 140px; }
 
 /* Text: whatever Claude wants on screen; fewer, shorter lines get bigger type */
 .text-lines p { font-size: 22px; line-height: 1.45; padding: 7px 0; max-width: 700px; }
@@ -667,6 +708,7 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 /* --- Ringing: the one screen that should be seen from across the room --------------------------- */
 
 .ringing {
+  z-index: 10;
   position: fixed; inset: 0;
   background: var(--marigold); color: var(--night);
   padding: 44px 40px;
@@ -717,6 +759,7 @@ body.is-night .photo, body.is-night .scrim, body.is-night .home, body.is-night .
 /* --- Offline note ------------------------------------------------------------------------ */
 
 .offline {
+  z-index: 10;
   position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
   padding: 10px 20px; border-radius: 22px;
   background: rgba(19, 32, 46, .92); color: var(--frost);
@@ -725,7 +768,7 @@ body.is-night .photo, body.is-night .scrim, body.is-night .home, body.is-night .
 
 /* --- Camera: a live view filling the screen, its name over the top ----------------------------- */
 
-.camera { position: fixed; inset: 0; background: #000; }
+.camera { position: fixed; z-index: 10; inset: 0; background: #000; }
 .camera video { width: 100%; height: 100%; object-fit: contain; }
 .camera-name {
   position: absolute; top: 20px; left: var(--edge); right: 90px;
