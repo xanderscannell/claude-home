@@ -397,6 +397,7 @@ def test_sheets(b):
     d.page.clock.run_for(2000)
     assert d.text(".dial-time") == "4:10", "the dial isn't ticking"
     assert abs(offset() - (1 - 250 / 504)) < 0.01, offset()
+    d.page.wait_for_timeout(300)  # the sheet's slide up runs in real time: let it finish, or the box moves with it
     box = d.page.locator(".dial-time").bounding_box()
     d.page.clock.run_for(3000)  # 4:10 down to 4:07: different digit widths, same box
     assert d.page.locator(".dial-time").bounding_box() == box, "the dial's time shouldn't shift as it ticks"
