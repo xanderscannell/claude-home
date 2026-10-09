@@ -42,6 +42,9 @@ RING_MIN_SPEECH_S = 0.16  # a lone "stop" is short; the brain's transcript decid
 MIC_TIMEOUT_S = 2.0  # no audio for this long means the mic is gone (unplugged)
 MIC_BACKLOG = int(5 / FRAME_S)  # mic frames kept for a reader that fell behind; older ones are dropped
 DUCK_PERCENT = 20  # music volume while listening and talking
+# Output buffer. PortAudio's default (~40 ms on the Pi) underran with music playing alongside; 200 ms didn't,
+# at the cost of sound starting (and Stop cutting it) that much later.
+OUT_LATENCY_S = 0.2
 VOLUME = "Master"  # the speaker's volume: asound.conf's software control, the same whatever is plugged in
 
 
@@ -105,7 +108,7 @@ class Player:
             self.stream.close()
         self.rate = rate
         self.stream = sd.OutputStream(samplerate=rate, channels=1, dtype="int16",
-                                      device=_device("AUDIO_OUT"), callback=self._fill)
+                                      device=_device("AUDIO_OUT"), callback=self._fill, latency=OUT_LATENCY_S)
         self.stream.start()
 
     def _fill(self, out, frames, _time, _status):  # runs on the audio thread
