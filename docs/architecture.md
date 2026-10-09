@@ -208,7 +208,7 @@ The screen sends `open {sheet}` for `house`, `lights`, `rooms`, `room` (with `ro
 `entity` it's a Home Assistant player, without one Spotify as above); and `automation_run {entity}` or
 `automation_toggle {entity, enabled}`. Taps on a thermostat's or a player's − and + go out as one
 change once they stop. The answer to a change is a fresh
-card of the page that screen last opened. Back re-sends the open that brought up the page it returns
+card of the page that screen last opened. Going back (a swipe in from the left edge) re-sends the open that brought up the page it returns
 to, so that page comes back fresh too.
 
 Display -> brain:

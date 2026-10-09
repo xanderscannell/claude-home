@@ -10,7 +10,8 @@ const els = {
   time: $("time"), date: $("date"), mic: $("mic"), menu: $("menu"), weather: $("weather"), strip: $("strip"),
   overlay: $("overlay"), heard: $("heard"), reply: $("reply"), stop: $("stop"), close: $("close-overlay"),
   sheet: $("sheet"), sheetTitle: $("sheet-title"), sheetBody: $("sheet-body"), sheetClose: $("sheet-close"),
-  sheetBack: $("sheet-back"),
+  edge: $("sheet-edge"), under: $("sheet-under"), underTitle: $("under-title"), underBody: $("under-body"),
+  underDim: $("under-dim"),
   ringing: $("ringing"), ringingTime: $("ringing-time"), ringingLabel: $("ringing-label"),
   ringingStop: $("ringing-stop"), snooze: $("snooze"),
   offline: $("offline"), nightTime: $("night-time"),
@@ -402,8 +403,7 @@ function openSheet(card) {
   if (lastOpen && lastOpen.sheet === card.kind) [card.request, lastOpen] = [lastOpen, null];
   if (sheetCard && sheetCard.kind !== card.kind) sheetStack.push(sheetCard);
   else if (sheetCard && !card.request) card.request = sheetCard.request;  // the same kind is a refresh of it
-  els.sheetBack.hidden = !sheetStack.length;
-  els.sheet.classList.toggle("has-back", sheetStack.length > 0);
+  els.edge.hidden = !sheetStack.length;
   sheetCard = card;
   // A timers card can beat the next ambient update by up to half a second; it is just as fresh, so use it.
   if (card.kind === "timers") ambient = { ...ambient, timers: card.timers };
@@ -421,6 +421,63 @@ function goBack() {
   openSheet(prev);
   if (prev.request) send(prev.request);
 }
+
+// Swiping back: the sheet follows the finger off to the right, and the one it opened over waits underneath, drawn
+// from its card, drifting in from a little to the left and brightening as it's uncovered. Let go past a third of the
+// screen (or flick) and it goes back; short of that it springs home.
+const SWIPE_BACK_AT = 1 / 3;
+const SWIPE_FLICK = 0.5;  // px per ms
+const SETTLE_MS = 220;  // .settling's transition
+let swipe = null;  // {x, dx, t, v} while a finger is on the edge
+
+function swipeTo(p) {
+  els.sheet.style.transform = `translateX(${p * 100}%)`;
+  els.under.style.transform = `translateX(${(p - 1) * 20}%)`;
+  els.underDim.style.opacity = String(1 - p);
+}
+
+function endSwipe() {
+  els.sheet.style.transform = els.under.style.transform = "";
+  void els.sheet.offsetWidth;  // apply that before transitions come back on, or the sheet would slide in from the side
+  for (const s of [els.sheet, els.under]) s.classList.remove("dragging", "settling");
+  els.under.hidden = true;
+  els.underBody.replaceChildren();
+}
+
+els.edge.addEventListener("pointerdown", (e) => {
+  if (!sheetStack.length || swipe) return;
+  const [title, nodes] = renderers[sheetStack.at(-1).kind](sheetStack.at(-1));
+  els.underTitle.textContent = title;
+  els.underBody.replaceChildren(...nodes);
+  els.under.hidden = false;
+  for (const s of [els.sheet, els.under]) s.classList.add("dragging");
+  swipe = { x: e.clientX, dx: 0, t: e.timeStamp, v: 0 };
+  swipeTo(0);
+  els.edge.setPointerCapture(e.pointerId);
+});
+els.edge.addEventListener("pointermove", (e) => {
+  if (!swipe) return;
+  const dx = Math.max(0, e.clientX - swipe.x);
+  swipe.v = (dx - swipe.dx) / Math.max(1, e.timeStamp - swipe.t);
+  Object.assign(swipe, { dx, t: e.timeStamp });
+  swipeTo(dx / innerWidth);
+});
+const letGo = () => {
+  if (!swipe) return;
+  const back = swipe.dx / innerWidth > SWIPE_BACK_AT || (swipe.v > SWIPE_FLICK && swipe.dx > 40);
+  swipe = null;
+  for (const s of [els.sheet, els.under]) s.classList.replace("dragging", "settling");
+  swipeTo(back ? 1 : 0);
+  setTimeout(() => {
+    if (back) {
+      els.sheet.classList.replace("settling", "dragging");  // land on the page underneath without sliding in again
+      goBack();
+    }
+    endSwipe();
+  }, SETTLE_MS);
+};
+els.edge.addEventListener("pointerup", letGo);
+els.edge.addEventListener("pointercancel", letGo);
 
 function closeSheet() {
   clearTimeout(sheetIdle);
@@ -1445,7 +1502,7 @@ els.mic.addEventListener("click", () => send({ type: "talk" }));
 els.stop.addEventListener("click", () => send({ type: "stop" }));
 els.close.addEventListener("click", hideOverlay);
 els.sheetClose.addEventListener("click", closeSheet);
-els.sheetBack.addEventListener("click", goBack);
+els.edge.addEventListener("click", (e) => { if (e.detail === 0) goBack(); });  // Enter or Space; a tap does nothing
 els.cameraClose.addEventListener("click", closeCamera);
 els.menu.addEventListener("click", () => openSheet({ kind: "menu" }));
 els.ringingStop.addEventListener("click", () => send({ type: "stop" }));

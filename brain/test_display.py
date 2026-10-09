@@ -449,12 +449,12 @@ def test_sheets(b):
     d.push(ambient([eggs]))  # the brain confirms the stop
     assert d.page.locator(".timers.one .tmr").count() == 1
     d.push(ambient([]))
-    assert d.text(".sheet-body .quiet") == "No timers running."
+    assert d.text("#sheet-body .quiet") == "No timers running."
     d.shot("sheet-timers-empty", settle=400)
 
     # Untouched for 45 s, the sheet goes home; a touch restarts the wait
     d.page.clock.run_for(30_000)
-    d.page.locator(".sheet-body").tap()
+    d.page.locator("#sheet-body").tap()
     d.page.clock.run_for(30_000)
     assert sheet_open(d), "a touch should restart the 45 s wait"
     d.page.clock.run_for(16_000)
@@ -489,7 +489,7 @@ def test_shopping_list(b):
         {"name": "Pantry", "items": ["Sourdough bread", "Bananas"]}]}})
     assert d.text("#sheet-title") == "Shopping list"
     assert d.page.locator(".shop-name").all_inner_texts() == ["Milk", "Eggs", "Sourdough bread", "Bananas"]
-    assert d.page.locator(".sheet-body .group-label").all_inner_texts() == ["Meat & Dairy", "Pantry"]  # none for no category
+    assert d.page.locator("#sheet-body .group-label").all_inner_texts() == ["Meat & Dairy", "Pantry"]  # none for no category
     box = d.page.locator(".shop-item").first.bounding_box()
     assert big(box, w=0), box
     d.shot("shopping", settle=400)
@@ -520,7 +520,7 @@ def test_shopping_list(b):
 
     # Empty list says how to add things
     d.push({"type": "card", "card": {"kind": "shopping", "groups": []}})
-    assert d.text(".sheet-body .quiet") == "The shopping list is empty." and "add milk" in d.text(".hint")
+    assert d.text("#sheet-body .quiet") == "The shopping list is empty." and "add milk" in d.text(".hint")
     d.shot("shopping-empty", settle=200)
     d.close()
 
@@ -531,7 +531,7 @@ def test_menu(b):
     assert d.visible("#sheet") and d.text("#sheet-title") == "Menu"
     assert d.page.locator(".menu-label").all_inner_texts() == ["Home", "Timers", "Alarms", "Shopping list", "Music", "Volume"]
     overhang = d.page.evaluate("""() => {  // both measured at once: the sheet may still be sliding up
-      const rows = document.querySelectorAll(".menu-row"), body = document.querySelector(".sheet-body");
+      const rows = document.querySelectorAll(".menu-row"), body = document.querySelector("#sheet-body");
       return rows[rows.length - 1].getBoundingClientRect().bottom - body.getBoundingClientRect().bottom; }""")
     assert overhang <= 0, f"every menu row should fit; the last hangs {overhang}px below the sheet"
     d.shot("menu", settle=400)
@@ -542,7 +542,7 @@ def test_menu(b):
         m for m in d.sent if m.get("type") == "open"], d.sent
     d.page.locator(".menu-row").nth(4).tap()  # Music: opens straight away, the page knows what's playing
     d.page.wait_for_timeout(50)
-    assert d.text("#sheet-title") == "Music" and d.text(".sheet-body .quiet") == "Nothing is playing."
+    assert d.text("#sheet-title") == "Music" and d.text("#sheet-body .quiet") == "Nothing is playing."
     d.close()
 
 
@@ -554,7 +554,7 @@ def test_volume(b):
     d.tap("#menu")
     d.page.locator(".menu-row").nth(5).tap()
     d.page.wait_for_timeout(50)
-    assert d.text("#sheet-title") == "Volume" and d.text(".sheet-body .quiet") == "The speaker isn't connected."
+    assert d.text("#sheet-title") == "Volume" and d.text("#sheet-body .quiet") == "The speaker isn't connected."
     d.shot("volume-unknown", settle=400)
 
     # The level arrives: the hero number and a slider as wide as the screen, thumb-high
@@ -676,16 +676,31 @@ def test_home_control(b):
     d.close()
 
 
+def swipe(d, to, pause=0, release=True):
+    """A finger in from the left edge to x=to. pause: real ms between moves (slow, so not a flick)."""
+    d.page.mouse.move(8, 240)
+    d.page.mouse.down()
+    for x in range(8, to + 1, 24):
+        d.page.mouse.move(x, 240)
+        if pause:
+            d.page.wait_for_timeout(pause)
+    d.page.mouse.move(to, 240)
+    if release:
+        d.page.mouse.up()
+        d.page.clock.run_for(300)  # past the settle's timer
+        d.page.wait_for_timeout(300)  # and its transition (CSS runs in real time)
+
+
 def test_rooms_and_back(b):
     d = Display(b)
     opened = lambda: [m for m in d.sent if m.get("type") == "open"]  # noqa: E731
 
     # Rooms: each room's name, and what's on in it; a room with a light on is lit
     d.tap("#menu")
-    assert d.page.locator("#sheet-back").is_hidden(), "nothing to go back to from the menu"
+    assert d.page.locator("#sheet-edge").is_hidden(), "nothing to go back to from the menu"
     d.page.locator(".menu-row").first.tap()  # Home
     d.push({"type": "card", "card": HOUSE})
-    assert d.text("#sheet-title") == "Home" and d.visible("#sheet-back")
+    assert d.text("#sheet-title") == "Home" and d.page.locator("#sheet-edge").is_visible()
     d.tap(".tile-rooms")
     rooms = [{"id": "living_room", "name": "Living room", "lights": 3, "lights_on": 1, "playing": ["TV"], "switched_on": []},
              {"id": "bedroom", "name": "Bedroom", "lights": 2, "lights_on": 0, "playing": [], "switched_on": ["Ceiling fan"]},
@@ -722,14 +737,32 @@ def test_rooms_and_back(b):
     assert {"type": "light", "entity": "switch.fan", "on": False} in d.sent
     assert opened()[-1] == {"type": "open", "sheet": "media", "entity": "media_player.tv"}
 
-    # A refresh of the same page doesn't stack; Back goes up a level and asks for it again, fresh
+    # A refresh of the same page doesn't stack. Swiping in from the left edge slides the page off over the one it
+    # opened over, drawn underneath while the finger is down; let go past a third and it goes back, asking for that
+    # page again, fresh.
     d.push({"type": "card", "card": dict(room, switches=[])})
-    d.tap("#sheet-back")
+    edge = d.page.locator("#sheet-edge").bounding_box()
+    assert edge["x"] == 0 and edge["width"] <= 36, "the edge stays inside the sheet's padding, covering nothing"
+    swipe(d, 320, release=False)
+    assert d.visible("#sheet-under") and d.text("#under-title") == "Rooms"
+    assert d.page.locator("#under-body .room-name").all_inner_texts() == ["Living room", "Bedroom", "Garage"]
+    moved = d.page.eval_on_selector("#sheet", "s => s.getBoundingClientRect().left")
+    assert 300 <= moved <= 330, moved
+    d.shot("swipe-back", settle=0)
+    d.page.mouse.up()
+    d.page.clock.run_for(300)
+    d.page.wait_for_timeout(50)
     assert d.text("#sheet-title") == "Rooms" and opened()[-1] == {"type": "open", "sheet": "rooms"}
-    d.tap("#sheet-back")
+    assert not d.visible("#sheet-under") and d.page.eval_on_selector("#sheet", "s => s.getBoundingClientRect().left") == 0
+    swipe(d, 150, pause=40)  # short and slow: springs back
+    assert d.text("#sheet-title") == "Rooms" and not d.visible("#sheet-under")
+    assert d.page.eval_on_selector("#sheet", "s => s.getBoundingClientRect().left") == 0
+    swipe(d, 150)  # just as short, but a flick: goes back
     assert d.text("#sheet-title") == "Home" and opened()[-1] == {"type": "open", "sheet": "house"}
-    d.tap("#sheet-back")
-    assert d.text("#sheet-title") == "Menu" and d.page.locator("#sheet-back").is_hidden()
+    d.page.focus("#sheet-edge")
+    d.page.keyboard.press("Enter")  # no swiping from a keyboard: the edge is a Back button
+    d.page.wait_for_timeout(50)
+    assert d.text("#sheet-title") == "Menu" and d.page.locator("#sheet-edge").is_hidden()
     assert big(d.page.locator("#sheet-close").bounding_box())
 
     # Close forgets the way back: the next sheet starts fresh
@@ -737,7 +770,7 @@ def test_rooms_and_back(b):
     d.push({"type": "card", "card": HOUSE})
     d.tap("#sheet-close")
     d.push({"type": "card", "card": HOUSE})
-    assert d.page.locator("#sheet-back").is_hidden()
+    assert d.page.locator("#sheet-edge").is_hidden()
     d.close()
 
 
@@ -800,7 +833,7 @@ def test_climate(b):
     assert pages.evaluate("p => p.scrollLeft") == pages.evaluate("p => p.children[1].offsetLeft - p.offsetLeft")
 
     d.push({"type": "card", "card": {"kind": "climate", "thermostats": []}})
-    assert d.text(".sheet-body .quiet") == "No thermostats."
+    assert d.text("#sheet-body .quiet") == "No thermostats."
     d.close()
 
 
@@ -885,7 +918,7 @@ def test_automations(b):
     assert d.page.locator(".auto-row.off").count() == 1
 
     d.push({"type": "card", "card": {"kind": "automations", "automations": []}})
-    assert d.text(".sheet-body .quiet") == "No automations."
+    assert d.text("#sheet-body .quiet") == "No automations."
     d.close()
 
 
@@ -981,7 +1014,7 @@ def test_alarms_on_screen(b):
 
     # No alarms: says so, and how to set one
     d.push({"type": "card", "card": {"kind": "alarms", "alarms": []}})
-    assert d.text(".sheet-body .quiet") == "No alarms set." and "wake me up" in d.text(".hint")
+    assert d.text("#sheet-body .quiet") == "No alarms set." and "wake me up" in d.text(".hint")
 
     # Ringing: over everything (even an open sheet), Stop and Snooze send their messages, null clears it
     d.push({"type": "ringing", "ringing": {"kind": "alarm", "id": 1, "label": "", "time": "06:30"}})
@@ -1056,7 +1089,7 @@ def test_agenda(b):
     assert d.page.locator(".event-cal").all_inner_texts() == ["Personal", "Personal", "Kids Sports", "Work", "Family"]
     assert d.page.locator(".event-when.next").all_inner_texts() == ["3:00pm"], "the next thing today stands out"
     d.shot("agenda-sheet", settle=400)
-    d.page.locator(".sheet-body").evaluate("e => e.scrollTop = e.scrollHeight")
+    d.page.locator("#sheet-body").evaluate("e => e.scrollTop = e.scrollHeight")
     d.shot("agenda-sheet-scrolled", settle=100)
 
     # Under way: Now, in the accent
@@ -1067,7 +1100,7 @@ def test_agenda(b):
 
     # Nothing coming up
     d.push({"type": "card", "card": {"kind": "agenda", "events": []}})
-    assert d.text(".sheet-body .quiet") == "Nothing on the calendar this week."
+    assert d.text("#sheet-body .quiet") == "Nothing on the calendar this week."
     d.shot("agenda-empty", settle=200)
     d.close()
 
@@ -1226,7 +1259,7 @@ def test_music(b):
 
     # Nothing playing: says so, and says how to start something
     d.push({"type": "now_playing", "track": None})
-    assert d.text(".sheet-body .quiet") == "Nothing is playing." and d.page.locator(".np-btn").count() == 0
+    assert d.text("#sheet-body .quiet") == "Nothing is playing." and d.page.locator(".np-btn").count() == 0
     d.shot("music-nothing", settle=200)
     d.close()
 

@@ -199,10 +199,22 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
   font-variation-settings: "opsz" 36, "SOFT" 100;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-/* Back, when this sheet opened over another (Home > Rooms > a room): top left, the title moving over for it */
-.back { position: absolute; top: 14px; left: 18px; width: 64px; height: 64px; display: grid; place-items: center; opacity: .7; }
-.back svg { width: 26px; height: 26px; }
-.sheet.has-back .sheet-title { padding-left: 54px; }
+/* Back, when this sheet opened over another (Home > Rooms > a room): a swipe in from the left edge slides this
+   sheet off to the right, uncovering the one underneath. The edge strip sits inside the sheet's left padding so it
+   covers nothing, and takes the whole gesture (touch-action: none) so a sideways scroller under it can't. */
+.edge { position: absolute; z-index: 1; top: 0; bottom: 0; left: 0; width: 30px; touch-action: none; }
+.edge:focus-visible { outline-offset: -4px; }
+/* The handle that says the edge can be pulled, like a phone's home bar turned on its side; frost as faint as the scrollbars */
+.edge::after {
+  content: ""; position: absolute; left: 10px; top: 50%;
+  width: 5px; height: 64px; margin-top: -32px; border-radius: 3px;
+  background: rgba(238, 243, 247, .22);
+}
+.sheet.dragging, .under.dragging { transition: none; }
+.sheet.settling, .under.settling { transition: transform .22s ease-out; }
+.under { transform: none; pointer-events: none; }
+.under-dim { position: absolute; inset: 0; background: rgba(0, 0, 0, .45); }
+.settling .under-dim { transition: opacity .22s ease-out; }
 .sheet-body { flex: 1; min-height: 0; margin-top: 16px; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 24px; }
 .sheet-body p { margin: 0; }
 /* Empty states: say what's (not) here in the far-read voice, then how to change that. Scoped under
