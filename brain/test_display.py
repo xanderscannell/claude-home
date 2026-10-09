@@ -364,6 +364,51 @@ def test_night_mode(b):
     d.close()
 
 
+def test_forcing_night(b):
+    """Swiped in from its left edge, the dashboard slides away over the night screen's black, and the dim clock comes
+    up once it's gone. The next touch brings the dashboard back, for good (it isn't night); left alone, it's night
+    until the night hours end."""
+    d = Display(b)
+    d.push(hello())  # night is 22:00 to 07:00; it's 9:41 in the morning
+    clock = lambda: d.page.eval_on_selector("#night-time", "t => getComputedStyle(t).opacity")  # noqa: E731
+    assert not is_night(d)
+    edge, menu = d.page.locator("#dash-edge").bounding_box(), d.page.locator("#menu").bounding_box()
+    assert edge["x"] == 0 and edge["y"] >= menu["y"] + menu["height"], "the edge leaves the menu button alone"
+
+    swipe(d, 300, y=300, release=False)
+    assert d.visible("#night") and not is_night(d)
+    assert round(d.page.eval_on_selector("#dashboard", "e => e.getBoundingClientRect().left")) == 300 - 8
+    assert clock() == "0", "the clock waits for the dashboard to be gone"
+    d.shot("forcing-night", settle=0)
+    d.page.mouse.up()
+    d.page.clock.run_for(600)
+    d.page.wait_for_timeout(900)  # the clock coming up (real time)
+    assert is_night(d) and clock() == "0.35"
+    d.shot("forced-night")
+
+    d.tap("#night")
+    assert not is_night(d) and d.visible("#home")
+    assert [m for m in d.sent if m["type"] != "fetch"] == [], "the waking tap mustn't press anything"
+    d.page.clock.run_for(60_000)
+    assert not is_night(d), "a forced night ends with a touch, not for 30 s like a real one"
+
+    swipe(d, 150, y=300, pause=40)  # short and slow: springs back
+    assert not is_night(d) and not d.visible("#night")
+    assert d.page.eval_on_selector("#dashboard", "e => e.getBoundingClientRect().left") == 0
+    d.close()
+
+    # Left alone, a forced night ends when the night hours do: forced at 9:41, it's day again at 7:00 tomorrow
+    d = Display(b)
+    d.push(hello())
+    swipe(d, 400, y=300)
+    assert is_night(d)
+    d.page.clock.run_for((21 * 60 + 18) * 60_000)  # to 6:59 tomorrow
+    assert is_night(d), "night all through the night hours"
+    d.page.clock.run_for(2 * 60_000)
+    assert not is_night(d) and d.text("#time") == "7:01", "day at the night hours' end"
+    d.close()
+
+
 def sheet_open(d) -> bool:
     return d.visible("#sheet")
 

@@ -754,7 +754,14 @@ body.is-night .photo, body.is-night .scrim, body.is-night .home, body.is-night .
   font-feature-settings: "tnum" 1, "lnum" 1;
   letter-spacing: -2px;
   color: var(--ember); opacity: .35;
+  transition: opacity .6s ease;  /* comes up slowly, out of the dark */
 }
+/* Forcing night from the dashboard: the night screen waits under it, black, while it's swiped away; the clock comes
+   up once it's gone. The edge for it starts below the menu button, so it never takes the button's taps. */
+.night.peek { display: block; }
+.night.peek .night-time { opacity: 0; }
+.edge.bare::after { display: none; }
+#dash-edge { top: 92px; }
 
 /* --- Offline note ------------------------------------------------------------------------ */
 

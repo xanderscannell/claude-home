@@ -13,7 +13,7 @@ const els = {
   headerTabs: $("header-tabs"), headerHome: $("header-home"), sheetTime: $("sheet-time"), tabs: $("tabs"), tabLine: $("tab-line"), headerTime: $("header-time"),
   tabsWrap: document.querySelector(".tabs-wrap"),
   edge: $("sheet-edge"), under: $("sheet-under"), underTitle: $("under-title"), underBody: $("under-body"),
-  swipeDim: $("swipe-dim"), dash: $("sheet-dash"), dashPhoto: $("dash-photo"), dashPic: $("dash-pic"), dashboard: $("dashboard"),
+  swipeDim: $("swipe-dim"), dash: $("sheet-dash"), dashPhoto: $("dash-photo"), dashPic: $("dash-pic"), dashboard: $("dashboard"), dashEdge: $("dash-edge"), night: $("night"),
   ringing: $("ringing"), ringingTime: $("ringing-time"), ringingLabel: $("ringing-label"),
   ringingStop: $("ringing-stop"), snooze: $("snooze"),
   offline: $("offline"), nightTime: $("night-time"),
@@ -110,6 +110,8 @@ function renderClock() {
 const NIGHT_WAKE_MS = 30000;
 let nightHours = null;
 let wokenUntil = 0;
+let forcedNight = false;  // put to night by a swipe from the dashboard's edge, until the next touch
+let forcedUntil = Infinity;  // or until the night hours next end
 let nightTimer = null;
 
 function minutes(hhmm) {
@@ -124,13 +126,19 @@ function inNightHours(now = new Date()) {
 }
 
 function applyNight() {
-  const night = inNightHours() && Date.now() >= wokenUntil;
+  if (forcedNight && Date.now() >= forcedUntil) forcedNight = false;  // morning
+  const night = (inNightHours() || forcedNight) && Date.now() >= wokenUntil;
   const was = document.body.classList.contains("is-night");
   document.body.classList.toggle("is-night", night);
   if (was && !night && !frontLayer.classList.contains("shown")) nextPhoto();  // morning, or a touch: bring the room back
 }
 
 function wakeFromNight() {
+  if (forcedNight && document.body.classList.contains("is-night")) {  // a forced night ends with a touch, for good
+    forcedNight = false;
+    applyNight();
+    return;
+  }
   if (!inNightHours()) return;
   wokenUntil = Date.now() + NIGHT_WAKE_MS;
   clearTimeout(nightTimer);
@@ -543,6 +551,8 @@ function place(q) {  // q: how far the move has gone, 0 to 1; for rubber, px the
   const s = slide;
   if (s.mode === "rubber") {
     s.page.style.transform = `translateX(${q}px)`;
+  } else if (s.mode === "away") {
+    s.page.style.transform = `translateX(${q * 100}%)`;  // the dashboard off to the right, the night screen under it
   } else if (s.mode === "side") {
     s.page.style.transform = `translateX(${s.ahead * q * 100}%)`;
     s.next.style.transform = `translateX(${s.ahead * (q - 1) * 100}%)`;
@@ -630,6 +640,15 @@ const layers = () => [slide.page, slide.next,
 
 // Start moving: which pages move, and what landing does. False: nothing to swipe to.
 function beginSlide(back) {
+  if (gesture.night) {  // the dashboard's edge: away to the night clock
+    els.night.classList.add("peek");
+    els.night.style.zIndex = "1";
+    els.dashboard.style.zIndex = "2";
+    slide = { mode: "away", page: els.dashboard, next: els.night, ahead: 1, land: forceNight };
+    for (const l of layers()) l.classList.add("dragging");
+    place(0);
+    return true;
+  }
   const i = gesture.row;
   const side = (next, land) => {
     if (!i || next === els.dashboard) showDash(!i);
@@ -680,6 +699,7 @@ function endSlide(dashLands) {
   els.swipeDim.hidden = els.under.hidden = true;
   els.underBody.replaceChildren();
   els.sheet.classList.remove("carry-time");
+  els.night.classList.remove("peek");  // (landed: night is on, and its clock comes up)
   els.headerHome.style.opacity = "";
   slide = null;
   syncHeader();
@@ -723,6 +743,12 @@ document.addEventListener("pointerdown", (e) => {
   if (e.target === els.edge && sheetStack.length) {
     gesture = start;
     els.edge.setPointerCapture(e.pointerId);
+    beginSlide(true);
+    return;
+  }
+  if (e.target === els.dashEdge && rowIndex() === 0) {
+    gesture = { ...start, night: true };
+    els.dashEdge.setPointerCapture(e.pointerId);
     beginSlide(true);
     return;
   }
@@ -1774,6 +1800,21 @@ els.stop.addEventListener("click", () => send({ type: "stop" }));
 els.close.addEventListener("click", hideOverlay);
 els.edge.addEventListener("click", (e) => { if (e.detail === 0) goBack(); });  // Enter or Space; a tap does nothing
 els.headerHome.addEventListener("click", closeSheet);  // the time: back to the dashboard
+els.dashEdge.addEventListener("click", (e) => { if (e.detail === 0) forceNight(); });  // from a keyboard
+
+// Night now, whatever the hour, until the next touch or the night hours next end (with none set, just the touch)
+function forceNight() {
+  forcedNight = true;
+  wokenUntil = 0;
+  forcedUntil = Infinity;
+  if (nightHours) {
+    const end = new Date(), [h, m] = nightHours.end.split(":").map(Number);
+    end.setHours(h, m, 0, 0);
+    if (end <= new Date()) end.setDate(end.getDate() + 1);
+    forcedUntil = end.getTime();
+  }
+  applyNight();
+}
 els.cameraClose.addEventListener("click", closeCamera);
 els.menu.addEventListener("click", () => openSheet({ kind: "menu" }));
 els.ringingStop.addEventListener("click", () => send({ type: "stop" }));
