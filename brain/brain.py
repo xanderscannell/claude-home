@@ -35,7 +35,7 @@ from pathlib import Path
 
 import httpx
 import uvicorn
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, StreamEvent
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage, StreamEvent
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -124,10 +124,17 @@ def transcribe(groq: httpx.Client, pcm: bytes) -> str:
 
 
 async def ask(client: ClaudeSDKClient, text: str):
-    """Yield the reply one sentence at a time as Claude streams it."""
+    """Yield the reply one sentence at a time as Claude streams it. If the turn fails (a usage limit, an overload),
+    say so: the failure arrives only in the result, and without this the speaker went silent (2026-10-08 15:40)."""
     await client.query(f"[{datetime.now():%A %B %d, %I:%M %p}] {text}")
-    buf, muted = "", False
+    buf, muted, spoke = "", False, False
     async for msg in client.receive_response():
+        if isinstance(msg, ResultMessage) and msg.is_error:
+            print(f"  claude failed: {msg.subtype} {msg.api_error_status or ''} {msg.result or msg.errors or ''}")
+            if not spoke:
+                yield ("Claude is rate limited right now. Try again in a little while." if msg.api_error_status == 429
+                       else "Sorry, I couldn't get an answer from Claude just then.")
+            continue
         if not isinstance(msg, StreamEvent):
             continue
         ev = msg.event
@@ -144,6 +151,7 @@ async def ask(client: ClaudeSDKClient, text: str):
             # The WebSearch tool insists on a trailing "Sources:" list of links; never speak it.
             muted = muted or bool(SOURCES.match(s))
             if not muted and (s := MD_LINK.sub(r"\1", s).strip()):
+                spoke = True
                 yield s
     if buf.strip() and not muted:
         yield MD_LINK.sub(r"\1", buf).strip()

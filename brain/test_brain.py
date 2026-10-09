@@ -12,12 +12,13 @@ import time
 os.environ["CLAUDE_HOME_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")  # before importing tools
 
 import httpx
+from claude_agent_sdk import ResultMessage, StreamEvent
 from PIL import Image
 
 import photos
 import todoist
 import tools
-from brain import for_speech, pop_sentences
+from brain import ask, for_speech, pop_sentences
 
 assert pop_sentences("Hi there. How are") == (["Hi there."], "How are")
 assert pop_sentences("It costs 3.50 dollars! Okay") == (["It costs 3.50 dollars!"], "Okay")
@@ -34,6 +35,36 @@ assert for_speech("Dr. Martin Luther King Jr. spoke.") == "Doctor Martin Luther 
 assert for_speech("Snacks, e.g. chips, etc.") == "Snacks, for example chips, et cetera"
 assert for_speech("Drive to Mt. Hood vs. Mt. Rainier") == "Drive to Mount Hood versus Mount Rainier"
 assert for_speech("Drs. and Mrs.Smith") == "Drs. and Mrs.Smith"  # only whole tokens
+
+
+# A failed Claude turn is said out loud, not silence; a turn that failed after speaking stays as spoken
+class FakeClaude:
+    def __init__(self, *msgs):
+        self.msgs = msgs
+
+    async def query(self, text):
+        pass
+
+    async def receive_response(self):
+        for m in self.msgs:
+            yield m
+
+
+def said_text(text):
+    return StreamEvent("u", "s", {"type": "content_block_delta", "delta": {"type": "text_delta", "text": text}})
+
+
+def failed(status):
+    return ResultMessage("success", 0, 0, True, 1, "s", api_error_status=status, result="limit")
+
+
+async def replies(client):
+    return [s async for s in ask(client, "play something")]
+
+
+assert asyncio.run(replies(FakeClaude(failed(429)))) == ["Claude is rate limited right now. Try again in a little while."]
+assert asyncio.run(replies(FakeClaude(failed(None)))) == ["Sorry, I couldn't get an answer from Claude just then."]
+assert asyncio.run(replies(FakeClaude(said_text("Playing it now. "), failed(500)))) == ["Playing it now."]
 
 # Shopping list (a fake Todoist): no duplicates, case-insensitive check-off, reports what wasn't there
 run = asyncio.run
