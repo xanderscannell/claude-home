@@ -836,6 +836,19 @@ def test_swiping_between_sheets(b):
     assert not d.visible("#sheet-dash") and d.page.eval_on_selector("#home", "h => getComputedStyle(h).opacity") == "1",         "landed: the photo grows back out and the clock and the rest come back"
     assert d.page.eval_on_selector("#home", "h => getComputedStyle(h).transform") == "none"
 
+    # Coming back from Home the dashboard arrives already framed: nothing plays while it slides in
+    swipe(d, 300, frm=700, y=200)
+    swipe(d, 350, frm=100, y=200, release=False)
+    photo = d.page.locator("#dash-photo").bounding_box()
+    fit = min(photo["width"] / 800, photo["height"] / 480)
+    assert d.page.eval_on_selector("#home", "h => getComputedStyle(h).opacity") == "0"
+    shrunk = d.page.eval_on_selector("#home", "h => new DOMMatrix(getComputedStyle(h).transform).a")
+    assert abs(shrunk - fit) < 0.005, f"already shrunk to {fit}, not shrinking ({shrunk})"
+    d.page.mouse.up()
+    d.page.clock.run_for(600)
+    d.page.wait_for_timeout(300)
+    assert title() == "dashboard"
+
     # A page seen before shows its last card while it's swiped in
     swipe(d, 300, frm=700, y=200)
     swipe(d, 450, frm=700, y=200, release=False)

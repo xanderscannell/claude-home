@@ -534,12 +534,21 @@ function showDash(animate) {
     void els.dash.offsetWidth;
   }
   els.dash.classList.remove("full", "snap");  // then shrink into the frame
-  els.dashboard.classList.add("framed");
+  setFramed(true, animate);
+}
+
+// The clock and the rest faded and shrunk (framed) or back as they were; at once unless animate, since out of sight
+// (a dashboard coming back on from off screen, or one left behind a sheet) they shouldn't play it
+function setFramed(on, animate) {
+  els.dashboard.classList.toggle("snap", !animate);
+  els.dashboard.classList.toggle("framed", on);
+  void els.dashboard.offsetWidth;
+  els.dashboard.classList.remove("snap");
 }
 
 function hideDash(animate) {
   clearTimeout(dashHiding);
-  els.dashboard.classList.remove("framed");
+  setFramed(false, animate);
   if (!animate) {
     els.dash.hidden = true;
     return;

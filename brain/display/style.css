@@ -249,6 +249,7 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 .dashboard .scrim, .dashboard .home { transition: opacity .26s ease-out, transform .26s ease-out; }
 .dashboard.framed .scrim, .dashboard.framed .home { opacity: 0; transform: var(--ui-framed); pointer-events: none; }
 .dashboard.framed .scrim { transform: var(--scrim-framed); }  /* shading the picture: shrinks as it does */
+.dashboard.snap .scrim, .dashboard.snap .home { transition: none !important; }
 .swipe-dim { position: fixed; inset: 0; background: rgba(0, 0, 0, .45); pointer-events: none; }
 /* Sideways on the dashboard and the row's pages is a swipe between them, so the browser only takes up and down */
 .home, .sheet-body { touch-action: pan-y; }
