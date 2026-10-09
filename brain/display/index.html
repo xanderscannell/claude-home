@@ -8,9 +8,17 @@
   <script type="module" src="app.js"></script>
 </head>
 <body>
+  <div id="dashboard" class="dashboard">
   <div class="backdrop" aria-hidden="true"></div>
   <div id="photo-a" class="photo" aria-hidden="true"></div>
   <div id="photo-b" class="photo" aria-hidden="true"></div>
+  <!-- The dashboard drawn as a sheet while it's swiped: under the clock and the rest (which fade out over it), the
+       photo shrinks into a sheet's frame, and the sheet's background and title come up around it -->
+  <section id="sheet-dash" class="dash" hidden aria-hidden="true">
+    <div class="dash-bg"></div>
+    <h2 class="sheet-title">Dashboard</h2>
+    <div class="sheet-body"><div id="dash-photo" class="dash-photo"><div id="dash-pic" class="dash-pic"></div></div></div>
+  </section>
   <div class="scrim" aria-hidden="true"></div>
 
   <main id="home" class="home">
@@ -27,12 +35,7 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
     </button>
   </main>
-
-  <!-- The dashboard drawn as a sheet, while it's swiped: its title and the room's photo, in a sheet's margins -->
-  <section id="sheet-dash" class="sheet under" hidden aria-hidden="true">
-    <h2 class="sheet-title">Dashboard</h2>
-    <div class="sheet-body"><div id="dash-photo" class="dash-photo"></div></div>
-  </section>
+  </div>
 
   <section id="night" class="night" aria-label="Night clock">
     <time id="night-time" class="night-time"></time>

@@ -214,14 +214,38 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 .dragging { transition: none !important; }
 .settling { transition: transform .22s ease-out, opacity .22s ease-out !important; }
 .under { transform: none; pointer-events: none; }
-/* The dashboard as a sheet while it's swiped: the room's photo the one thing on it, in the tiles' corners; with no
-   photos, the backdrop's gradient */
+/* The dashboard as a sheet while it's swiped (app.js showDash). It sits inside the dashboard, over the photo and
+   under the scrim and the clock, laid out like a sheet: a title, and the photo in a sheet's margins and the tiles'
+   corners. Becoming it, everything but the photo fades away (.framed on the dashboard) while the photo shrinks from
+   the whole screen into its frame, and the sheet's background and title come up around it; coming back, the reverse
+   (.full). Transforms and opacity, for the Pi; the corners' radius is the one thing repainted. */
+.dashboard { position: fixed; inset: 0; }
+.dash { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 26px 36px 0; }
+.dash-bg { position: absolute; inset: 0; background: var(--night); }
+.dash .sheet-title, .dash .sheet-body { position: relative; }  /* over the background */
+.dash .sheet-body { overflow: visible; }
 .dash-photo {
-  height: 100%; border-radius: 14px;
+  position: relative; height: 100%; border-radius: 14px; overflow: hidden;
+  transition: transform .26s ease-out, border-radius .26s ease-out;
+}
+/* The picture is the dashboard's own, screen-sized and cropped the same, scaled to cover the frame (--k); full, the
+   frame is stretched back over the whole screen (--frame-full) and the picture squeezed to match (--pic-full), so
+   it's exactly the photo behind it */
+.dash-pic {
+  position: absolute; left: 50%; top: 50%; width: 100vw; height: 100vh;
+  transform: translate(-50%, -50%) scale(var(--k, 1));
+  transition: transform .26s ease-out;
   background: center / cover no-repeat,
     radial-gradient(120% 90% at 85% 10%, #1f3347 0%, transparent 60%),
-    radial-gradient(90% 80% at 10% 100%, #0d1823 0%, transparent 70%), #0f1a26;
+    radial-gradient(90% 80% at 10% 100%, #0d1823 0%, transparent 70%), var(--night);
 }
+.dash-bg, .dash .sheet-title { transition: opacity .26s ease-out; }
+.dash.full .dash-photo { transform: var(--frame-full); border-radius: 0; }
+.dash.full .dash-pic { transform: var(--pic-full); }
+.dash.full .dash-bg, .dash.full .sheet-title { opacity: 0; }
+.dash.snap, .dash.snap * { transition: none !important; }
+.scrim { transition: opacity .26s ease-out; }
+.dashboard.framed .scrim, .dashboard.framed .home { opacity: 0; pointer-events: none; }
 .swipe-dim { position: fixed; inset: 0; background: rgba(0, 0, 0, .45); pointer-events: none; }
 /* Sideways on the dashboard and the row's pages is a swipe between them, so the browser only takes up and down */
 .home, .sheet-body { touch-action: pan-y; }

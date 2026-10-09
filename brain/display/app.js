@@ -11,7 +11,7 @@ const els = {
   overlay: $("overlay"), heard: $("heard"), reply: $("reply"), stop: $("stop"), close: $("close-overlay"),
   sheet: $("sheet"), sheetTitle: $("sheet-title"), sheetBody: $("sheet-body"), sheetClose: $("sheet-close"),
   edge: $("sheet-edge"), under: $("sheet-under"), underTitle: $("under-title"), underBody: $("under-body"),
-  swipeDim: $("swipe-dim"), dash: $("sheet-dash"), dashPhoto: $("dash-photo"),
+  swipeDim: $("swipe-dim"), dash: $("sheet-dash"), dashPhoto: $("dash-photo"), dashPic: $("dash-pic"), dashboard: $("dashboard"),
   ringing: $("ringing"), ringingTime: $("ringing-time"), ringingLabel: $("ringing-label"),
   ringingStop: $("ringing-stop"), snooze: $("snooze"),
   offline: $("offline"), nightTime: $("night-time"),
@@ -500,10 +500,45 @@ function showUnder(card) {
   els.under.hidden = false;
 }
 
-// The dashboard as a sheet while it's swiped (its title, and the photo showing now as the one thing on it)
-function showDash() {
-  els.dashPhoto.style.backgroundImage = frontLayer.classList.contains("shown") ? frontLayer.style.backgroundImage : "";
+// The dashboard as a sheet while it's swiped (its title, and the photo showing now as the one thing on it). It lives
+// inside the dashboard, so it moves with it. animate: a swipe starting on the dashboard, where everything but the
+// photo fades away and the photo shrinks from the whole screen into its frame; one coming back to the dashboard starts
+// off screen, so it's already framed. hideDash(animate) is the reverse, landing back on the real dashboard.
+const DASH_MS = 260;  // the transitions in style.css
+let dashHiding = null;
+
+function showDash(animate) {
+  clearTimeout(dashHiding);
+  els.dashPic.style.backgroundImage = frontLayer.classList.contains("shown") ? frontLayer.style.backgroundImage : "";
   els.dash.hidden = false;
+  // The frame, from layout offsets (a transform under way doesn't skew them). Framed, the screen-sized picture is
+  // scaled by k to cover it. Full, the frame is moved and stretched back over the whole screen and the picture
+  // squeezed by the inverse, so it shows exactly as the photo behind it does.
+  const f = els.dashPhoto, w = f.offsetWidth, h = f.offsetHeight;
+  let x = 0, y = 0;  // the frame's place on the screen (the dashboard sheet covers it from 0, 0)
+  for (let n = f; n && n !== els.dash; n = n.offsetParent) [x, y] = [x + n.offsetLeft, y + n.offsetTop];
+  const cx = x + w / 2, cy = y + h / 2;
+  els.dash.style.setProperty("--k", String(Math.max(w / innerWidth, h / innerHeight)));
+  els.dash.style.setProperty("--frame-full",
+    `translate(${innerWidth / 2 - cx}px, ${innerHeight / 2 - cy}px) scale(${innerWidth / w}, ${innerHeight / h})`);
+  els.dash.style.setProperty("--pic-full", `translate(-50%, -50%) scale(${w / innerWidth}, ${h / innerHeight})`);
+  if (animate) {
+    els.dash.classList.add("full", "snap");  // jump to full at once (measuring settled it framed),
+    void els.dash.offsetWidth;
+  }
+  els.dash.classList.remove("full", "snap");  // then shrink into the frame
+  els.dashboard.classList.add("framed");
+}
+
+function hideDash(animate) {
+  clearTimeout(dashHiding);
+  els.dashboard.classList.remove("framed");
+  if (!animate) {
+    els.dash.hidden = true;
+    return;
+  }
+  els.dash.classList.add("full");
+  dashHiding = setTimeout(() => { els.dash.hidden = true; }, DASH_MS);
 }
 
 const layers = () => [slide.page, slide.next, slide.mode === "over" ? els.swipeDim : null].filter(Boolean);
@@ -512,8 +547,8 @@ const layers = () => [slide.page, slide.next, slide.mode === "over" ? els.swipeD
 function beginSlide(back) {
   const i = gesture.row;
   const side = (next, land) => {
-    if (!i || next === els.dash) showDash();
-    return { mode: "side", page: i ? els.sheet : els.dash, next, ahead: back ? 1 : -1, land };
+    if (!i || next === els.dashboard) showDash(!i);
+    return { mode: "side", page: i ? els.sheet : els.dashboard, next, ahead: back ? 1 : -1, land };
   };
   if (i === undefined) {  // a subpage's edge: back to the page it opened over
     showUnder(sheetStack.at(-1));
@@ -522,7 +557,7 @@ function beginSlide(back) {
     els.swipeDim.style.zIndex = "2";
     els.swipeDim.hidden = false;
   } else if (back && i === 1) {
-    slide = side(els.dash, closeSheet);
+    slide = side(els.dashboard, closeSheet);
   } else if (back && i >= 2) {
     showUnder(rowCard(ROW[i - 2].kind));
     slide = side(els.under, () => landRow(ROW[i - 2].kind));
@@ -542,11 +577,13 @@ function moveSlide() {
   place(s.mode === "rubber" ? gesture.dx * RUBBER : Math.min(1, Math.max(0, (s.ahead * gesture.dx) / innerWidth)));
 }
 
-function endSlide() {
+// dashLands: the swipe ended on the dashboard, so its sheet opens back out into the real one
+function endSlide(dashLands) {
   for (const l of layers()) l.style.transform = l.style.zIndex = "";
   void els.sheet.offsetWidth;  // apply that before transitions come back on, or a page would slide in from the side
   for (const l of layers()) l.classList.remove("dragging", "settling");
-  els.swipeDim.hidden = els.under.hidden = els.dash.hidden = true;
+  hideDash(dashLands);
+  els.swipeDim.hidden = els.under.hidden = true;
   els.underBody.replaceChildren();
   slide = null;
 }
@@ -563,12 +600,13 @@ function letGo() {
     ((s.ahead * g.dx) / innerWidth > SWIPE_AT || (s.ahead * g.v > SWIPE_FLICK && s.ahead * g.dx > 40));
   for (const l of layers()) l.classList.replace("dragging", "settling");
   place(go ? 1 : 0);
+  const dashLands = go ? s.next === els.dashboard : s.page === els.dashboard;
   setTimeout(() => {
     if (go) {
       for (const l of layers()) l.classList.replace("settling", "dragging");  // land without sliding in again
       s.land();
     }
-    endSlide();
+    endSlide(dashLands);
   }, SETTLE_MS);
 }
 

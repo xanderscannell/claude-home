@@ -277,7 +277,7 @@ def test_slideshow_and_accent(b):
     d.shot("photo-lake", settle=2300)
     # Swiped aside, the dashboard is drawn as a sheet with the photo showing now as the one thing on it
     swipe(d, 500, frm=700, y=200, release=False)
-    assert "lake.jpg" in d.page.get_attribute("#dash-photo", "style")
+    assert "lake.jpg" in d.page.get_attribute("#dash-pic", "style")
     d.page.mouse.up()
     d.close()
 
@@ -692,8 +692,8 @@ def swipe(d, to, frm=8, y=240, pause=0, release=True):
     d.page.mouse.move(to, y)
     if release:
         d.page.mouse.up()
-        d.page.clock.run_for(300)  # past the settle's timer
-        d.page.wait_for_timeout(300)  # and its transition (CSS runs in real time)
+        d.page.clock.run_for(600)  # past the settle's timer (and the dashboard's, landing there)
+        d.page.wait_for_timeout(300)  # and their transitions (CSS runs in real time)
 
 
 def test_rooms_and_back(b):
@@ -799,8 +799,11 @@ def test_swiping_between_sheets(b):
     assert d.visible("#sheet-under") and d.text("#under-title") == "Home" and not d.text("#under-body")
     assert d.visible("#sheet-dash") and d.text("#sheet-dash .sheet-title") == "Dashboard"
     assert 530 <= left("#sheet-under") <= 570 and -270 <= left("#sheet-dash") <= -230, (left("#sheet-under"), left("#sheet-dash"))
+    assert d.page.eval_on_selector("#home", "h => getComputedStyle(h).opacity") != "1", "the clock and the rest fade away"
+    d.page.wait_for_timeout(350)  # the photo shrinking into its frame (real time)
     photo = d.page.locator("#dash-photo").bounding_box()
     assert round(photo["x"] - left("#sheet-dash")) == 36 and round(photo["width"]) == 800 - 2 * 36, photo
+    assert d.page.eval_on_selector("#home", "h => getComputedStyle(h).opacity") == "0"
     assert not d.visible("#swipe-dim"), "side by side, nothing is covered, so nothing dims"
     d.page.mouse.up()
     d.page.clock.run_for(300)
@@ -827,7 +830,7 @@ def test_swiping_between_sheets(b):
         swipe(d, 500, frm=100, y=200)
         seen.append(title())
     assert seen == ["Music", "Shopping list", "Alarms", "Timers", "Home", "dashboard", "dashboard"], seen
-    assert not d.visible("#sheet-dash") and d.visible("#home"), "landed: the real dashboard again"
+    assert not d.visible("#sheet-dash") and d.page.eval_on_selector("#home", "h => getComputedStyle(h).opacity") == "1",         "landed: the photo grows back out and the clock and the rest come back"
 
     # A page seen before shows its last card while it's swiped in
     swipe(d, 300, frm=700, y=200)
