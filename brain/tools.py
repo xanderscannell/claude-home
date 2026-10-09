@@ -502,14 +502,17 @@ async def _right_away(action):
 
 
 def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spotify.Spotify | None = None,
-              categories: list[str] = (), after_reply=_right_away) -> list:
+              categories: list[str] = (), after_reply=_right_away, cameras: list[dict] = (),
+              on_camera=_no_screen) -> list:
     """Claude's tools for one satellite. Timers belong to the device they were set on.
     on_card(card) is awaited to put a result on that device's screens.
     on_volume(level, relative) sets the speaker's volume and returns the new level (None: no speaker).
     music is the Spotify client (None: Spotify isn't set up).
     categories are the shopping list's, as of the session's start (shopping results always list the current ones).
     after_reply(action) is awaited to run an async action once this device's reply has finished playing, so music
-    doesn't start under Claude's voice (and the music ducking)."""
+    doesn't start under Claude's voice (and the music ducking).
+    cameras are Home Assistant's, as {entity, name, area} (none: no show_camera tool); on_camera(camera) is awaited
+    to put one's live view on this device's screens."""
 
     async def via_spotify(action, say):
         if music is None:
@@ -768,13 +771,27 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spo
         level = await on_volume(a["level"], a["relative"])
         return _text("The speaker isn't connected." if level is None else f"Volume is now {level}.")
 
+    where = ", ".join(f"{c['name']} ({c['area']})" if c["area"] and c["area"] != c["name"] else c["name"]
+                      for c in cameras)
+
+    @tool("show_camera", f"Show a security camera's live view on this speaker's screen, for about two minutes. "
+          f"The cameras, with where they are: {where}.",
+          _schema(camera={"type": "string", "enum": [c["name"] for c in cameras]}))
+    async def show_camera(a):
+        cam = next((c for c in cameras if c["name"] == a["camera"]), None)
+        if cam is None:
+            return _text(f"There's no camera called {a['camera']}. The cameras are: {where}.")
+        await on_camera(cam)
+        return _text(f"The {cam['name']} camera is opening on the screen; it takes a few seconds to connect.")
+
     return [set_timer, list_timers, cancel_timer, pause_timer, resume_timer, set_alarm, list_alarms, cancel_alarm, remember_tool, forget_tool,
             add_shopping, remove_shopping, get_shopping, clear_shopping, get_weather, show_on_screen, get_agenda,
             morning_briefing, show_recipe, recipe_step, play_music, pause_music, resume_music, skip_track,
-            previous_track, whats_playing, set_volume]
+            previous_track, whats_playing, set_volume] + ([show_camera] if cameras else [])
 
 
 def make_tools(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spotify.Spotify | None = None,
-               categories: list[str] = (), after_reply=_right_away):
+               categories: list[str] = (), after_reply=_right_away, cameras: list[dict] = (), on_camera=_no_screen):
     """The MCP tool server Claude's session uses for one satellite."""
-    return create_sdk_mcp_server("home", tools=tool_list(device, on_card, on_volume, music, categories, after_reply))
+    return create_sdk_mcp_server("home", tools=tool_list(device, on_card, on_volume, music, categories, after_reply,
+                                                         cameras, on_camera))

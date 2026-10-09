@@ -13,6 +13,8 @@ const els = {
   ringing: $("ringing"), ringingTime: $("ringing-time"), ringingLabel: $("ringing-label"),
   ringingStop: $("ringing-stop"), snooze: $("snooze"),
   offline: $("offline"), nightTime: $("night-time"),
+  camera: $("camera"), cameraVideo: $("camera-video"), cameraName: $("camera-name"), cameraNote: $("camera-note"),
+  cameraClose: $("camera-close"),
 };
 
 // --- Connection -------------------------------------------------------------------------------
@@ -75,6 +77,7 @@ const handlers = {
   ringing: (m) => showRinging(m.ringing),
   volume: (m) => showVolume(m.level),
   now_playing: (m) => showNowPlaying(m.track),
+  camera: (m) => showCamera(m),
 };
 
 function handle(msg) {
@@ -955,12 +958,74 @@ function fitReply() {
   els.reply.scrollTop = els.reply.scrollHeight;
 }
 
+// --- Camera -----------------------------------------------------------------------------------
+// A live view over WebRTC from Home Assistant. The brain's /camera socket relays the setup (offer, answer, ICE
+// candidates); the video itself comes straight to this page. Closing the socket ends the stream.
+
+// ponytail: one limit for every camera. Ring reports a battery even for plugged-in ones, so a battery camera
+// can't be told apart to get a shorter view.
+const CAMERA_MAX_MS = 2 * 60000;
+let cam = null;  // the live view showing: {ws, pc, timer}
+
+function showCamera(m) {
+  closeCamera();
+  els.cameraName.textContent = m.name;
+  els.cameraNote.textContent = "Connecting…";
+  els.camera.hidden = false;
+  const ws = new WebSocket(wsUrl.replace(/\/display$/, "/camera") + `?entity=${encodeURIComponent(m.entity)}`);
+  const view = cam = { ws, pc: null, timer: setTimeout(closeCamera, CAMERA_MAX_MS) };
+  const say = (text) => { if (cam === view) els.cameraNote.textContent = text; };
+  // Ring ends a live view on its own after a while: say so, then go back to the room
+  const ended = () => {
+    if (cam !== view) return;
+    say("The camera stopped.");
+    clearTimeout(view.timer);
+    view.timer = setTimeout(closeCamera, 3000);
+  };
+  ws.onmessage = async (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === "config") {
+      const pc = view.pc = new RTCPeerConnection(msg.config);
+      pc.addTransceiver("video", { direction: "recvonly" });
+      pc.addTransceiver("audio", { direction: "recvonly" });
+      pc.ontrack = (ev) => { els.cameraVideo.srcObject = ev.streams[0] || new MediaStream([ev.track]); };
+      pc.onicecandidate = (ev) => {
+        if (ev.candidate) ws.send(JSON.stringify({ candidate: ev.candidate.toJSON() }));
+      };
+      pc.onconnectionstatechange = () => { if (["failed", "closed"].includes(pc.connectionState)) ended(); };
+      await pc.setLocalDescription(await pc.createOffer());
+      ws.send(JSON.stringify({ offer: pc.localDescription.sdp }));
+    } else if (msg.type === "answer") {
+      await view.pc.setRemoteDescription({ type: "answer", sdp: msg.answer });
+    } else if (msg.type === "candidate") {
+      const c = msg.candidate;
+      await view.pc.addIceCandidate({ candidate: c.candidate, sdpMid: c.sdpMid ?? c.sdp_mid ?? null,
+                                      sdpMLineIndex: c.sdpMLineIndex ?? c.sdp_m_line_index ?? 0 });
+    } else if (msg.type === "error") {
+      say(`Couldn't open the camera: ${msg.message}`);
+    }
+  };
+  ws.onclose = () => (els.cameraVideo.srcObject ? ended() : say("Couldn't reach the camera."));
+  els.cameraVideo.onplaying = () => say("");
+}
+
+function closeCamera() {
+  if (!cam) return;
+  clearTimeout(cam.timer);
+  cam.pc?.close();
+  cam.ws.close();
+  cam = null;
+  els.cameraVideo.srcObject = null;
+  els.camera.hidden = true;
+}
+
 // --- Touch ------------------------------------------------------------------------------------
 
 els.mic.addEventListener("click", () => send({ type: "talk" }));
 els.stop.addEventListener("click", () => send({ type: "stop" }));
 els.close.addEventListener("click", hideOverlay);
 els.sheetClose.addEventListener("click", closeSheet);
+els.cameraClose.addEventListener("click", closeCamera);
 els.menu.addEventListener("click", () => openSheet({ kind: "menu" }));
 els.ringingStop.addEventListener("click", () => send({ type: "stop" }));
 els.snooze.addEventListener("click", () => send({ type: "snooze" }));

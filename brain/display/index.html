@@ -50,6 +50,15 @@
     <button id="stop" class="stop" type="button">Stop</button>
   </section>
 
+  <section id="camera" class="camera" hidden role="dialog" aria-modal="true" aria-labelledby="camera-name">
+    <video id="camera-video" autoplay muted playsinline></video>
+    <h2 id="camera-name" class="camera-name"></h2>
+    <p id="camera-note" class="camera-note"></p>
+    <button id="camera-close" class="close" type="button" aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </section>
+
   <section id="ringing" class="ringing" hidden role="alertdialog" aria-labelledby="ringing-time">
     <div class="ringing-pulse" aria-hidden="true"></div>
     <p id="ringing-time" class="ringing-time"></p>

@@ -179,6 +179,7 @@ Brain -> display:
 | `now_playing {track}` | `null`, or `{title, artist, album, art, uri, is_playing, progress_ms, duration_ms}`; sent when the track, play state, or position really changes (screens advance the position themselves) |
 | `ringing {ringing}` | `null`, the ringing alarm `{kind: "alarm", id, label, time}`, or a finished timer `{kind: "timer", label}` |
 | `volume {level}` | The speaker's level |
+| `camera {entity, name}` | Open a Home Assistant camera's live view (see Cameras below) |
 
 Card kinds: `weather` (the forecast), `timers` (each with `ends_at` epoch seconds, `duration` in seconds, and `paused_left`: seconds left while paused, else null), `alarms`,
 `shopping {groups}` (each `{name, items}`: a Todoist section, uncategorized first with name `""`), `agenda {events}`, `briefing` (forecast, today's events, next alarm, timers,
@@ -265,7 +266,7 @@ registered, plus an `mcp` client for Home Assistant.
 |---|---|
 | 1 | `set_timer` / `list_timers` / `cancel_timer` / `pause_timer` / `resume_timer` (by name; an unlabeled timer is named by its length, "5 minute timer"), `remember` / `forget`, shopping list (`add_to_` / `remove_from_` / `get_` / `clear_shopping_list`), `get_weather` (Open-Meteo, no API key), web search (the SDK's built-in `WebSearch`) |
 | 2 | Home Assistant MCP tools (automatic), `announce(device \| all, text)` (not started) |
-| 3 | `set_alarm` / `list_alarms` / `cancel_alarm`, `show_on_screen(title, lines)`, `get_agenda(days)`, `morning_briefing`, `show_recipe` / `recipe_step(direction)`, `play_music(query, kind)` / `pause_music` / `resume_music` / `skip_track` / `previous_track` / `whats_playing`, `set_volume(level, relative)` |
+| 3 | `set_alarm` / `list_alarms` / `cancel_alarm`, `show_on_screen(title, lines)`, `get_agenda(days)`, `morning_briefing`, `show_recipe` / `recipe_step(direction)`, `play_music(query, kind)` / `pause_music` / `resume_music` / `skip_track` / `previous_track` / `whats_playing`, `set_volume(level, relative)`, `show_camera(camera)` |
 
 Tools whose result belongs on the screen (timers, alarms, weather, the shopping list, the
 calendar, the briefing, recipes, volume) push the matching card to the device's screens as they
@@ -295,7 +296,7 @@ skipped rather than rung late.
 few hundred facts; past that it needs search.
 
 **Announcements and proactive events** come from Home Assistant automations calling the
-brain's `POST /announce` endpoint (Phase 3 adds `POST /show` for camera popups).
+brain's `POST /announce` endpoint (not built yet) and `POST /show?device=&camera=` for camera popups.
 Home Assistant decides *when*; the brain only speaks or shows. No event subscription logic
 in the brain.
 
@@ -304,7 +305,7 @@ in the brain.
 Built so far on the Pi 3 with a 5" 800x480 HDMI touchscreen (USB touch), with the brain on the PC.
 
 - **The page** (`brain/display/`: `index.html`, `style.css`, `app.js`) is served by the brain and runs fullscreen in Chromium under the `cage` kiosk compositor. It is driven by pushed messages (the [display protocol](#display-protocol)), never by polling the brain, and reconnects by itself; after 5 s offline it says so.
-- **Screens:** home (clock, date, weather, and a strip of timers, the next alarm, the next event, and the song playing, over the photo slideshow); the conversation overlay (one "state light" for listening, thinking, and speaking; what was heard; the reply growing sentence by sentence; Stop); sheets that slide up for weather, timers (a dial each that drains as time runs out, with Pause and Stop), alarms, shopping list, calendar, briefing, recipe, music, volume, the menu, and Claude's `show_on_screen` text; the ringing screen; and night mode.
+- **Screens:** home (clock, date, weather, and a strip of timers, the next alarm, the next event, and the song playing, over the photo slideshow); the conversation overlay (one "state light" for listening, thinking, and speaking; what was heard; the reply growing sentence by sentence; Stop); sheets that slide up for weather, timers (a dial each that drains as time runs out, with Pause and Stop), alarms, shopping list, calendar, briefing, recipe, music, volume, the menu, and Claude's `show_on_screen` text; a camera's live view; the ringing screen; and night mode.
 - **Navigation:** every screen has a visible close control, and every sheet returns home after 45 s untouched (a recipe after 30 minutes, since a step can simmer that long; ringing never times out on its own).
 - **Touch never goes through Claude:** checking off a shopping item, cancelling a timer, toggling an alarm, the media buttons, and the volume slider are messages straight to the brain. Flipping a switch must not cost an API call or a second of waiting.
 - **Night mode** is computed in the page from `hello.night` (`NIGHT_START` / `NIGHT_END`): pure black with a dim clock in the day clock's place, no photos fetched; a tap brings the home screen back for 30 s. Ringing, conversations, and sheets still come up over it.
@@ -312,7 +313,8 @@ Built so far on the Pi 3 with a 5" 800x480 HDMI touchscreen (USB touch), with th
 - **Calendar** (`brain/agenda.py`): every `CALENDAR_<LABEL>` variable is one secret iCal address (never logged), fetched in the background every 15 minutes, or after a minute when one failed. A failed feed keeps its last good copy. Each refresh expands today through the next 7 days in local time with `recurring-ical-events`, dropping cancelled occurrences and flagging all-day events.
 - **Spotify** (`brain/spotify.py`): the PKCE authorization code flow (no client secret) through `/spotify/login` and `/spotify/callback`; tokens in `brain/spotify_token.json`, refreshed within a minute of expiry. Asked by voice, the song starts once Claude's reply has finished playing (the device goes idle), so it doesn't begin under the voice and the ducking; the search and the speaker check happen during the turn, so Claude can name the song or say what's wrong, and a failure after that goes on the screen. `play` finds the speaker named `SPOTIFY_DEVICE` (default "Claude Home"), and plays on it with one command naming the device (a separate transfer first raced the play in librespot, and Spotify then reported the speaker's previous track). It checks that Spotify reports that track, or the album or playlist, playing there within 6 s; if not, it sends the command once more (librespot only notices that Spotify closed its session when a command arrives, and that command is lost). A 429 stops all requests until its `Retry-After` has passed. The brain polls `GET /me/player` every 5 s while playing and 20 s otherwise, and a control makes it look again a second later.
 - **Performance on the Pi 3's GPU:** only `opacity` and `transform` animate; no blur, `backdrop-filter`, or large shadows; at most two photo layers; nothing runs while idle except the once-a-minute clock and the slideshow timer.
-- **Later:** Home Assistant tiles, camera popups (Home Assistant streams over WebRTC; a doorbell automation calls `/show`), screen brightness from Home Assistant, and the Pi 5 hardware with the mic array.
+- **Cameras:** Home Assistant's cameras are listed once at startup (name, entity, and area, so "the front yard camera" finds the one in the Front Yard area). Claude's `show_camera` tool, or `POST /show?device=&camera=` from an automation (the doorbell), sends `camera {entity, name}` to the device's screens, which open a full-screen live view with the name and a close button. The video is WebRTC straight from Home Assistant (for Ring, Ring's servers) to the page; the brain's `/camera?entity=` socket only relays the setup (offer, answer, ICE candidates) over Home Assistant's WebSocket API, so the token never reaches the screen. Closing the view closes the socket, which ends the stream. A view closes itself after 2 minutes (Ring reports a battery level even for plugged-in cameras, so battery ones can't be singled out for less), and goes back home 3 s after Ring ends it. Measured on the Pi 3 with the Ring Indoor Cam: 1080p at 15 fps, about 6 s to the first frame, roughly one core of CPU while it plays. Ring serves one live view per camera at a time; a second screen opening the same camera gets no video.
+- **Later:** Home Assistant tiles, screen brightness from Home Assistant, and the Pi 5 hardware with the mic array.
 
 ### On the Pi
 

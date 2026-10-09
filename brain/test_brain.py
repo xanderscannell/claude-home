@@ -232,6 +232,21 @@ assert [c["kind"] for c in shown_cards] == ["timers", "text"] and shown_cards[0]
 assert shown_cards[1] == {"kind": "text", "title": "Ingredients", "lines": ["eggs", "flour"]}
 tools.timer_cancel("den", "")
 
+# Cameras: no tool without any; with some, Claude picks one by name, told where each is, and it goes on the screen
+assert "show_camera" not in by_name
+cams = [{"entity": "camera.side_live_view", "name": "Side", "area": "Front Yard"},
+        {"entity": "camera.front_door_live_view", "name": "Front Door", "area": "Front Door"}]
+shown_cams = []
+
+
+async def show_cam(cam):
+    shown_cams.append(cam)
+
+show_cam_tool = {t.name: t for t in tools.tool_list("den", cameras=cams, on_camera=show_cam)}["show_camera"]
+assert "Side (Front Yard), Front Door." in show_cam_tool.description, show_cam_tool.description
+asyncio.run(show_cam_tool.handler({"camera": "Side"}))
+assert shown_cams == [cams[0]], shown_cams
+
 # Alarms: when they ring next (2026-10-07 is a Wednesday; Monday = 0)
 D = datetime.datetime
 wed_8am, fri_8pm = D(2026, 10, 7, 8, 0), D(2026, 10, 9, 20, 0)

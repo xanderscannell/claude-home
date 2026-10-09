@@ -939,6 +939,34 @@ def test_touch_controls(b):
     d.close()
 
 
+def test_camera(b):
+    d = Display(b)
+    cams = []  # the page's /camera sockets: what it sent, and whether it closed
+    d.page.route_web_socket("**/camera?*", lambda ws: (cams.append({"url": ws.url, "sent": [], "closed": False}),
+                                                        ws.on_message(lambda m: cams[-1]["sent"].append(json.loads(m))),
+                                                        ws.on_close(lambda *_: cams[-1].update(closed=True)),
+                                                        ws.send(json.dumps({"type": "config", "config": {}}))))
+    # Playwright's mocked socket breaks when a page closes it without a code and reason; supply them
+    d.page.evaluate("() => { const close = WebSocket.prototype.close;"
+                    " WebSocket.prototype.close = function () { return close.call(this, 1000, 'closed'); }; }")
+    d.push({"type": "camera", "entity": "camera.side_live_view", "name": "Side"})
+    assert d.visible("#camera") and d.text("#camera-name") == "Side" and d.text("#camera-note") == "Connecting…"
+    d.wait_until(lambda: cams and cams[0]["sent"], "no WebRTC offer sent")
+    assert "entity=camera.side_live_view" in cams[0]["url"] and "offer" in cams[0]["sent"][0], cams
+    assert big(d.page.locator("#camera-close").bounding_box())
+    d.shot("camera")
+    d.tap("#camera-close")
+    assert not d.visible("#camera"), "X didn't close the camera"
+    d.wait_until(lambda: cams[0]["closed"], "closing didn't end the stream")
+    # A forgotten live view closes itself after two minutes
+    d.push({"type": "camera", "entity": "camera.side_live_view", "name": "Side"})
+    d.page.clock.run_for(119000)
+    assert d.visible("#camera"), "closed early"
+    d.page.clock.run_for(2000)
+    assert not d.visible("#camera"), "still open after two minutes"
+    d.close()
+
+
 def test_reloads_for_new_display_code(b):
     d = Display(b)
     d.push({"type": "hello", "device": "test", "version": "100", "night": {"start": "22:00", "end": "07:00"}})

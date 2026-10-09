@@ -37,8 +37,9 @@ from pathlib import Path
 
 import httpx
 import uvicorn
+import websockets
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, HookMatcher, ResultMessage, StreamEvent
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from piper import PiperVoice
@@ -191,7 +192,8 @@ def options(device: str, categories: list[str] = ()) -> ClaudeAgentOptions:
     known = tools.facts()
     memory = "\n\nThings you remember about this household:\n" + "\n".join(f"- {f}" for f in known) if known else ""
     servers = {"home": tools.make_tools(device, on_card=show_card(device), on_volume=speaker(device),
-                                        music=app.state.spotify, categories=categories, after_reply=after_reply(device))}
+                                        music=app.state.spotify, categories=categories, after_reply=after_reply(device),
+                                        cameras=app.state.cameras, on_camera=show_camera(device))}
     if os.environ.get("HA_URL"):
         servers["ha"] = {"type": "http", "url": os.environ["HA_URL"].rstrip("/") + "/api/mcp",
                          "headers": {"Authorization": f"Bearer {os.environ.get('HA_TOKEN', '')}"}}
@@ -219,6 +221,13 @@ def after_reply(name: str):
     async def hold(action):
         device(name).after_reply.append(action)
     return hold
+
+
+def show_camera(name: str):
+    """on_camera for one device's tools: a camera's live view goes up on that device's screens."""
+    async def on_camera(cam: dict):
+        await device(name).show({"type": "camera", "entity": cam["entity"], "name": cam["name"]})
+    return on_camera
 
 
 def show_card(name: str):
@@ -622,6 +631,7 @@ async def lifespan(app: FastAPI):
     if not FAKE_LLM:
         app.state.groq.get("/models").raise_for_status()  # fail fast on a bad key
     app.state.spotify = spotify.Spotify(os.environ.get("SPOTIFY_CLIENT_ID", ""))
+    app.state.cameras = await ha_cameras()  # ponytail: read once; a camera added in Home Assistant needs a restart
     loops = [asyncio.create_task(ring_timers()), asyncio.create_task(refresh_weather()),
              asyncio.create_task(refresh_agenda())]
     if os.environ.get("SPOTIFY_CLIENT_ID"):
@@ -786,6 +796,100 @@ async def display(ws: WebSocket):
         pass
     finally:
         dev.displays.discard(ws)
+
+
+# --- Cameras -------------------------------------------------------------------------------------
+# A live view is WebRTC between the screen and Home Assistant (for Ring cameras, Ring's servers). The brain only
+# relays the setup messages, so Home Assistant's token never reaches the screen.
+
+async def ha_cameras() -> list[dict]:
+    """Home Assistant's cameras as [{entity, name, area}] ("Front Door Live view" is named "Front Door"), or [] if
+    there's no Home Assistant or it can't be reached."""
+    if not os.environ.get("HA_URL"):
+        return []
+    template = ('[{% for s in states.camera %}{"entity": {{ s.entity_id | tojson }}, '
+                '"name": {{ s.name | replace(" Live view", "") | tojson }}, '
+                '"area": {{ (area_name(s.entity_id) or "") | tojson }}}{{ "," if not loop.last }}{% endfor %}]')
+    try:
+        async with httpx.AsyncClient(timeout=10) as http:
+            r = await http.post(f"{os.environ['HA_URL'].rstrip('/')}/api/template", json={"template": template},
+                                headers={"Authorization": f"Bearer {os.environ.get('HA_TOKEN', '')}"})
+        return json.loads(r.raise_for_status().text)
+    except (httpx.HTTPError, ValueError) as e:
+        print(f"cameras: couldn't list Home Assistant's cameras ({e!r}); no show_camera tool")
+        return []
+
+
+def ha_socket():
+    """Home Assistant's WebSocket API, not yet authenticated: use as `async with ha_socket() as ha`, then ha_auth."""
+    return websockets.connect(os.environ["HA_URL"].replace("http", "ws", 1).rstrip("/") + "/api/websocket")
+
+
+async def ha_auth(ha):
+    await ha.recv()  # auth_required
+    await ha.send(json.dumps({"type": "auth", "access_token": os.environ.get("HA_TOKEN", "")}))
+    if json.loads(await ha.recv())["type"] != "auth_ok":
+        raise PermissionError("Home Assistant refused HA_TOKEN")
+
+
+@app.websocket("/camera")
+async def camera(ws: WebSocket):
+    """One live view for one screen. The screen sends {offer} and then {candidate}s; it gets {type: config} (ICE
+    servers), then Home Assistant's session, answer, candidate, and error events as they come. Closing this socket
+    ends the stream."""
+    await ws.accept()
+    entity = ws.query_params.get("entity", "")
+    if not entity.startswith("camera.") or not os.environ.get("HA_URL"):
+        return await ws.close()
+    async with ha_socket() as ha:
+        await ha_auth(ha)
+        await ha.send(json.dumps({"id": 1, "type": "camera/webrtc/get_client_config", "entity_id": entity}))
+        config = json.loads(await ha.recv()).get("result") or {}
+        await ws.send_text(json.dumps({"type": "config", "config": config.get("configuration", {})}))
+        ids, session, pending = iter(range(2, 1 << 30)), None, []  # the screen's candidates wait for the session
+
+        async def send_candidate(c):
+            await ha.send(json.dumps({"id": next(ids), "type": "camera/webrtc/candidate", "entity_id": entity,
+                                      "session_id": session, "candidate": c}))
+
+        async def from_ha():
+            nonlocal session
+            async for raw in ha:
+                m = json.loads(raw)
+                if m.get("type") == "event":
+                    if m["event"]["type"] == "session":
+                        session = m["event"]["session_id"]
+                        for c in pending:
+                            await send_candidate(c)
+                    await ws.send_text(json.dumps(m["event"]))
+                elif m.get("type") == "result" and not m["success"]:
+                    await ws.send_text(json.dumps({"type": "error", "message": m["error"]["message"]}))
+
+        relay = asyncio.create_task(from_ha())
+        try:
+            while True:
+                m = json.loads(await ws.receive_text())
+                if "offer" in m:
+                    await ha.send(json.dumps({"id": next(ids), "type": "camera/webrtc/offer", "entity_id": entity,
+                                              "offer": m["offer"]}))
+                elif "candidate" in m:
+                    await send_candidate(m["candidate"]) if session else pending.append(m["candidate"])
+        except (*GONE, websockets.ConnectionClosed):
+            pass
+        finally:
+            relay.cancel()
+
+
+@app.post("/show")
+async def show(device_name: str = Query(alias="device"), camera: str = Query()):
+    """Put a camera's live view on a device's screens, for Home Assistant automations (the doorbell ringing):
+    POST /show?device=claude-pi&camera=camera.front_door_live_view"""
+    cam = next((c for c in app.state.cameras if c["entity"] == camera), None)
+    if cam is None:
+        return JSONResponse({"error": f"no camera {camera}", "cameras": [c["entity"] for c in app.state.cameras]},
+                            status_code=404)
+    await show_camera(device_name)(cam)
+    return {"shown": cam["name"]}
 
 
 @app.get("/")
