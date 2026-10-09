@@ -36,6 +36,7 @@ sudo -n /usr/bin/fuser -v /dev/snd/pcmC2D0p 2>&1 | grep -q librespot && echo "so
 for c in Master Music; do echo "$c $(amixer -c 2 sget $c 2>/dev/null | grep -o '[0-9]*%' | head -1)"; done
 echo "session $(journalctl -u raspotify --since "$(systemctl show -p ActiveEnterTimestamp --value raspotify)" -o cat   | grep -oE 'Authenticated as|Connection to server closed' | tail -1)"
 echo "errors $(journalctl -u raspotify --since "$(systemctl show -p ActiveEnterTimestamp --value raspotify)" -o cat   | grep -cE '(WARN|ERROR) +librespot_core::(dealer|session)')"
+echo "ip4 $(curl -s -4 -m 4 https://api.ipify.org)"
 """
 
 # Each layer needs the ones above it. Being listed is the proof the dealer (Spotify Connect's command
@@ -67,7 +68,7 @@ def pi(cmd: str, stdin: str | None = None, timeout: float = 30) -> str:
 
 def parse(text: str) -> dict:
     s = {"active": False, "pid": 0, "since": "", "peers": [], "sound": False, "Master": None, "Music": None,
-         "errors": 0, "session": ""}
+         "errors": 0, "session": "", "ip4": ""}
     for line in text.splitlines():
         key, _, val = line.strip().partition(" ")
         if key == "active":
@@ -80,6 +81,8 @@ def parse(text: str) -> dict:
             s["peers"].append(val)
         elif key == "sound":
             s["sound"] = True
+        elif key == "ip4":  # the Pi's public IPv4; the access point connection is IPv4-only
+            s["ip4"] = val
         elif key == "session":
             s["session"] = val
         elif key == "errors":
@@ -122,6 +125,7 @@ def show(s: dict):
     print(f"  librespot pid {s['pid']} since {s['since'] or '-'}; sockets: {', '.join(s['peers']) or 'none'}")
     print(f"  dealer/session errors since it started: {s['errors']}")
     print(f"  holding the sound device: {'yes' if s['sound'] else 'no'}; Master {s['Master']}, Music {s['Music']}")
+    print(f"  public IPv4: {s['ip4'] or 'lookup failed'}")
     print(f"  Web API devices: {s.get('devices')}; player on {s.get('player_device')}, "
           f"{'playing' if s.get('playing') else 'not playing'} {s.get('title') or ''}")
     if s.get("api_error"):
@@ -166,7 +170,7 @@ async def soak(sp, every: float):
         with log.open("a", encoding="utf-8") as f:
             f.write(json.dumps(s) + "\n")
         ap_ip = next((p.rsplit(":", 1)[0] for p in s.get("peers", []) if p.endswith(":4070")), ap_ip)
-        key = s.get("error") or (s["active"], s["pid"], s["login"], s["errors"], s["listed"], s["playing"])
+        key = s.get("error") or (s["active"], s["pid"], s["login"], s["errors"], s["listed"], s["playing"], s["ip4"])
         if key != prev:
             print(f"\n{s['t']}  first broken: {s.get('error') or first_broken(s) or 'nothing'}", flush=True)
             if "error" not in s:
