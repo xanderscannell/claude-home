@@ -8,6 +8,7 @@
   <script type="module" src="app.js"></script>
 </head>
 <body>
+  <div id="dashboard" class="dashboard">
   <div class="backdrop" aria-hidden="true"></div>
   <div id="photo-a" class="photo" aria-hidden="true"></div>
   <div id="photo-b" class="photo" aria-hidden="true"></div>
@@ -27,16 +28,18 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
     </button>
   </main>
+  </div>
 
   <section id="night" class="night" aria-label="Night clock">
     <time id="night-time" class="night-time"></time>
   </section>
 
   <section id="sheet-under" class="sheet under" hidden aria-hidden="true">
+    <span class="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span>  <!-- looks only -->
     <h2 id="under-title" class="sheet-title"></h2>
     <div id="under-body" class="sheet-body"></div>
-    <div id="under-dim" class="under-dim"></div>
   </section>
+  <div id="swipe-dim" class="swipe-dim" hidden aria-hidden="true"></div>
 
   <section id="sheet" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheet-title">
     <button id="sheet-edge" class="edge" type="button" aria-label="Back" hidden></button>

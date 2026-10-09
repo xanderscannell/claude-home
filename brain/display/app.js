@@ -11,7 +11,7 @@ const els = {
   overlay: $("overlay"), heard: $("heard"), reply: $("reply"), stop: $("stop"), close: $("close-overlay"),
   sheet: $("sheet"), sheetTitle: $("sheet-title"), sheetBody: $("sheet-body"), sheetClose: $("sheet-close"),
   edge: $("sheet-edge"), under: $("sheet-under"), underTitle: $("under-title"), underBody: $("under-body"),
-  underDim: $("under-dim"),
+  swipeDim: $("swipe-dim"), dashboard: $("dashboard"),
   ringing: $("ringing"), ringingTime: $("ringing-time"), ringingLabel: $("ringing-label"),
   ringingStop: $("ringing-stop"), snooze: $("snooze"),
   offline: $("offline"), nightTime: $("night-time"),
@@ -394,19 +394,35 @@ function tick() {
 const SHEET_IDLE_MS = 45000;
 let sheetCard = null;
 let sheetIdle = null;
-// The sheets a different one opened over (Home, then Rooms, then a room), for Back. A card the brain sent in answer
-// to an open keeps that request, so Back can ask again and show it fresh rather than as it was.
+// The row of top-level pages, swiped between from the dashboard in this order, and the menu's entries. kind: the
+// sheet; icon: its ICONS name; local: the page draws it from what it already knows (no card from the brain needed).
+const ROW = [
+  { kind: "house", label: "Home", icon: "house" },
+  { kind: "timers", label: "Timers", icon: "timer", local: true },  // from the ambient timers
+  { kind: "alarms", label: "Alarms", icon: "alarm" },
+  { kind: "shopping", label: "Shopping list", icon: "list" },
+  { kind: "music", label: "Music", icon: "music", local: true },
+  { kind: "volume", label: "Volume", icon: "volume", local: true },
+];
+const rowAt = (kind) => ROW.findIndex((r) => r.kind === kind);
+
+// The pages a subpage opened over (Home, then Rooms, then a room), for going back. A card the brain sent in answer
+// to an open keeps that request, so going back can ask again and show it fresh rather than as it was. A row page is
+// top level: it opens over nothing, so it has no back.
 let sheetStack = [];
 let lastOpen = null;
+const rowCards = {};  // the last card of each row page the brain serves, to draw it while it's swiped into view
 
 function openSheet(card) {
   if (lastOpen && lastOpen.sheet === card.kind) [card.request, lastOpen] = [lastOpen, null];
-  if (sheetCard && sheetCard.kind !== card.kind) sheetStack.push(sheetCard);
+  if (rowAt(card.kind) >= 0) sheetStack = [];
+  else if (sheetCard && sheetCard.kind !== card.kind) sheetStack.push(sheetCard);
   else if (sheetCard && !card.request) card.request = sheetCard.request;  // the same kind is a refresh of it
+  if (rowAt(card.kind) >= 0 && !card.placeholder) rowCards[card.kind] = card;
   els.edge.hidden = !sheetStack.length;
   sheetCard = card;
   // A timers card can beat the next ambient update by up to half a second; it is just as fresh, so use it.
-  if (card.kind === "timers") ambient = { ...ambient, timers: card.timers };
+  if (card.kind === "timers" && card.timers) ambient = { ...ambient, timers: card.timers };
   if (card.kind === "volume" && card.level !== undefined) speakerVolume = card.level;
   els.sheet.hidden = false;  // before rendering, so long text can be measured and fitted
   renderSheet();
@@ -422,62 +438,173 @@ function goBack() {
   if (prev.request) send(prev.request);
 }
 
-// Swiping back: the sheet follows the finger off to the right, and the one it opened over waits underneath, drawn
-// from its card, drifting in from a little to the left and brightening as it's uncovered. Let go past a third of the
-// screen (or flick) and it goes back; short of that it springs home.
-const SWIPE_BACK_AT = 1 / 3;
+// A row page as it can be drawn right now: the page's own for the local ones, else the brain's last card for it,
+// else just its title until the brain answers (only before it has ever been opened).
+// ponytail: nothing is fetched ahead while the finger moves; landing asks for it and it fills in a moment later.
+function rowCard(kind) {
+  return ROW[rowAt(kind)].local ? { kind } : rowCards[kind] || { kind, placeholder: true };
+}
+
+// Land on a row page from a swipe: show it at once from what's known, and ask the brain for it fresh
+function landRow(kind) {
+  const wasHidden = els.sheet.hidden;
+  sheetCard = null;
+  openSheet(rowCard(kind));
+  if (wasHidden) els.sheet.classList.add("shown");  // now, not next frame: no slide up from the bottom
+  if (!ROW[rowAt(kind)].local) send({ type: "open", sheet: kind });
+}
+
+// Where the screen is in the row: 0 the dashboard, 1 Home, and so on; null where the row doesn't apply (a subpage,
+// a card Claude put up, the conversation, a ringing alarm, the camera, night)
+function rowIndex() {
+  if (document.body.classList.contains("is-night") || !els.overlay.hidden || !els.ringing.hidden || !els.camera.hidden) return null;
+  if (!sheetCard) return 0;
+  const i = rowAt(sheetCard.kind);
+  return i >= 0 && !sheetStack.length ? i + 1 : null;
+}
+
+// --- Swiping ----------------------------------------------------------------------------------
+// Along the row, pages sit side by side: the page you're on and the next (or previous) one move together with the
+// finger, like a strip of film. Back from a subpage is different, a page lifted off the one under it: it slides off
+// to the right over the page it opened over, which drifts a fifth of the way in and brightens as it's uncovered.
+// Either way, let go past a third of the screen (or flick) and the move happens; short of that it springs back. Past
+// the end of the row the page gives a little and springs back.
+const SWIPE_AT = 1 / 3;
 const SWIPE_FLICK = 0.5;  // px per ms
+const SWIPE_LOCK_PX = 10;  // this far before it's known whether it's sideways (a swipe) or not (a scroll, a tap)
+const RUBBER = 0.15;  // past the end of the row the page moves this much of the finger's way
 const SETTLE_MS = 220;  // .settling's transition
-let swipe = null;  // {x, dx, t, v} while a finger is on the edge
+let gesture = null;  // a finger that is or may become a swipe: {id, x, y, t, dx, v, row}
+// The swipe under way: {mode: "side" | "over" | "rubber", page (the one you're on), next (the one coming),
+// ahead (1: the finger moves right to make the move, -1: left), land}
+let slide = null;
 
-function swipeTo(p) {
-  els.sheet.style.transform = `translateX(${p * 100}%)`;
-  els.under.style.transform = `translateX(${(p - 1) * 20}%)`;
-  els.underDim.style.opacity = String(1 - p);
+function place(q) {  // q: how far the move has gone, 0 to 1; for rubber, px the page has given
+  const s = slide;
+  if (s.mode === "rubber") {
+    s.page.style.transform = `translateX(${q}px)`;
+  } else if (s.mode === "side") {
+    s.page.style.transform = `translateX(${s.ahead * q * 100}%)`;
+    s.next.style.transform = `translateX(${s.ahead * (q - 1) * 100}%)`;
+  } else {
+    s.page.style.transform = `translateX(${q * 100}%)`;
+    s.next.style.transform = `translateX(${(q - 1) * 20}%)`;
+    els.swipeDim.style.opacity = String(1 - q);
+  }
 }
 
-function endSwipe() {
-  els.sheet.style.transform = els.under.style.transform = "";
-  void els.sheet.offsetWidth;  // apply that before transitions come back on, or the sheet would slide in from the side
-  for (const s of [els.sheet, els.under]) s.classList.remove("dragging", "settling");
-  els.under.hidden = true;
-  els.underBody.replaceChildren();
-}
-
-els.edge.addEventListener("pointerdown", (e) => {
-  if (!sheetStack.length || swipe) return;
-  const [title, nodes] = renderers[sheetStack.at(-1).kind](sheetStack.at(-1));
+function showUnder(card) {
+  const [title, nodes] = renderCard(card);
   els.underTitle.textContent = title;
   els.underBody.replaceChildren(...nodes);
   els.under.hidden = false;
-  for (const s of [els.sheet, els.under]) s.classList.add("dragging");
-  swipe = { x: e.clientX, dx: 0, t: e.timeStamp, v: 0 };
-  swipeTo(0);
-  els.edge.setPointerCapture(e.pointerId);
-});
-els.edge.addEventListener("pointermove", (e) => {
-  if (!swipe) return;
-  const dx = Math.max(0, e.clientX - swipe.x);
-  swipe.v = (dx - swipe.dx) / Math.max(1, e.timeStamp - swipe.t);
-  Object.assign(swipe, { dx, t: e.timeStamp });
-  swipeTo(dx / innerWidth);
-});
-const letGo = () => {
-  if (!swipe) return;
-  const back = swipe.dx / innerWidth > SWIPE_BACK_AT || (swipe.v > SWIPE_FLICK && swipe.dx > 40);
-  swipe = null;
-  for (const s of [els.sheet, els.under]) s.classList.replace("dragging", "settling");
-  swipeTo(back ? 1 : 0);
+}
+
+const layers = () => [slide.page, slide.next, slide.mode === "over" ? els.swipeDim : null].filter(Boolean);
+
+// Start moving: which pages move, and what landing does. False: nothing to swipe to.
+function beginSlide(back) {
+  const i = gesture.row;
+  const side = (next, land) => ({ mode: "side", page: i ? els.sheet : els.dashboard, next, ahead: back ? 1 : -1, land });
+  if (i === undefined) {  // a subpage's edge: back to the page it opened over
+    showUnder(sheetStack.at(-1));
+    slide = { mode: "over", page: els.sheet, next: els.under, ahead: 1, land: goBack };
+    els.sheet.style.zIndex = "3";
+    els.swipeDim.style.zIndex = "2";
+    els.swipeDim.hidden = false;
+  } else if (back && i === 1) {
+    slide = side(els.dashboard, closeSheet);
+  } else if (back && i >= 2) {
+    showUnder(rowCard(ROW[i - 2].kind));
+    slide = side(els.under, () => landRow(ROW[i - 2].kind));
+  } else if (!back && i < ROW.length) {
+    showUnder(rowCard(ROW[i].kind));
+    slide = side(els.under, () => landRow(ROW[i].kind));
+  } else if (!back) {  // the last page: nothing further
+    slide = { mode: "rubber", page: els.sheet };
+  } else return false;  // the dashboard: nothing to its left
+  for (const l of layers()) l.classList.add("dragging");
+  place(0);
+  return true;
+}
+
+function moveSlide() {
+  const s = slide;
+  place(s.mode === "rubber" ? gesture.dx * RUBBER : Math.min(1, Math.max(0, (s.ahead * gesture.dx) / innerWidth)));
+}
+
+function endSlide() {
+  for (const l of layers()) l.style.transform = l.style.zIndex = "";
+  void els.sheet.offsetWidth;  // apply that before transitions come back on, or a page would slide in from the side
+  for (const l of layers()) l.classList.remove("dragging", "settling");
+  els.swipeDim.hidden = els.under.hidden = true;
+  els.underBody.replaceChildren();
+  slide = null;
+}
+
+function letGo() {
+  const s = slide, g = gesture;
+  gesture = null;
+  if (!s) return;
+  // A mouse sends a click after a drag (a finger's drag sends none): swallow it
+  const swallow = (e) => { e.stopPropagation(); e.preventDefault(); };
+  document.addEventListener("click", swallow, true);
+  setTimeout(() => document.removeEventListener("click", swallow, true), 0);
+  const go = s.mode !== "rubber" &&
+    ((s.ahead * g.dx) / innerWidth > SWIPE_AT || (s.ahead * g.v > SWIPE_FLICK && s.ahead * g.dx > 40));
+  for (const l of layers()) l.classList.replace("dragging", "settling");
+  place(go ? 1 : 0);
   setTimeout(() => {
-    if (back) {
-      els.sheet.classList.replace("settling", "dragging");  // land on the page underneath without sliding in again
-      goBack();
+    if (go) {
+      for (const l of layers()) l.classList.replace("settling", "dragging");  // land without sliding in again
+      s.land();
     }
-    endSwipe();
+    endSlide();
   }, SETTLE_MS);
-};
-els.edge.addEventListener("pointerup", letGo);
-els.edge.addEventListener("pointercancel", letGo);
+}
+
+// A finger down on a subpage's edge is a back swipe from the start. Anywhere on the dashboard or a row page it may
+// be one: it is once it has gone further sideways than up or down. One that starts on something that drags sideways
+// itself (a slider, a row that scrolls sideways) is left to it.
+function scrollsSideways(node) {
+  for (let n = node; n && n !== document.body; n = n.parentElement) {
+    if (n.scrollWidth > n.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(n).overflowX)) return true;
+  }
+  return false;
+}
+
+document.addEventListener("pointerdown", (e) => {
+  if (gesture || slide || !e.isPrimary) return;
+  const start = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp, dx: 0, v: 0 };
+  if (e.target === els.edge && sheetStack.length) {
+    gesture = start;
+    els.edge.setPointerCapture(e.pointerId);
+    beginSlide(true);
+    return;
+  }
+  const row = rowIndex();
+  if (row === null || e.target.closest("input") || scrollsSideways(e.target)) return;
+  gesture = { ...start, row };
+});
+document.addEventListener("pointermove", (e) => {
+  const g = gesture;
+  if (!g || e.pointerId !== g.id) return;
+  const dx = e.clientX - g.x, dy = e.clientY - g.y;
+  g.v = (dx - g.dx) / Math.max(1, e.timeStamp - g.t);
+  Object.assign(g, { dx, t: e.timeStamp });
+  if (!slide) {
+    if (Math.abs(dx) < SWIPE_LOCK_PX && Math.abs(dy) < SWIPE_LOCK_PX) return;
+    if (Math.abs(dy) >= Math.abs(dx) || !beginSlide(dx > 0)) {  // up or down is a scroll; or nothing that way
+      gesture = null;
+      return;
+    }
+    e.target.setPointerCapture?.(e.pointerId);
+  }
+  moveSlide();
+});
+for (const type of ["pointerup", "pointercancel"]) {
+  document.addEventListener(type, (e) => { if (gesture && e.pointerId === gesture.id) letGo(); });
+}
 
 function closeSheet() {
   clearTimeout(sheetIdle);
@@ -658,14 +785,8 @@ const renderers = {
   },
 
   menu: () => {
-    const entries = [
-      ["Home", ICONS.house, "house"],
-      ["Timers", ICONS.timer, "timers"],
-      ["Alarms", ICONS.alarm, "alarms"],
-      ["Shopping list", ICONS.list, "shopping"],
-      ["Music", ICONS.music, () => openSheet({ kind: "music" })],  // these two the page already knows
-      ["Volume", ICONS.volume, () => openSheet({ kind: "volume" })],
-    ];
+    const entries = ROW.map((r) => [r.label, ICONS[r.icon],
+                                    r.local && r.kind !== "timers" ? () => openSheet({ kind: r.kind }) : r.kind]);
     return ["Menu", entries.map(([label, icon, sheet]) => {
       const row = el("button", "menu-row");
       row.type = "button";
@@ -1369,10 +1490,15 @@ function showVolume(level) {
   }
 }
 
+// A card's title and body; a row page the brain hasn't sent yet is just its title
+function renderCard(card) {
+  if (card.placeholder) return [ROW[rowAt(card.kind)].label, []];
+  return renderers[card.kind](card);
+}
+
 function renderSheet() {
-  const render = renderers[sheetCard.kind];
-  if (!render) return;
-  const [title, nodes] = render(sheetCard);
+  if (!renderers[sheetCard.kind]) return;
+  const [title, nodes] = renderCard(sheetCard);
   els.sheetTitle.textContent = title;
   els.sheetBody.replaceChildren(...nodes);
   if (sheetCard.kind === "timers" && !ticker && ambient.timers.length) ticker = setInterval(tick, 1000);

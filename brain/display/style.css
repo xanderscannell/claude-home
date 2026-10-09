@@ -210,11 +210,14 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
   width: 5px; height: 64px; margin-top: -32px; border-radius: 3px;
   background: rgba(238, 243, 247, .22);
 }
-.sheet.dragging, .under.dragging { transition: none; }
-.sheet.settling, .under.settling { transition: transform .22s ease-out; }
+/* Swiping (app.js): a top page slides over a bottom one, which is dimmed while covered */
+.dragging { transition: none !important; }
+.settling { transition: transform .22s ease-out, opacity .22s ease-out !important; }
 .under { transform: none; pointer-events: none; }
-.under-dim { position: absolute; inset: 0; background: rgba(0, 0, 0, .45); }
-.settling .under-dim { transition: opacity .22s ease-out; }
+.dashboard { position: fixed; inset: 0; }  /* the room and its clock, moved as one when swiped aside */
+.swipe-dim { position: fixed; inset: 0; background: rgba(0, 0, 0, .45); pointer-events: none; }
+/* Sideways on the dashboard and the row's pages is a swipe between them, so the browser only takes up and down */
+.home, .sheet-body { touch-action: pan-y; }
 .sheet-body { flex: 1; min-height: 0; margin-top: 16px; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 24px; }
 .sheet-body p { margin: 0; }
 /* Empty states: say what's (not) here in the far-read voice, then how to change that. Scoped under
@@ -701,5 +704,5 @@ body.is-night .photo, body.is-night .scrim, body.is-night .home, body.is-night .
 .camera .close { opacity: .9; filter: drop-shadow(0 1px 4px rgba(0, 0, 0, .6)); }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
+  *, *::before, *::after, .settling { animation: none !important; transition: none !important; }
 }

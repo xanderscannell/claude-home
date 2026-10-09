@@ -677,15 +677,15 @@ def test_home_control(b):
     d.close()
 
 
-def swipe(d, to, pause=0, release=True):
-    """A finger in from the left edge to x=to. pause: real ms between moves (slow, so not a flick)."""
-    d.page.mouse.move(8, 240)
+def swipe(d, to, frm=8, y=240, pause=0, release=True):
+    """A finger from x=frm (the left edge) to x=to. pause: real ms between moves (slow, so not a flick)."""
+    d.page.mouse.move(frm, y)
     d.page.mouse.down()
-    for x in range(8, to + 1, 24):
-        d.page.mouse.move(x, 240)
+    for x in range(frm, to, 24 if to > frm else -24):
+        d.page.mouse.move(x, y)
         if pause:
             d.page.wait_for_timeout(pause)
-    d.page.mouse.move(to, 240)
+    d.page.mouse.move(to, y)
     if release:
         d.page.mouse.up()
         d.page.clock.run_for(300)  # past the settle's timer
@@ -701,7 +701,7 @@ def test_rooms_and_back(b):
     assert d.page.locator("#sheet-edge").is_hidden(), "nothing to go back to from the menu"
     d.page.locator(".menu-row").first.tap()  # Home
     d.push({"type": "card", "card": HOUSE})
-    assert d.text("#sheet-title") == "Home" and d.page.locator("#sheet-edge").is_visible()
+    assert d.text("#sheet-title") == "Home" and d.page.locator("#sheet-edge").is_hidden(), "a row page has no back"
     d.tap(".tile-rooms")
     rooms = [{"id": "living_room", "name": "Living room", "lights": 3, "lights_on": 1, "playing": ["TV"], "switched_on": []},
              {"id": "bedroom", "name": "Bedroom", "lights": 2, "lights_on": 0, "playing": [], "switched_on": ["Ceiling fan"]},
@@ -760,18 +760,113 @@ def test_rooms_and_back(b):
     assert d.page.eval_on_selector("#sheet", "s => s.getBoundingClientRect().left") == 0
     swipe(d, 150)  # just as short, but a flick: goes back
     assert d.text("#sheet-title") == "Home" and opened()[-1] == {"type": "open", "sheet": "house"}
+    assert d.page.locator("#sheet-edge").is_hidden(), "Home is top level: nothing to go back to"
+    d.tap(".tile-rooms")
+    d.push({"type": "card", "card": {"kind": "rooms", "rooms": rooms}})
     d.page.focus("#sheet-edge")
     d.page.keyboard.press("Enter")  # no swiping from a keyboard: the edge is a Back button
     d.page.wait_for_timeout(50)
-    assert d.text("#sheet-title") == "Menu" and d.page.locator("#sheet-edge").is_hidden()
+    assert d.text("#sheet-title") == "Home"
     assert big(d.page.locator("#sheet-close").bounding_box())
 
     # Close forgets the way back: the next sheet starts fresh
-    d.tap(".menu-row >> nth=0")
-    d.push({"type": "card", "card": HOUSE})
+    d.tap(".tile-rooms")
+    d.push({"type": "card", "card": {"kind": "rooms", "rooms": rooms}})
     d.tap("#sheet-close")
-    d.push({"type": "card", "card": HOUSE})
+    d.push({"type": "card", "card": {"kind": "rooms", "rooms": rooms}})
     assert d.page.locator("#sheet-edge").is_hidden()
+    d.close()
+
+
+def test_swiping_between_sheets(b):
+    """Right to left from the dashboard goes along the row (the menu's order), left to right comes back; it stops
+    at both ends. Pages the brain serves show their last card (or just a title) while swiped in, and are asked for
+    on landing."""
+    d = Display(b)
+    opened = lambda: [m["sheet"] for m in d.sent if m.get("type") == "open"]  # noqa: E731
+    title = lambda: d.text("#sheet-title") if d.visible("#sheet") else "dashboard"  # noqa: E731
+    left = lambda sel: d.page.eval_on_selector(sel, "s => s.getBoundingClientRect().left")  # noqa: E731
+    d.push(ambient([{"id": 1, "label": "pasta", "ends_at": START.timestamp() + 300, "duration": 600,
+                     "paused_left": None}], weather=None))
+
+    # Partway: the dashboard and Home side by side, both 250px along; Home just its title (it's never been opened)
+    swipe(d, 450, frm=700, y=200, release=False)
+    assert d.visible("#sheet-under") and d.text("#under-title") == "Home" and not d.text("#under-body")
+    assert 530 <= left("#sheet-under") <= 570 and -270 <= left("#dashboard") <= -230, (left("#sheet-under"), left("#dashboard"))
+    assert not d.visible("#swipe-dim"), "side by side, nothing is covered, so nothing dims"
+    d.page.mouse.up()
+    d.page.clock.run_for(300)
+    d.page.wait_for_timeout(300)
+    assert title() == "Home" and opened() == ["house"] and left("#sheet") == 0 and not d.visible("#swipe-dim")
+    d.push({"type": "card", "card": HOUSE})
+    assert d.page.locator("#sheet-body .tile").count() == 5
+    assert d.page.locator("#sheet-edge").is_hidden(), "a row page has no back swipe"
+
+    # On along the row; a swipe that starts on a tile doesn't tap it
+    seen = []
+    for _ in range(6):
+        swipe(d, 300, frm=700, y=200)
+        seen.append(title())
+    assert seen == ["Timers", "Alarms", "Shopping list", "Music", "Volume", "Volume"], seen
+    assert left("#sheet") == 0, "past the end it gives a little and springs back"
+    assert opened() == ["house", "alarms", "shopping"], "only pages the brain serves are asked for, on landing"
+    assert d.page.locator("#sheet-edge").is_hidden()
+
+    # And back, to the dashboard and no further
+    seen = []
+    for _ in range(7):
+        swipe(d, 500, frm=100, y=200)
+        seen.append(title())
+    assert seen == ["Music", "Shopping list", "Alarms", "Timers", "Home", "dashboard", "dashboard"], seen
+
+    # A page seen before shows its last card while it's swiped in
+    swipe(d, 300, frm=700, y=200)
+    swipe(d, 450, frm=700, y=200, release=False)
+    assert d.text("#under-title") == "Timers" and d.page.locator("#under-body .tmr").count() == 1
+    d.page.mouse.up()
+    d.page.clock.run_for(300)
+    d.page.wait_for_timeout(300)
+    assert title() == "Timers"
+    d.push({"type": "card", "card": {"kind": "alarms", "alarms": [alarm(1, "06:30", "01234", "gym")]}})
+    assert title() == "Alarms"
+    swipe(d, 500, frm=100, y=200)
+    assert title() == "Timers"
+    swipe(d, 450, frm=700, y=200, release=False)
+    assert d.text("#under-title") == "Alarms" and d.page.locator("#under-body .alarm-row").count() == 1
+    d.page.mouse.up()
+    d.page.clock.run_for(300)
+    d.page.wait_for_timeout(300)
+    assert title() == "Alarms"
+    swipe(d, 300, frm=700, y=200)
+    assert title() == "Shopping list"
+
+    # Up and down is a scroll, not a swipe; a short slow drag springs back
+    d.push({"type": "card", "card": {"kind": "shopping", "groups": [{"name": "", "items": [f"Item {i}" for i in range(12)]}]}})
+    d.page.mouse.move(400, 300)
+    d.page.mouse.down()
+    d.page.mouse.move(430, 200, steps=5)
+    d.page.mouse.move(440, 100, steps=5)
+    d.page.mouse.up()
+    d.page.wait_for_timeout(50)
+    assert title() == "Shopping list" and not d.visible("#sheet-under")
+    swipe(d, 600, frm=700, y=200, pause=40)
+    assert title() == "Shopping list" and left("#sheet") == 0
+
+    # A subpage has only its edge; a card Claude puts up isn't in the row; the menu still works
+    d.page.locator("#sheet-close").tap()
+    d.push({"type": "card", "card": HOUSE})
+    d.tap(".tile-lights")
+    d.push({"type": "card", "card": {"kind": "lights", "rooms": []}})
+    swipe(d, 300, frm=700, y=200)
+    assert title() == "Lights"
+    d.push({"type": "card", "card": {"kind": "weather", **WEATHER}})
+    swipe(d, 300, frm=700, y=200)
+    assert title() == "New York"
+    d.tap("#sheet-close")
+    d.tap("#menu")
+    assert title() == "Menu"
+    swipe(d, 300, frm=700, y=200)
+    assert title() == "Menu", "the menu isn't in the row"
     d.close()
 
 
