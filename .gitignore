@@ -3,6 +3,7 @@
 __pycache__/
 voices/
 turns.jsonl
+ha_actions.jsonl
 home.db
 spotify_token.json
 .cache/

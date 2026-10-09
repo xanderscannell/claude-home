@@ -577,6 +577,13 @@ def main():
         time.sleep(0.1)
     got = asyncio.run(satellite_turn(port, "hello again"))
     assert got[-1]["type"] == "audio_end"
+    # Home Assistant actions are logged with what was heard; state lookups are not
+    brain.device("hall").heard = "turn on the hall light"
+    for tool in ("mcp__ha__homeassistant__GetLiveContext", "mcp__ha__intent__HassTurnOn"):
+        asyncio.run(brain.log_ha("hall")({"tool_name": tool, "tool_input": {"name": "Hall"}, "tool_response": "ok"}, None, None))
+    logged = [json.loads(line) for line in brain.HA_LOG.read_text().splitlines()]
+    assert [(e["device"], e["heard"], e["tool"], e["args"]) for e in logged] == \
+        [("hall", "turn on the hall light", "intent__HassTurnOn", {"name": "Hall"})], logged
     # Displays: the device hub, ordering, isolation between devices, and turns started from a screen
     asyncio.run(display_flow(port))
     asyncio.run(music_flow(port))

@@ -1,7 +1,8 @@
 """Claude Home brain: web server for satellites and displays. Speech -> Groq STT -> Claude (Agent SDK) -> Piper -> speech.
 
 Claude's reply is spoken sentence by sentence while it is still being generated.
-Every turn's timings are appended to turns.jsonl (CLAUDE_HOME_LOG overrides the path).
+Every turn's timings are appended to turns.jsonl (CLAUDE_HOME_LOG overrides the path), and every Home Assistant
+action Claude takes to ha_actions.jsonl beside it.
 
 Run from brain/:  uv run --env-file ../.env brain.py
 Optional env: BRAIN_HOST (default localhost; set 0.0.0.0 to accept satellites from the LAN), BRAIN_PORT (8765),
@@ -36,7 +37,7 @@ from pathlib import Path
 
 import httpx
 import uvicorn
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage, StreamEvent
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, HookMatcher, ResultMessage, StreamEvent
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -52,6 +53,7 @@ RATE = 16000
 HERE = Path(__file__).parent
 VOICE = HERE / "voices" / "en_GB-northern_english_male-medium.onnx"
 LOG = Path(os.environ.get("CLAUDE_HOME_LOG", HERE / "turns.jsonl"))
+HA_LOG = LOG.with_name("ha_actions.jsonl")
 
 SYSTEM_PROMPT = """You are Claude Home, a voice assistant on a smart speaker. Everything you write is spoken aloud.
 - Answer in one to three short sentences unless asked for more.
@@ -193,7 +195,23 @@ def options(device: str, categories: list[str] = ()) -> ClaudeAgentOptions:
     if os.environ.get("HA_URL"):
         servers["ha"] = {"type": "http", "url": os.environ["HA_URL"].rstrip("/") + "/api/mcp",
                          "headers": {"Authorization": f"Bearer {os.environ.get('HA_TOKEN', '')}"}}
-    return replace(OPTIONS, system_prompt=SYSTEM_PROMPT + memory, mcp_servers=servers)
+    logged = [HookMatcher(matcher="mcp__ha__.*", hooks=[log_ha(device)])]
+    return replace(OPTIONS, system_prompt=SYSTEM_PROMPT + memory, mcp_servers=servers,
+                   hooks={"PostToolUse": logged, "PostToolUseFailure": logged})
+
+
+def log_ha(name: str):
+    """Hook for one device's session: append each Home Assistant action Claude takes (not its state lookups) to
+    HA_LOG with what was heard, so a surprise in the house traces back to a mishearing or to Claude's choice."""
+    async def hook(data, tool_use_id, context):
+        tool = data["tool_name"].removeprefix("mcp__ha__")
+        if not tool.endswith("GetLiveContext"):
+            entry = {"ts": datetime.now().isoformat(timespec="seconds"), "device": name, "heard": device(name).heard,
+                     "tool": tool, "args": data["tool_input"], "result": data.get("tool_response", data.get("error"))}
+            with HA_LOG.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, default=str) + "\n")
+        return {}
+    return hook
 
 
 def after_reply(name: str):
@@ -264,6 +282,7 @@ class Device:
         self.displays: set[WebSocket] = set()
         self.state = "idle"  # idle | listening | thinking | speaking
         self.after_reply: list = []  # async actions held until the reply has played (music starting, say)
+        self.heard = ""  # what was said in the latest turn, for the Home Assistant action log
 
     async def show(self, msg: dict):
         """Send to every display of this device; drop displays that have gone away or stopped reading.
@@ -444,6 +463,7 @@ async def _turn(dev: Device, pcm: bytes, text: str | None):
             await dev.set_state("idle")
             return
         print(f"[{dev.name}] you:    {text}")
+        dev.heard = text
         await dev.show({"type": "heard", "text": text})
 
         await send(sat, json.dumps({"type": "audio_start", "sample_rate": voice.config.sample_rate}))
