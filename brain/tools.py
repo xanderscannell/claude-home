@@ -511,8 +511,8 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spo
     categories are the shopping list's, as of the session's start (shopping results always list the current ones).
     after_reply(action) is awaited to run an async action once this device's reply has finished playing, so music
     doesn't start under Claude's voice (and the music ducking).
-    cameras are Home Assistant's, as {entity, name, area} (none: no show_camera tool); on_camera(camera) is awaited
-    to put one's live view on this device's screens."""
+    cameras are Home Assistant's, as {entity, name, area} (none: no camera tools); on_camera(camera) is awaited
+    to put one's live view on this device's screens, and on_camera(None) to close it."""
 
     async def via_spotify(action, say):
         if music is None:
@@ -774,7 +774,8 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spo
     where = ", ".join(f"{c['name']} ({c['area']})" if c["area"] and c["area"] != c["name"] else c["name"]
                       for c in cameras)
 
-    @tool("show_camera", f"Show a security camera's live view on this speaker's screen, for about two minutes. "
+    @tool("show_camera", f"Show a security camera's live view on this speaker's screen, for about two minutes "
+          f"or until closed. "
           f"The cameras, with where they are: {where}.",
           _schema(camera={"type": "string", "enum": [c["name"] for c in cameras]}))
     async def show_camera(a):
@@ -784,10 +785,15 @@ def tool_list(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spo
         await on_camera(cam)
         return _text(f"The {cam['name']} camera is opening on the screen; it takes a few seconds to connect.")
 
+    @tool("close_camera", "Close the camera view on this speaker's screen.", _schema())
+    async def close_camera(a):
+        await on_camera(None)
+        return _text("Closed.")
+
     return [set_timer, list_timers, cancel_timer, pause_timer, resume_timer, set_alarm, list_alarms, cancel_alarm, remember_tool, forget_tool,
             add_shopping, remove_shopping, get_shopping, clear_shopping, get_weather, show_on_screen, get_agenda,
             morning_briefing, show_recipe, recipe_step, play_music, pause_music, resume_music, skip_track,
-            previous_track, whats_playing, set_volume] + ([show_camera] if cameras else [])
+            previous_track, whats_playing, set_volume] + ([show_camera, close_camera] if cameras else [])
 
 
 def make_tools(device: str, on_card=_no_screen, on_volume=_no_speaker, music: spotify.Spotify | None = None,

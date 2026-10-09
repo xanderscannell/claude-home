@@ -245,7 +245,8 @@ async def show_cam(cam):
 show_cam_tool = {t.name: t for t in tools.tool_list("den", cameras=cams, on_camera=show_cam)}["show_camera"]
 assert "Side (Front Yard), Front Door." in show_cam_tool.description, show_cam_tool.description
 asyncio.run(show_cam_tool.handler({"camera": "Side"}))
-assert shown_cams == [cams[0]], shown_cams
+asyncio.run({t.name: t for t in tools.tool_list("den", cameras=cams, on_camera=show_cam)}["close_camera"].handler({}))
+assert shown_cams == [cams[0], None], shown_cams
 
 # Alarms: when they ring next (2026-10-07 is a Wednesday; Monday = 0)
 D = datetime.datetime

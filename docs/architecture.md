@@ -179,7 +179,7 @@ Brain -> display:
 | `now_playing {track}` | `null`, or `{title, artist, album, art, uri, is_playing, progress_ms, duration_ms}`; sent when the track, play state, or position really changes (screens advance the position themselves) |
 | `ringing {ringing}` | `null`, the ringing alarm `{kind: "alarm", id, label, time}`, or a finished timer `{kind: "timer", label}` |
 | `volume {level}` | The speaker's level |
-| `camera {entity, name}` | Open a Home Assistant camera's live view (see Cameras below) |
+| `camera {entity, name}` | Open a Home Assistant camera's live view (see Cameras below); `entity: null` closes it |
 
 Card kinds: `weather` (the forecast), `timers` (each with `ends_at` epoch seconds, `duration` in seconds, and `paused_left`: seconds left while paused, else null), `alarms`,
 `shopping {groups}` (each `{name, items}`: a Todoist section, uncategorized first with name `""`), `agenda {events}`, `briefing` (forecast, today's events, next alarm, timers,
@@ -266,7 +266,7 @@ registered, plus an `mcp` client for Home Assistant.
 |---|---|
 | 1 | `set_timer` / `list_timers` / `cancel_timer` / `pause_timer` / `resume_timer` (by name; an unlabeled timer is named by its length, "5 minute timer"), `remember` / `forget`, shopping list (`add_to_` / `remove_from_` / `get_` / `clear_shopping_list`), `get_weather` (Open-Meteo, no API key), web search (the SDK's built-in `WebSearch`) |
 | 2 | Home Assistant MCP tools (automatic), `announce(device \| all, text)` (not started) |
-| 3 | `set_alarm` / `list_alarms` / `cancel_alarm`, `show_on_screen(title, lines)`, `get_agenda(days)`, `morning_briefing`, `show_recipe` / `recipe_step(direction)`, `play_music(query, kind)` / `pause_music` / `resume_music` / `skip_track` / `previous_track` / `whats_playing`, `set_volume(level, relative)`, `show_camera(camera)` |
+| 3 | `set_alarm` / `list_alarms` / `cancel_alarm`, `show_on_screen(title, lines)`, `get_agenda(days)`, `morning_briefing`, `show_recipe` / `recipe_step(direction)`, `play_music(query, kind)` / `pause_music` / `resume_music` / `skip_track` / `previous_track` / `whats_playing`, `set_volume(level, relative)`, `show_camera(camera)` / `close_camera` |
 
 Tools whose result belongs on the screen (timers, alarms, weather, the shopping list, the
 calendar, the briefing, recipes, volume) push the matching card to the device's screens as they

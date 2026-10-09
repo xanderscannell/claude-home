@@ -224,9 +224,10 @@ def after_reply(name: str):
 
 
 def show_camera(name: str):
-    """on_camera for one device's tools: a camera's live view goes up on that device's screens."""
-    async def on_camera(cam: dict):
-        await device(name).show({"type": "camera", "entity": cam["entity"], "name": cam["name"]})
+    """on_camera for one device's tools: a camera's live view goes up on that device's screens (None: closes)."""
+    async def on_camera(cam: dict | None):
+        await device(name).show({"type": "camera", "entity": cam["entity"], "name": cam["name"]} if cam
+                                else {"type": "camera", "entity": None})
     return on_camera
 
 

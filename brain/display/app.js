@@ -77,7 +77,7 @@ const handlers = {
   ringing: (m) => showRinging(m.ringing),
   volume: (m) => showVolume(m.level),
   now_playing: (m) => showNowPlaying(m.track),
-  camera: (m) => showCamera(m),
+  camera: (m) => (m.entity ? showCamera(m) : closeCamera()),
 };
 
 function handle(msg) {

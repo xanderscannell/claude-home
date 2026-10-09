@@ -964,6 +964,10 @@ def test_camera(b):
     assert d.visible("#camera"), "closed early"
     d.page.clock.run_for(2000)
     assert not d.visible("#camera"), "still open after two minutes"
+    # Closed by voice: the brain sends a camera message with no entity
+    d.push({"type": "camera", "entity": "camera.side_live_view", "name": "Side"})
+    d.push({"type": "camera", "entity": None})
+    assert not d.visible("#camera"), "a camera message with no entity didn't close it"
     d.close()
 
 
