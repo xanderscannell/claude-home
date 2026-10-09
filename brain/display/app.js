@@ -562,14 +562,32 @@ const renderers = {
       return ["Climate", [el("p", "quiet", "No thermostats."),
                           el("p", "hint", "Thermostats and air conditioners in Home Assistant show up here.")]];
     }
-    const was = els.sheetBody.querySelector(".thermostats")?.scrollLeft;
     const pages = el("div", "thermostats");
     pages.append(...c.thermostats.map(thermostatPage));
-    requestAnimationFrame(() => {
-      const asked = c.request && c.request.entity && [...pages.children].find((p) => p.dataset.entity === c.request.entity);
-      pages.scrollLeft = was ?? (asked ? asked.offsetLeft - pages.offsetLeft : 0);
-    });
+    keepPlace(pages, c);
     return ["Climate", [pages]];
+  },
+
+  // Every speaker and TV, a panel each scrolling sideways: what's on it, its volume, play or pause, and power.
+  // One that's playing is lit. Opened from a room's player, that one shows first.
+  media: (c) => {
+    if (!c.players.length) {
+      return ["Speakers & TVs", [el("p", "quiet", "No speakers or TVs."),
+                                 el("p", "hint", "Media players in Home Assistant show up here.")]];
+    }
+    const row = el("div", "players");
+    row.append(...c.players.map(playerPanel));
+    keepPlace(row, c);
+    return ["Speakers & TVs", [row]];
+  },
+
+  // Automations: a row each like the alarms, when it last ran, Run, and a switch; one that's off is dimmed
+  automations: (c) => {
+    if (!c.automations.length) {
+      return ["Automations", [el("p", "quiet", "No automations."),
+                              el("p", "hint", "Automations made in Home Assistant show up here.")]];
+    }
+    return ["Automations", c.automations.map(automationRow)];
   },
 
   // One room's devices by kind, the way the lights page has lights by room
@@ -838,6 +856,122 @@ function openingTile(d, sheet, state, fill, off) {
   paint(state, fill ? 100 : 0, off);
   b.addEventListener("click", () => send({ type: "open", sheet, entity: d.entity }));
   return b;
+}
+
+// A sideways row of devices (thermostats, players) keeps its place when a fresh card redraws it, and first opens
+// on the one asked for (the thermostat tapped on a room's page)
+function keepPlace(row, c) {
+  const was = els.sheetBody.querySelector(`.${row.className}`)?.scrollLeft;
+  requestAnimationFrame(() => {
+    const asked = c.request && c.request.entity && [...row.children].find((p) => p.dataset.entity === c.request.entity);
+    row.scrollLeft = was ?? (asked ? asked.offsetLeft - row.offsetLeft : 0);
+  });
+}
+
+// A round button with an icon, for the device pages
+function roundButton(cls, label, icon, onPress) {
+  const b = el("button", cls);
+  b.type = "button";
+  b.setAttribute("aria-label", label);
+  b.innerHTML = icon;  // fixed markup from ICONS
+  b.addEventListener("click", onPress);
+  return b;
+}
+
+// One player: room and name, what's on, then volume and the buttons at the bottom. Volume taps go out as one
+// change once they stop, like a thermostat's.
+const VOLUME_STEP = 5;
+const PLAYER_ON = ["playing", "paused", "idle", "on", "buffering"];
+
+function playerPanel(p) {
+  const panel = el("section", "player");
+  panel.dataset.entity = p.entity;
+  const what = el("div", "pl-what");
+  const volume = el("span", "pl-volume");
+  const play = roundButton("pl-btn main", "", "", () => {
+    p.state = p.state === "playing" ? "paused" : "playing";
+    paint();
+    send({ type: "media", entity: p.entity, action: p.state === "playing" ? "play" : "pause" });
+  });
+  const power = roundButton("pl-btn", "", ICONS.power, () => {
+    p.state = PLAYER_ON.includes(p.state) ? "off" : "idle";
+    paint();
+    send({ type: "media", entity: p.entity, action: p.state === "off" ? "turn_off" : "turn_on" });
+  });
+  let pending = null;
+  const nudge = (dir) => {
+    p.volume = Math.min(100, Math.max(0, p.volume + dir * VOLUME_STEP));
+    paint();
+    clearTimeout(pending);
+    pending = setTimeout(() => send({ type: "media", entity: p.entity, volume: p.volume }), NUDGE_MS);
+  };
+  const vol = el("div", "pl-vol");
+  vol.append(roundButton("pl-btn small", `Turn down the ${p.name}`, ICONS.minus, () => nudge(-1)), volume,
+             roundButton("pl-btn small", `Turn up the ${p.name}`, ICONS.plus, () => nudge(1)));
+  const buttons = el("div", "pl-buttons");
+  buttons.append(play, power);
+  const head = el("div");
+  head.append(el("p", "pl-room", p.room), el("p", "pl-name", p.name));
+  panel.append(head, what, vol, buttons);
+
+  const paint = () => {
+    const on = PLAYER_ON.includes(p.state), playing = p.state === "playing";
+    panel.classList.toggle("lit", playing);
+    panel.classList.toggle("off", !on);
+    if (!on) what.replaceChildren(el("p", "pl-state", "Off"));
+    else if (p.title) what.replaceChildren(el("p", "pl-title", p.title), el("p", "pl-by", p.artist || p.app || ""));
+    else what.replaceChildren(el("p", "pl-state", p.state === "idle" ? "Nothing on" : sentence(p.state)));
+    if (p.title && p.state === "paused") what.append(el("p", "pl-by", "Paused"));
+    volume.textContent = p.volume === null || p.volume === undefined ? "" : String(p.volume);
+    vol.hidden = !on || !volume.textContent;
+    play.hidden = !on || (!p.title && !playing);  // nothing loaded: nothing for Play to play
+    play.innerHTML = playing ? ICONS.pause : ICONS.play;  // fixed markup from ICONS
+    play.setAttribute("aria-label", `${playing ? "Pause" : "Play"} the ${p.name}`);
+    power.setAttribute("aria-label", `Turn ${on ? "off" : "on"} the ${p.name}`);
+  };
+  paint();
+  return panel;
+}
+
+// "Ran today at 7:02am", "Ran yesterday at 11:02pm", "Ran Monday", "Ran March 3", or "Hasn't run yet"
+function lastRan(epoch) {
+  if (!epoch) return "Hasn't run yet";
+  const at = new Date(epoch * 1000);
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(at).setHours(0, 0, 0, 0)) / 86400000);
+  const time = `${at.getHours() % 12 || 12}:${String(at.getMinutes()).padStart(2, "0")}${at.getHours() < 12 ? "am" : "pm"}`;
+  if (days <= 0) return `Ran today at ${time}`;
+  if (days === 1) return `Ran yesterday at ${time}`;
+  if (days < 7) return `Ran ${at.toLocaleDateString([], { weekday: "long" })}`;
+  return `Ran ${at.toLocaleDateString([], { month: "long", day: "numeric" })}`;
+}
+
+function automationRow(a) {
+  const row = el("div", a.on ? "auto-row" : "auto-row off");
+  const when = el("p", "auto-when", lastRan(a.last_ran));
+  const what = el("div", "auto-what");
+  what.append(el("p", "auto-name", a.name), when);
+  const run = el("button", "pill", "Run");
+  run.type = "button";
+  run.setAttribute("aria-label", `Run ${a.name}`);
+  run.addEventListener("click", () => {
+    a.last_ran = Date.now() / 1000;  // show it now; the brain's card confirms
+    when.textContent = lastRan(a.last_ran);
+    send({ type: "automation_run", entity: a.entity });
+  });
+  const toggle = el("button", "switch");
+  toggle.type = "button";
+  toggle.setAttribute("role", "switch");
+  toggle.setAttribute("aria-checked", String(a.on));
+  toggle.setAttribute("aria-label", a.name);
+  toggle.append(el("span"));
+  toggle.addEventListener("click", () => {
+    a.on = !a.on;
+    toggle.setAttribute("aria-checked", String(a.on));
+    row.classList.toggle("off", !a.on);
+    send({ type: "automation_toggle", entity: a.entity, enabled: a.on });
+  });
+  row.append(what, run, toggle);
+  return row;
 }
 
 // A thermostat: the setting as the hero with − and + beside it, then a scale with a dot where the room is and a mark
@@ -1109,6 +1243,7 @@ const ICONS = {
   play: svg('<path d="M8 5v14l11-7z"/>'),
   pause: svg('<path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/>'),
   next: svg('<path d="M15.5 5H18v14h-2.5zM5 5.5v13l9.5-6.5z"/>'),
+  power: svg('<path d="M12 3v8"/><path d="M6.8 6.5a7.5 7.5 0 1 0 10.4 0"/>'),
   minus: svg('<path d="M5 12h14"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),
   house: svg('<path d="M3.5 11L12 4l8.5 7"/><path d="M6 9.5V20h12V9.5"/><path d="M10 20v-5h4v5"/>'),

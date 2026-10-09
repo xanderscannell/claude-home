@@ -106,8 +106,25 @@ def light(entity, name, on, brightness, domain="light"):
     return {"entity": f"{domain}.{entity}", "name": name, "on": on, "brightness": brightness}
 
 
-def player(entity, name, state):
-    return {"entity": f"media_player.{entity}", "name": name, "state": state}
+def player(entity, name, state, title=None, artist=None, app=None, volume=30):
+    """A Home Assistant media player: a TV, a Sonos. volume 0-100, None if it can't be set from here."""
+    return {"entity": f"media_player.{entity}", "name": name, "state": state, "title": title, "artist": artist,
+            "app": app, "volume": volume}
+
+
+def automation(entity, name, on, ran=None):
+    """ran: when it last ran (epoch seconds), None if never"""
+    return {"entity": f"automation.{entity}", "name": name, "on": on, "last_ran": ran}
+
+
+AUTOMATIONS = [automation("porch_dusk", "Porch light at dusk", True, at(-1, 18, 41)),
+               automation("morning_lights", "Kitchen lights at 6:30 on weekdays", True, at(0, 6, 30)),
+               automation("goodnight", "Goodnight: everything off", True, at(-1, 23, 2)),
+               automation("doorbell_camera", "Doorbell shows the camera", True, soon(-95)),
+               automation("ac_away", "AC off when everyone leaves", True, at(-3, 8, 15)),
+               automation("kids_nightlight", "Kids' night light at bedtime", True, at(-1, 19, 45)),
+               automation("vacation", "Vacation lights", False),
+               automation("holiday_lights", "Holiday lights", False, at(-280, 17, 0))]
 
 
 def switch(entity, name, on):
@@ -137,11 +154,11 @@ HOUSE = [
     {"id": "kitchen", "name": "Kitchen",
      "lights": [light("kitchen_ceiling", "Ceiling", True, 80), light("kitchen_island", "Island pendants", True, 100),
                 light("kitchen_cabinets", "Under-cabinet", False, 60)],
-     "media": [player("kitchen_speaker", "Speaker", "off")], "climate": [], "switches": [switch("coffee", "Coffee maker", False)]},
+     "media": [player("kitchen_speaker", "Speaker", "paused", "Harvest Moon", "Neil Young", volume=40)], "climate": [], "switches": [switch("coffee", "Coffee maker", False)]},
     {"id": "living_room", "name": "Living room",
      "lights": [light("living_lamp", "Reading lamp", True, 35), light("living_floor", "Floor lamp", False, 70),
                 light("living_tv", "TV backlight", False, None)],
-     "media": [player("living_tv", "TV", "playing"), player("living_sonos", "Sonos", "idle")],
+     "media": [player("living_tv", "TV", "playing", "The Bear", app="Netflix", volume=22), player("living_sonos", "Sonos", "idle", volume=35)],
      "climate": [LIVING_THERMOSTAT],
      "switches": []},
     {"id": "bedroom", "name": "Bedroom",
@@ -168,7 +185,8 @@ def house():
                 climate={k: LIVING_THERMOSTAT[k] for k in ("temp", "target", "action")},
                 media={"playing": [f"{room['name']} {m['name']}" for room, m in players if m["state"] == "playing"],
                        "total": len(players)},
-                rooms=[room["name"] for room in HOUSE], automations={"on": 12, "total": 14})
+                rooms=[room["name"] for room in HOUSE],
+                automations={"on": sum(a["on"] for a in AUTOMATIONS), "total": len(AUTOMATIONS)})
 
 
 def rooms():
@@ -196,6 +214,8 @@ SHEETS = {
     "lights": lambda: card("lights", rooms=[{"name": r["name"], "lights": r["lights"]} for r in HOUSE if r["lights"]]),
     "rooms": rooms,
     "climate": lambda: card("climate", thermostats=[t for r in HOUSE for t in r["climate"]]),
+    "media": lambda: card("media", players=[{**m, "room": r["name"]} for r in HOUSE for m in r["media"]]),
+    "automations": lambda: card("automations", automations=AUTOMATIONS),
     "weather": lambda: card("weather", **WEATHER),
     "timers": lambda: card("timers", timers=timers()),
     "alarms": lambda: card("alarms", alarms=alarms()),
@@ -267,6 +287,22 @@ async def display(ws: WebSocket):
                 await push(card(**PANCAKES, step=recipe["step"]), to=ws)
             elif m.get("type") == "recipe":
                 recipe["step"] = -1
+            elif m.get("type") == "media" and m.get("entity"):
+                for p in (p for r in HOUSE for p in r["media"] if p["entity"] == m["entity"]):
+                    if "volume" in m:
+                        p["volume"] = m["volume"]
+                    else:  # play, pause, turn_on, turn_off
+                        p["state"] = {"play": "playing", "pause": "paused", "turn_on": "idle", "turn_off": "off"}[m["action"]]
+                if answer := opened(showing):
+                    await push(answer, to=ws)
+            elif m.get("type") in ("automation_toggle", "automation_run"):
+                for a in (a for a in AUTOMATIONS if a["entity"] == m.get("entity")):
+                    if m["type"] == "automation_toggle":
+                        a["on"] = m["enabled"]
+                    else:
+                        a["last_ran"] = time.time()
+                if answer := opened(showing):
+                    await push(answer, to=ws)
             elif m.get("type") == "climate":
                 for t in (t for r in HOUSE for t in r["climate"] if t["entity"] == m.get("entity")):
                     t.update({k: m[k] for k in ("target", "mode") if k in m})

@@ -197,11 +197,17 @@ devices: lights and switches as above, players `{entity, name, state}` (Home Ass
 thermostats as in `climate`. `climate {thermostats}` is every thermostat, each
 `{entity, name, temp, target, mode, modes, action, min, max, step, humidity}` (Home Assistant's
 `hvac_mode`, `hvac_modes`, and `hvac_action`; humidity may be null).
+`media {players}` is every speaker and TV, each `{entity, room, name, state, title, artist, app, volume}`
+(volume 0-100, null if it can't be set), and `automations {automations}` each `{entity, name, on, last_ran}`
+(epoch seconds, null if never).
 The screen sends `open {sheet}` for `house`, `lights`, `rooms`, `room` (with `room`: the area id), and
-`climate` (with `entity` from a room's thermostat, which then shows first), and `media` (with
-`entity`, a page still to come); `light {entity, on, brightness?}` for a tap or a drag on a light or a
-switch; `lights_off` for All off; and `climate {entity, target}` or `climate {entity, mode}` (taps on
-+ and − are sent as one change once they stop). The answer to a change is a fresh
+`climate` and `media` (each with `entity` from a room's tile, which then shows first), and
+`automations`; `light {entity, on, brightness?}` for a tap or a drag on a light or a switch;
+`lights_off` for All off; `climate {entity, target}` or `climate {entity, mode}`;
+`media {entity, action}` (`play`, `pause`, `turn_on`, `turn_off`) or `media {entity, volume}` (with an
+`entity` it's a Home Assistant player, without one Spotify as above); and `automation_run {entity}` or
+`automation_toggle {entity, enabled}`. Taps on a thermostat's or a player's − and + go out as one
+change once they stop. The answer to a change is a fresh
 card of the page that screen last opened. Back re-sends the open that brought up the page it returns
 to, so that page comes back fresh too.
 

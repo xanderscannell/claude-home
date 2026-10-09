@@ -804,6 +804,91 @@ def test_climate(b):
     d.close()
 
 
+def player(entity, room, name, state, title=None, artist=None, app=None, volume=30):
+    return {"entity": entity, "room": room, "name": name, "state": state, "title": title, "artist": artist,
+            "app": app, "volume": volume}
+
+
+def test_speakers_and_tvs(b):
+    d = Display(b)
+    media_sent = lambda: [m for m in d.sent if m.get("type") == "media"]  # noqa: E731
+    players = [player("media_player.kitchen", "Kitchen", "Speaker", "paused", "Harvest Moon", "Neil Young", volume=40),
+               player("media_player.tv", "Living room", "TV", "playing", "The Bear", app="Netflix", volume=22),
+               player("media_player.sonos", "Living room", "Sonos", "idle", volume=35),
+               player("media_player.bedroom", "Bedroom", "TV", "off")]
+    d.push({"type": "card", "card": {"kind": "media", "players": players}})
+    assert d.text("#sheet-title") == "Speakers & TVs"
+    panel = lambda i: d.page.locator(".player").nth(i)  # noqa: E731
+    lines = lambda p: [line for line in p.inner_text().split("\n") if line.strip()]  # noqa: E731
+    assert [lines(p)[1:] for p in d.page.locator(".player").all()][:2] == [
+        ["Speaker", "Harvest Moon", "Neil Young", "Paused", "40"], ["TV", "The Bear", "Netflix", "22"]]
+    assert d.page.locator(".player.lit").count() == 1 and "lit" in panel(1).get_attribute("class")
+    assert panel(2).locator(".pl-state").inner_text() == "Nothing on" and panel(2).locator(".pl-btn.main").is_hidden()
+    assert panel(3).locator(".pl-state").inner_text() == "Off" and panel(3).locator(".pl-vol").is_hidden()
+    assert panel(3).locator(".pl-btn:visible").count() == 1, "off: only power"
+    for btn in panel(0).locator(".pl-btn").all():
+        assert big(btn.bounding_box()), btn.get_attribute("aria-label")
+    d.shot("media", settle=400)
+
+    for _ in range(3):
+        panel(1).locator('[aria-label="Turn up the TV"]').tap()
+    assert panel(1).locator(".pl-volume").inner_text() == "37" and not media_sent()
+    d.page.clock.run_for(800)
+    assert media_sent() == [{"type": "media", "entity": "media_player.tv", "volume": 37}]
+    panel(1).locator('[aria-label="Pause the TV"]').tap()
+    panel(0).locator('[aria-label="Play the Speaker"]').tap()
+    panel(3).locator('[aria-label="Turn on the TV"]').tap()
+    d.page.wait_for_timeout(50)
+    assert [m.get("action") for m in media_sent()[1:]] == ["pause", "play", "turn_on"]
+    assert d.page.locator(".player.lit").count() == 1 and "lit" in panel(0).get_attribute("class")
+
+    # Opened from a room's TV, that one shows first
+    d.tap("#sheet-close")
+    d.push({"type": "card", "card": {"kind": "room", "name": "Bedroom", "lights": [], "climate": [], "switches": [],
+                                     "media": [{"entity": "media_player.bedroom", "name": "TV", "state": "off"}]}})
+    d.page.locator('.dev[aria-label="TV"]').tap()
+    assert d.sent[-1] == {"type": "open", "sheet": "media", "entity": "media_player.bedroom"}
+    d.push({"type": "card", "card": {"kind": "media", "players": players}})
+    d.page.wait_for_timeout(50)
+    row = d.page.locator(".players")
+    assert row.evaluate("r => r.scrollLeft") == row.evaluate("r => r.scrollWidth - r.clientWidth") > 0
+    d.close()
+
+
+def test_automations(b):
+    d = Display(b)
+    yesterday_2302 = dt.datetime(2026, 10, 6, 23, 2).timestamp()
+    autos = [{"entity": "automation.goodnight", "name": "Goodnight: everything off", "on": True, "last_ran": yesterday_2302},
+             {"entity": "automation.porch", "name": "Porch light at dusk", "on": True,
+              "last_ran": dt.datetime(2026, 10, 7, 6, 30).timestamp()},
+             {"entity": "automation.ac", "name": "AC off when everyone leaves", "on": True,
+              "last_ran": dt.datetime(2026, 10, 5, 8, 15).timestamp()},
+             {"entity": "automation.holiday", "name": "Holiday lights", "on": False,
+              "last_ran": dt.datetime(2026, 1, 2, 17, 0).timestamp()},
+             {"entity": "automation.vacation", "name": "Vacation lights", "on": False, "last_ran": None}]
+    d.push({"type": "card", "card": {"kind": "automations", "automations": autos}})
+    assert d.text("#sheet-title") == "Automations"
+    assert d.page.locator(".auto-when").all_inner_texts() == [
+        "Ran yesterday at 11:02pm", "Ran today at 6:30am", "Ran Monday", "Ran January 2", "Hasn't run yet"]
+    assert d.page.locator(".auto-row.off .auto-name").all_inner_texts() == ["Holiday lights", "Vacation lights"]
+    for row in d.page.locator(".auto-row").all()[:3]:
+        assert big(row.locator(".pill").bounding_box()) and big(row.locator(".switch").bounding_box(), w=64, h=64)
+    d.shot("automations", settle=400)
+
+    d.page.locator('[aria-label="Run AC off when everyone leaves"]').tap()
+    d.page.locator('.switch[aria-label="Vacation lights"]').tap()
+    d.page.wait_for_timeout(50)
+    assert [m for m in d.sent if m["type"].startswith("automation")] == [
+        {"type": "automation_run", "entity": "automation.ac"},
+        {"type": "automation_toggle", "entity": "automation.vacation", "enabled": True}]
+    assert d.page.locator(".auto-when").nth(2).inner_text() == "Ran today at 9:41am"
+    assert d.page.locator(".auto-row.off").count() == 1
+
+    d.push({"type": "card", "card": {"kind": "automations", "automations": []}})
+    assert d.text(".sheet-body .quiet") == "No automations."
+    d.close()
+
+
 def test_navigation_every_screen_gets_home(b):
     """From every screen there is a visible way home, and every sheet goes home on its own when left alone."""
     screens = {
@@ -819,6 +904,8 @@ def test_navigation_every_screen_gets_home(b):
         "house": HOUSE,
         "lights": {"kind": "lights", "rooms": []},
         "rooms": {"kind": "rooms", "rooms": []},
+        "media": {"kind": "media", "players": [player("media_player.tv", "Living room", "TV", "playing", "The Bear")]},
+        "automations": {"kind": "automations", "automations": []},
         "climate": {"kind": "climate", "thermostats": [thermostat("climate.t", "Thermostat", 68, 70, "heat", "heating")]},
         "room": {"kind": "room", "name": "Porch", "lights": [], "media": [], "climate": [], "switches": []},
     }
