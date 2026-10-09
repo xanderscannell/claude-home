@@ -376,6 +376,7 @@ def test_sheets(b):
     w = dict(WEATHER, place="New York, New York, United States")
     w["days"] = [dict(WEATHER["days"][0]), dict(WEATHER["days"][1], rain=60), dict(WEATHER["days"][2])]
     d.push({"type": "card", "card": {"kind": "weather", **w}})
+    assert d.page.eval_on_selector("#sheet", "s => s.getBoundingClientRect().top") > 0, "it slides up from the bottom"
     assert sheet_open(d) and d.text("#sheet-title") == "New York"
     assert d.text(".wx-temp") == "47°" and d.text(".wx-condition") == "Clear"
     assert d.text(".wx-detail") == "Feels like 43°, wind 3 mph"

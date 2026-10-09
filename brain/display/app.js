@@ -434,8 +434,12 @@ function openSheet(card, back = false) {
   // A timers card can beat the next ambient update by up to half a second; it is just as fresh, so use it.
   if (card.kind === "timers" && card.timers) ambient = { ...ambient, timers: card.timers };
   if (card.kind === "volume" && card.level !== undefined) speakerVolume = card.level;
+  const wasHidden = els.sheet.hidden;
   els.sheet.hidden = false;  // before rendering, so long text can be measured and fitted
   renderSheet();
+  // Slide up from the bottom: the browser has to see it there first, or it just appears in place (a landing from a
+  // swipe has already put it in place, so this changes nothing there)
+  if (wasHidden) void els.sheet.offsetWidth;
   requestAnimationFrame(() => els.sheet.classList.add("shown"));
   touchSheet();
   syncHeader();
