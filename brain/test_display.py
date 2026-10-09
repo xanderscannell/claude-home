@@ -318,7 +318,7 @@ def test_night_mode(b):
     d.tap("#night")
     assert not is_night(d) and d.visible("#home") and d.visible("#mic")
     d.wait_until(lambda: d.page.locator(".photo.shown").count() == 1, "the room didn't come back on a tap")
-    assert d.sent == [], "the waking tap mustn't press anything"
+    assert [m for m in d.sent if m["type"] != "fetch"] == [], "the waking tap mustn't press anything"
     d.shot("night-woken", settle=2300)
     d.page.clock.run_for(20_000)
     d.tap("#date")
@@ -784,19 +784,24 @@ def test_rooms_and_back(b):
 
 def test_swiping_between_sheets(b):
     """Right to left from the dashboard goes along the row (the menu's order), left to right comes back; it stops
-    at both ends. Pages the brain serves show their last card (or just a title) while swiped in, and are asked for
-    on landing."""
+    at both ends. Pages the brain serves are fetched ahead (as the page connects, and either side of each landing),
+    show what was fetched while swiped in (just a title until it's back), and are asked for again on landing."""
     d = Display(b)
     opened = lambda: [m["sheet"] for m in d.sent if m.get("type") == "open"]  # noqa: E731
+    fetched = lambda: [m["sheet"] for m in d.sent if m.get("type") == "fetch"]  # noqa: E731
     title = lambda: d.text("#sheet-title") if d.visible("#sheet") else "dashboard"  # noqa: E731
     left = lambda sel: d.page.eval_on_selector(sel, "s => s.getBoundingClientRect().left")  # noqa: E731
     d.push(ambient([{"id": 1, "label": "pasta", "ends_at": START.timestamp() + 300, "duration": 600,
                      "paused_left": None}], weather=None))
 
+    assert fetched() == ["house", "alarms", "shopping"], "the row's pages from the brain, fetched as the page connects"
+
     # Partway: the dashboard, drawn as a sheet (its title, the room's photo in a sheet's margins), and Home side by
-    # side, both 250px along; Home just its title (it's never been opened)
+    # side, both 250px along; Home just its title, its fetch not back yet...
     swipe(d, 450, frm=700, y=200, release=False)
     assert d.visible("#sheet-under") and d.text("#under-title") == "Home" and not d.text("#under-body")
+    d.push({"type": "page", "card": HOUSE})  # ...until it is: drawn at once, and nothing opens
+    assert d.page.locator("#under-body .tile").count() == 5 and not d.visible("#sheet")
     assert d.visible("#sheet-dash") and d.text("#sheet-dash .sheet-title") == "Dashboard"
     assert 530 <= left("#sheet-under") <= 570 and -270 <= left("#sheet-dash") <= -230, (left("#sheet-under"), left("#sheet-dash"))
     assert d.page.eval_on_selector("#home", "h => getComputedStyle(h).opacity") != "1", "the clock and the rest fade away"
@@ -812,9 +817,7 @@ def test_swiping_between_sheets(b):
     d.page.clock.run_for(300)
     d.page.wait_for_timeout(300)
     assert title() == "Home" and opened() == ["house"] and left("#sheet") == 0 and not d.visible("#swipe-dim")
-    assert not d.visible("#sheet-dash")
-    d.push({"type": "card", "card": HOUSE})
-    assert d.page.locator("#sheet-body .tile").count() == 5
+    assert not d.visible("#sheet-dash") and d.page.locator("#sheet-body .tile").count() == 5
     assert d.page.locator("#sheet-edge").is_hidden(), "a row page has no back swipe"
 
     # On along the row; a swipe that starts on a tile doesn't tap it
@@ -825,6 +828,7 @@ def test_swiping_between_sheets(b):
     assert seen == ["Timers", "Alarms", "Shopping list", "Music", "Volume", "Volume"], seen
     assert left("#sheet") == 0, "past the end it gives a little and springs back"
     assert opened() == ["house", "alarms", "shopping"], "only pages the brain serves are asked for, on landing"
+    assert fetched()[3:] == ["house", "alarms", "shopping", "alarms", "shopping"], "and the ones either side of each landing"
     assert d.page.locator("#sheet-edge").is_hidden()
 
     # And back, to the dashboard and no further

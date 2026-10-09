@@ -175,6 +175,7 @@ Brain -> display:
 | `heard {text}` | What the person said |
 | `reply {text}` | One more sentence of Claude's reply, sent just before its audio |
 | `card {card}` | Open a sheet (kinds below) |
+| `page {card}` | A sheet's card the screen fetched, to have ready to swipe to; kept, not opened |
 | `ambient {weather, timers, next_alarm, agenda}` | Home screen data: on connect, when timers or the next alarm change, and on each weather or calendar refresh |
 | `now_playing {track}` | `null`, or `{title, artist, album, art, uri, is_playing, progress_ms, duration_ms}`; sent when the track, play state, or position really changes (screens advance the position themselves) |
 | `ringing {ringing}` | `null`, the ringing alarm `{kind: "alarm", id, label, time}`, or a finished timer `{kind: "timer", label}` |
@@ -219,6 +220,7 @@ Display -> brain:
 | `stop` | Silence a ringing alarm or timer, else cut the reply short, else drop queued audio |
 | `snooze` | Snooze the ringing alarm 9 minutes |
 | `open {sheet}` | Reply (to this screen only) with the card for `weather`, `timers`, `alarms`, `shopping`, or `agenda` |
+| `fetch {sheet}` | The same card, but as a `page`: sent as the screen connects and around each swipe, so the sheets it can swipe to are ready |
 | `shopping_remove {item}` | Remove it; this screen gets the updated list |
 | `timer_pause {id}`, `timer_resume {id}`, `timer_cancel {id}` | From the timers sheet (Pause, Resume, Stop) |
 | `alarm_toggle {id, enabled}`, `alarm_delete {id}` | From the alarms sheet |

@@ -735,6 +735,8 @@ async def from_display(dev: Device, m: dict, ws: WebSocket):
     kind = m.get("type")
     if kind == "open" and (card := await sheet_card(dev, m.get("sheet"))):
         await ws.send_text(json.dumps({"type": "card", "card": card}))  # just the screen that asked
+    elif kind == "fetch" and (card := await sheet_card(dev, m.get("sheet"))):
+        await ws.send_text(json.dumps({"type": "page", "card": card}))  # to have ready to swipe to, not to open
     elif kind == "timer_cancel" and isinstance(m.get("id"), int):
         tools.timer_cancel_id(dev.name, m["id"])  # the timer watcher updates every screen
     elif kind in ("timer_pause", "timer_resume") and isinstance(m.get("id"), int):

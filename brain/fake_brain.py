@@ -281,6 +281,8 @@ async def display(ws: WebSocket):
                 showing = m
                 if answer := opened(m):
                     await push(answer, to=ws)
+            elif m.get("type") == "fetch" and (answer := opened(m)):  # ready to swipe to: a page, which doesn't open
+                await push({"type": "page", "card": answer["card"]}, to=ws)
             elif m.get("type") == "recipe" and m.get("action") in ("next", "previous"):
                 step = recipe["step"] + (1 if m["action"] == "next" else -1)
                 recipe["step"] = max(-1, min(len(PANCAKES["steps"]) - 1, step))

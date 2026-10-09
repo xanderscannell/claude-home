@@ -33,6 +33,7 @@ function connect() {
     offlineTimer = null;
     els.offline.hidden = true;
     document.body.classList.remove("is-offline");
+    fetchRow(ROW.map((r) => r.kind));  // the row's pages ready to swipe to, from the first swipe
   };
   socket.onmessage = (e) => handle(JSON.parse(e.data));
   socket.onclose = () => {
@@ -77,6 +78,7 @@ const handlers = {
     if (sheetCard && sheetCard.kind === "timers") renderSheet();  // keep an open timers sheet live
   },
   card: (m) => openSheet(m.card),
+  page: (m) => keepRowCard(m.card),
   ringing: (m) => showRinging(m.ringing),
   volume: (m) => showVolume(m.level),
   now_playing: (m) => showNowPlaying(m.track),
@@ -438,20 +440,37 @@ function goBack() {
   if (prev.request) send(prev.request);
 }
 
-// A row page as it can be drawn right now: the page's own for the local ones, else the brain's last card for it,
-// else just its title until the brain answers (only before it has ever been opened).
-// ponytail: nothing is fetched ahead while the finger moves; landing asks for it and it fills in a moment later.
+// A row page as it can be drawn right now: the page's own for the local ones, else the brain's last card for it
+// (fetched when the page connects, and again around each landing), else just its title until that comes back.
 function rowCard(kind) {
   return ROW[rowAt(kind)].local ? { kind } : rowCards[kind] || { kind, placeholder: true };
 }
 
-// Land on a row page from a swipe: show it at once from what's known, and ask the brain for it fresh
+// Land on a row page from a swipe: show it at once from what's known, and ask the brain for it fresh, and for the
+// pages either side of it, so the next swipe shows them as they are now
 function landRow(kind) {
   const wasHidden = els.sheet.hidden;
   sheetCard = null;
   openSheet(rowCard(kind));
   if (wasHidden) els.sheet.classList.add("shown");  // now, not next frame: no slide up from the bottom
   if (!ROW[rowAt(kind)].local) send({ type: "open", sheet: kind });
+  const i = rowAt(kind);
+  fetchRow([ROW[i - 1], ROW[i + 1]].filter(Boolean).map((r) => r.kind));
+}
+
+// Ask the brain for row pages to have ready to swipe to (the local ones the page draws itself). It answers each with
+// a page, which is kept, not opened.
+function fetchRow(kinds) {
+  for (const kind of kinds) if (!ROW[rowAt(kind)].local) send({ type: "fetch", sheet: kind });
+}
+
+// A row page from the brain, fetched or opened: kept to draw when it's swiped to. One being swiped into view right
+// now, or showing only its title while it waits, is drawn with it at once.
+function keepRowCard(card) {
+  if (rowAt(card.kind) < 0) return;
+  rowCards[card.kind] = card;
+  if (slide && els.under.dataset.kind === card.kind && !els.under.hidden) showUnder(card);
+  if (sheetCard && sheetCard.kind === card.kind && sheetCard.placeholder) openSheet(card);
 }
 
 // Where the screen is in the row: 0 the dashboard, 1 Home, and so on; null where the row doesn't apply (a subpage,
@@ -494,6 +513,7 @@ function place(q) {  // q: how far the move has gone, 0 to 1; for rubber, px the
 }
 
 function showUnder(card) {
+  els.under.dataset.kind = card.kind;
   const [title, nodes] = renderCard(card);
   els.underTitle.textContent = title;
   els.underBody.replaceChildren(...nodes);

@@ -256,6 +256,9 @@ async def display_flow(port: int):
             pass
         await a.send(json.dumps({"type": "open", "sheet": "alarms"}))
         assert (await until_card(a, "alarms")) == {"kind": "alarms", "alarms": []}
+        # Fetched to have ready to swipe to: the same card, sent as a page (which doesn't open)
+        await a.send(json.dumps({"type": "fetch", "sheet": "alarms"}))
+        assert (await until_type(a, "page"))["card"] == {"kind": "alarms", "alarms": []}
 
         # Cancel from the screen by id; screens hear about it through the timer watcher
         await a.send(json.dumps({"type": "timer_cancel", "id": eggs}))
