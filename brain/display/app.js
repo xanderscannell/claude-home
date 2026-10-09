@@ -555,6 +555,23 @@ const renderers = {
     return ["Rooms", [grid]];
   },
 
+  // Each thermostat a page of its own, swiping sideways between them. Opened from a room's thermostat, that one shows
+  // first; a fresh card (after + or a mode) keeps whichever is showing.
+  climate: (c) => {
+    if (!c.thermostats.length) {
+      return ["Climate", [el("p", "quiet", "No thermostats."),
+                          el("p", "hint", "Thermostats and air conditioners in Home Assistant show up here.")]];
+    }
+    const was = els.sheetBody.querySelector(".thermostats")?.scrollLeft;
+    const pages = el("div", "thermostats");
+    pages.append(...c.thermostats.map(thermostatPage));
+    requestAnimationFrame(() => {
+      const asked = c.request && c.request.entity && [...pages.children].find((p) => p.dataset.entity === c.request.entity);
+      pages.scrollLeft = was ?? (asked ? asked.offsetLeft - pages.offsetLeft : 0);
+    });
+    return ["Climate", [pages]];
+  },
+
   // One room's devices by kind, the way the lights page has lights by room
   room: (c) => {
     // A player is lit while it's doing something (playing, paused, a TV that's just on); idle and off are quiet
@@ -823,6 +840,79 @@ function openingTile(d, sheet, state, fill, off) {
   return b;
 }
 
+// A thermostat: the setting as the hero with − and + beside it, then a scale with a dot where the room is and a mark
+// where it's set, the stretch between them ember while heating and ice while cooling, then its modes.
+const MODE_NAMES = { off: "Off", heat: "Heat", cool: "Cool", heat_cool: "Heat & cool", auto: "Auto", dry: "Dry", fan_only: "Fan" };
+const SCALE_SPAN = 20;
+const NUDGE_MS = 700;  // + tapped three times sends one change, not three that answer out of order
+
+function thermostatPage(t) {
+  const page = el("section", "thermo");
+  page.dataset.entity = t.entity;
+  const target = el("p", "th-target"), status = el("p", "th-status");
+  const about = el("div");
+  about.append(el("p", "th-name", t.name), target, status);
+  let pending = null;
+  const step = (dir, label, icon) => {
+    const b = el("button", "th-step");
+    b.type = "button";
+    b.setAttribute("aria-label", `${label} ${t.name.toLowerCase()}`);
+    b.innerHTML = icon;  // fixed markup from ICONS
+    b.addEventListener("click", () => {
+      t.target = Math.min(t.max, Math.max(t.min, t.target + dir * (t.step || 1)));
+      paint();  // ponytail: the fill keeps the old action's colour until the brain says what it's doing now
+      clearTimeout(pending);
+      pending = setTimeout(() => send({ type: "climate", entity: t.entity, target: t.target }), NUDGE_MS);
+    });
+    return b;
+  };
+  const steps = el("div", "th-steps");
+  steps.append(step(-1, "Lower", ICONS.minus), step(1, "Raise", ICONS.plus));
+  const top = el("div", "th-top");
+  top.append(about, steps);
+
+  const track = el("div", "th-track"), fill = el("i", "th-fill"), now = el("i", "th-now"), set = el("i", "th-set");
+  track.append(fill, now, set);
+  const lo = el("span"), hi = el("span"), scale = el("div", "th-scale");
+  scale.append(lo, hi);
+  const modes = el("div", "th-modes");
+  const modeButtons = t.modes.map((m) => {
+    const b = el("button", "pill", MODE_NAMES[m] || sentence(m.replace("_", " ")));
+    b.type = "button";
+    b.addEventListener("click", () => {
+      t.mode = m;
+      paint();
+      send({ type: "climate", entity: t.entity, mode: m });
+    });
+    return b;
+  });
+  modes.append(...modeButtons);
+
+  // The scale is the 20° around the room and the setting (the whole 50-90° range makes a 2° gap a sliver), moving
+  // in steps of 5° so the dot and mark don't shift every time + is tapped
+  let from = 0;
+  const at = (v) => `${Math.min(100, Math.max(0, ((v - from) / SCALE_SPAN) * 100))}%`;
+  const paint = () => {
+    from = Math.min(t.max - SCALE_SPAN, Math.max(t.min, Math.round(((t.temp + t.target) / 2 - SCALE_SPAN / 2) / 5) * 5));
+    lo.textContent = `${from}°`;
+    hi.textContent = `${from + SCALE_SPAN}°`;
+    const off = t.mode === "off";
+    page.className = `thermo ${off ? "off" : t.action}`;
+    target.textContent = off ? "Off" : `${t.target}°`;
+    const here = `${t.temp}° now${t.humidity !== null && t.humidity !== undefined ? `, ${t.humidity}% humidity` : ""}`;
+    const doing = { heating: "Heating", cooling: "Cooling", fan: "Fan running", drying: "Drying" }[t.action];
+    status.textContent = doing ? `${doing}, ${here}` : sentence(here);
+    now.style.left = at(t.temp);
+    set.style.left = at(t.target);
+    fill.style.left = at(Math.min(t.temp, t.target));
+    fill.style.width = `${Math.abs(parseFloat(at(t.target)) - parseFloat(at(t.temp)))}%`;
+    modeButtons.forEach((b, i) => b.setAttribute("aria-pressed", String(t.modes[i] === t.mode)));
+  };
+  paint();
+  page.append(top, track, scale, modes);
+  return page;
+}
+
 // A light, or anything else that switches (a fan, a plug): tap to switch it, and a dimmer also drags up or down
 const DRAG_START_PX = 8;
 
@@ -1019,6 +1109,8 @@ const ICONS = {
   play: svg('<path d="M8 5v14l11-7z"/>'),
   pause: svg('<path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/>'),
   next: svg('<path d="M15.5 5H18v14h-2.5zM5 5.5v13l9.5-6.5z"/>'),
+  minus: svg('<path d="M5 12h14"/>'),
+  plus: svg('<path d="M12 5v14M5 12h14"/>'),
   house: svg('<path d="M3.5 11L12 4l8.5 7"/><path d="M6 9.5V20h12V9.5"/><path d="M10 20v-5h4v5"/>'),
   bulb: svg('<path d="M9.5 18h5M10.5 21h3"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.2h5c0-.9.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/>'),
   thermometer: svg('<path d="M14 14.8V5.5a2 2 0 0 0-4 0v9.3a4 4 0 1 0 4 0z"/><path d="M12 11v6"/>'),

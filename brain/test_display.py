@@ -741,6 +741,69 @@ def test_rooms_and_back(b):
     d.close()
 
 
+def thermostat(entity, name, temp, target, mode, action, modes=("heat", "cool", "off"), humidity=None):
+    return {"entity": entity, "name": name, "temp": temp, "target": target, "mode": mode, "action": action,
+            "modes": list(modes), "min": 50, "max": 90, "step": 1, "humidity": humidity}
+
+
+def test_climate(b):
+    d = Display(b)
+    climate_sent = lambda: [m for m in d.sent if m.get("type") == "climate"]  # noqa: E731
+    living = thermostat("climate.living", "Thermostat", 68, 70, "heat", "heating", humidity=41)
+    ac = thermostat("climate.ac", "Air conditioner", 74, 71, "cool", "cooling", modes=("cool", "fan_only", "off"))
+    d.push({"type": "card", "card": {"kind": "climate", "thermostats": [living, ac]}})
+    assert d.text("#sheet-title") == "Climate"
+    page = lambda i: d.page.locator(".thermo").nth(i)  # noqa: E731
+    assert page(0).locator(".th-target").inner_text() == "70°"
+    assert page(0).locator(".th-status").inner_text() == "Heating, 68° now, 41% humidity"
+    assert page(1).locator(".th-status").inner_text() == "Cooling, 74° now"
+    assert page(0).locator(".pill").all_inner_texts() == ["Heat", "Cool", "Off"]
+    assert page(1).locator(".pill").all_inner_texts() == ["Cool", "Fan", "Off"]
+    assert page(0).locator('.pill[aria-pressed="true"]').inner_text() == "Heat"
+    assert "heating" in page(0).get_attribute("class") and "cooling" in page(1).get_attribute("class")
+    # The scale is 20° around the room and the setting; the fill runs from the room's dot to the setting's mark
+    assert page(0).locator(".th-scale").inner_text().split() == ["60°", "80°"]
+    fill = page(0).locator(".th-fill").bounding_box()
+    dot, mark = page(0).locator(".th-now").bounding_box(), page(0).locator(".th-set").bounding_box()
+    assert abs(fill["x"] - (dot["x"] + dot["width"] / 2)) < 1 and abs(fill["x"] + fill["width"] - (mark["x"] + 2)) < 1
+    for sel in ('[aria-label^="Lower"]', '[aria-label^="Raise"]'):
+        assert big(page(0).locator(sel).bounding_box(), w=80, h=80)
+    d.shot("climate", settle=400)
+
+    # + three times is one change, sent once the taps stop
+    for _ in range(3):
+        page(0).locator('[aria-label^="Raise"]').tap()
+    assert page(0).locator(".th-target").inner_text() == "73°" and not climate_sent()
+    d.page.clock.run_for(800)
+    assert climate_sent() == [{"type": "climate", "entity": "climate.living", "target": 73}]
+
+    # A mode; then the brain's fresh card keeps the page showing (the AC, swiped to) rather than jumping back
+    d.page.locator(".thermostats").evaluate("p => { p.style.scrollSnapType = 'none'; p.scrollLeft = p.scrollWidth; }")
+    page(1).locator(".pill", has_text="Off").tap()
+    d.page.wait_for_timeout(50)
+    assert climate_sent()[-1] == {"type": "climate", "entity": "climate.ac", "mode": "off"}
+    assert page(1).locator(".th-target").inner_text() == "Off" and not page(1).locator(".th-steps").is_visible()
+    left = d.page.locator(".thermostats").evaluate("p => p.scrollLeft")
+    d.push({"type": "card", "card": {"kind": "climate", "thermostats": [living, dict(ac, mode="off", action="off")]}})
+    d.page.wait_for_timeout(50)
+    assert d.page.locator(".thermostats").evaluate("p => p.scrollLeft") == left > 0
+
+    # Opened from a room's thermostat tile, that thermostat shows first
+    d.tap("#sheet-close")
+    d.push({"type": "card", "card": {"kind": "room", "name": "Bedroom", "lights": [], "media": [],
+                                     "climate": [ac], "switches": []}})
+    d.page.locator('.dev[aria-label="Air conditioner"]').tap()
+    assert d.sent[-1] == {"type": "open", "sheet": "climate", "entity": "climate.ac"}
+    d.push({"type": "card", "card": {"kind": "climate", "thermostats": [living, ac]}})
+    d.page.wait_for_timeout(50)
+    pages = d.page.locator(".thermostats")
+    assert pages.evaluate("p => p.scrollLeft") == pages.evaluate("p => p.children[1].offsetLeft - p.offsetLeft")
+
+    d.push({"type": "card", "card": {"kind": "climate", "thermostats": []}})
+    assert d.text(".sheet-body .quiet") == "No thermostats."
+    d.close()
+
+
 def test_navigation_every_screen_gets_home(b):
     """From every screen there is a visible way home, and every sheet goes home on its own when left alone."""
     screens = {
@@ -756,6 +819,7 @@ def test_navigation_every_screen_gets_home(b):
         "house": HOUSE,
         "lights": {"kind": "lights", "rooms": []},
         "rooms": {"kind": "rooms", "rooms": []},
+        "climate": {"kind": "climate", "thermostats": [thermostat("climate.t", "Thermostat", 68, 70, "heat", "heating")]},
         "room": {"kind": "room", "name": "Porch", "lights": [], "media": [], "climate": [], "switches": []},
     }
     d = Display(b)

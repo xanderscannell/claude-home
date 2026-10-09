@@ -10,6 +10,7 @@
   --mist: #A9B8C6;
   --marigold: #F2B544;
   --ember: #FF8A4C;
+  --ice: #8CCBF2;              /* cooling, where ember is heating */
   --accent: var(--marigold);   /* replaced per photo by app.js */
   --on-photo: 0 1px 12px rgba(0, 0, 0, .45);
   --far: "Fraunces", Georgia, serif;
@@ -390,6 +391,36 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 }
 .room-what { margin-top: auto; display: flex; flex-direction: column; }
 .room-what .tile-detail { margin-top: 2px; }
+
+/* Climate: one thermostat a page, swiping between them. The setting is the hero; the scale under it has a dot for
+   the room and a mark for the setting, the stretch between ember (heating) or ice (cooling) while it works. */
+.thermostats { height: 100%; display: flex; padding-bottom: 12px; overflow-x: auto; overscroll-behavior: contain; scroll-snap-type: x mandatory; }
+.thermo { flex: 0 0 100%; scroll-snap-align: start; display: flex; flex-direction: column; }
+.th-top { display: flex; justify-content: space-between; align-items: flex-end; }
+.sheet-body .th-name { font-size: 18px; color: var(--mist); }
+.th-target {
+  margin-top: 4px;
+  font: 330 128px/.9 var(--far);
+  font-variation-settings: "opsz" 144, "SOFT" 100;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  letter-spacing: -2px;
+}
+.sheet-body .th-status { font-size: 20px; margin-top: 10px; }
+.th-steps { display: flex; gap: 16px; margin-bottom: 10px; }
+.th-step { width: 88px; height: 88px; border-radius: 50%; display: grid; place-items: center; background: rgba(238, 243, 247, .12); }
+.th-step svg { width: 32px; height: 32px; }
+.th-step:active { transform: scale(.94); }
+.th-track { position: relative; height: 10px; margin-top: auto; border-radius: 5px; background: rgba(238, 243, 247, .12); }
+.th-fill { position: absolute; top: 0; bottom: 0; border-radius: 5px; display: none; }
+.thermo.heating .th-fill { display: block; background: var(--ember); }
+.thermo.cooling .th-fill { display: block; background: var(--ice); }
+.th-now { position: absolute; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; background: var(--frost); }
+.th-set { position: absolute; top: -9px; width: 4px; height: 28px; margin-left: -2px; border-radius: 2px; background: var(--frost); }
+.th-scale { display: flex; justify-content: space-between; margin-top: 10px; font-size: 16px; color: var(--mist); }
+.th-modes { display: flex; gap: 12px; margin-top: 16px; }
+.th-modes .pill[aria-pressed="true"] { background: var(--accent); color: var(--night); }
+.thermo.off .th-target { color: var(--mist); }
+.thermo.off .th-steps, .thermo.off .th-set { visibility: hidden; }
 
 /* In the title row, left of the close button (positioned against the sheet, so it doesn't scroll with the rooms) */
 .lights-off { position: absolute; top: 14px; right: 88px; }

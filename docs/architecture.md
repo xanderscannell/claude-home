@@ -194,10 +194,14 @@ is the tile page, and `lights {rooms}` lists each room's `{name, lights}`, a lig
 `rooms {rooms}` lists Home Assistant's areas as `{id, name, lights, lights_on, playing, switched_on}`
 (the last two are device names), and `room {name, lights, media, climate, switches}` is one area's
 devices: lights and switches as above, players `{entity, name, state}` (Home Assistant's state),
-thermostats `{entity, name, temp, target, action}`.
+thermostats as in `climate`. `climate {thermostats}` is every thermostat, each
+`{entity, name, temp, target, mode, modes, action, min, max, step, humidity}` (Home Assistant's
+`hvac_mode`, `hvac_modes`, and `hvac_action`; humidity may be null).
 The screen sends `open {sheet}` for `house`, `lights`, `rooms`, `room` (with `room`: the area id), and
-`media` or `climate` (with `entity`, pages still to come); `light {entity, on, brightness?}` for a
-tap or a drag on a light or a switch; and `lights_off` for All off. The answer to a change is a fresh
+`climate` (with `entity` from a room's thermostat, which then shows first), and `media` (with
+`entity`, a page still to come); `light {entity, on, brightness?}` for a tap or a drag on a light or a
+switch; `lights_off` for All off; and `climate {entity, target}` or `climate {entity, mode}` (taps on
++ and − are sent as one change once they stop). The answer to a change is a fresh
 card of the page that screen last opened. Back re-sends the open that brought up the page it returns
 to, so that page comes back fresh too.
 
