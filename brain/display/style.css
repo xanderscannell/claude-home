@@ -217,8 +217,8 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 /* The dashboard as a sheet while it's swiped (app.js showDash). It sits inside the dashboard, over the photo and
    under the scrim and the clock, laid out like a sheet: a title, and the photo in a sheet's margins and the tiles'
    corners. Becoming it, everything but the photo fades away (.framed on the dashboard) while the photo shrinks from
-   the whole screen into its frame, and the sheet's background and title come up around it; coming back, the reverse
-   (.full). Transforms and opacity, for the Pi; the corners' radius is the one thing repainted. */
+   the whole screen into its frame, uncovering the sheet's background (solid from the start, so the real photo behind
+   never shows round the edges) and its title fading up; coming back, the reverse (.full). Transforms and opacity, for the Pi; the corners' radius is the one thing repainted. */
 .dashboard { position: fixed; inset: 0; }
 .dash { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 26px 36px 0; }
 .dash-bg { position: absolute; inset: 0; background: var(--night); }
@@ -239,10 +239,10 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
     radial-gradient(120% 90% at 85% 10%, #1f3347 0%, transparent 60%),
     radial-gradient(90% 80% at 10% 100%, #0d1823 0%, transparent 70%), var(--night);
 }
-.dash-bg, .dash .sheet-title { transition: opacity .26s ease-out; }
+.dash .sheet-title { transition: opacity .26s ease-out; }
 .dash.full .dash-photo { transform: var(--frame-full); border-radius: 0; }
 .dash.full .dash-pic { transform: var(--pic-full); }
-.dash.full .dash-bg, .dash.full .sheet-title { opacity: 0; }
+.dash.full .sheet-title { opacity: 0; }
 .dash.snap, .dash.snap * { transition: none !important; }
 .scrim { transition: opacity .26s ease-out; }
 .dashboard.framed .scrim, .dashboard.framed .home { opacity: 0; pointer-events: none; }
