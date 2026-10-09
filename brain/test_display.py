@@ -630,9 +630,9 @@ def test_home_control(b):
     d.push({"type": "card", "card": {"kind": "lights", "rooms": [{"name": "Living room", "lights": [lamp, floor]},
                                                                    {"name": "Porch", "lights": [porch]}]}})
     assert d.text("#sheet-title") == "Lights"
-    assert d.page.locator(".lt-room-name").all_inner_texts() == ["Living room", "Porch"]
-    tile = lambda name: d.page.locator(f'.lt[aria-label="{name}"]')  # noqa: E731
-    level = lambda name: tile(name).locator(".lt-level").first.inner_text()  # noqa: E731
+    assert d.page.locator(".dev-group-name").all_inner_texts() == ["Living room", "Porch"]
+    tile = lambda name: d.page.locator(f'.dev[aria-label="{name}"]')  # noqa: E731
+    level = lambda name: tile(name).locator(".dev-level").first.inner_text()  # noqa: E731
     fill = lambda name: tile(name).evaluate("t => t.style.getPropertyValue('--b')")  # noqa: E731
     assert (level("Reading lamp"), fill("Reading lamp")) == ("40%", "40%")
     assert (level("Floor lamp"), fill("Floor lamp")) == ("Off", "0%")
@@ -672,7 +672,72 @@ def test_home_control(b):
     assert d.visible(".lights-off") and big(d.page.locator(".lights-off").bounding_box())
     d.tap(".lights-off")
     assert lights_sent()[-1] == {"type": "lights_off"}
-    assert not d.page.locator('.lt[aria-checked="true"]').count() and not d.visible(".lights-off")
+    assert not d.page.locator('.dev[aria-checked="true"]').count() and not d.visible(".lights-off")
+    d.close()
+
+
+def test_rooms_and_back(b):
+    d = Display(b)
+    opened = lambda: [m for m in d.sent if m.get("type") == "open"]  # noqa: E731
+
+    # Rooms: each room's name, and what's on in it; a room with a light on is lit
+    d.tap("#menu")
+    assert d.page.locator("#sheet-back").is_hidden(), "nothing to go back to from the menu"
+    d.page.locator(".menu-row").first.tap()  # Home
+    d.push({"type": "card", "card": HOUSE})
+    assert d.text("#sheet-title") == "Home" and d.visible("#sheet-back")
+    d.tap(".tile-rooms")
+    rooms = [{"id": "living_room", "name": "Living room", "lights": 3, "lights_on": 1, "playing": ["TV"], "switched_on": []},
+             {"id": "bedroom", "name": "Bedroom", "lights": 2, "lights_on": 0, "playing": [], "switched_on": ["Ceiling fan"]},
+             {"id": "garage", "name": "Garage", "lights": 0, "lights_on": 0, "playing": [], "switched_on": []}]
+    d.push({"type": "card", "card": {"kind": "rooms", "rooms": rooms}})
+    assert d.text("#sheet-title") == "Rooms"
+    assert d.page.locator(".room-name").all_inner_texts() == ["Living room", "Bedroom", "Garage"]
+    assert [r.inner_text().split("\n")[1:] for r in d.page.locator(".room").all()] == [
+        ["1 light on", "TV playing"], ["Lights off", "Ceiling fan on"], []]
+    assert d.page.locator(".room.lit").all_inner_texts()[0].startswith("Living room")
+    assert d.page.locator(".room.lit").count() == 1
+    d.shot("rooms", settle=400)
+
+    # A room: its devices by kind. Lights and switches switch; players and thermostats open their own pages.
+    d.page.locator(".room").nth(1).tap()
+    assert opened()[-1] == {"type": "open", "sheet": "room", "room": "bedroom"}
+    room = {"kind": "room", "name": "Bedroom",
+            "lights": [{"entity": "light.bed", "name": "Bedside", "on": False, "brightness": 20}],
+            "media": [{"entity": "media_player.tv", "name": "TV", "state": "playing"},
+                      {"entity": "media_player.sonos", "name": "Sonos", "state": "idle"}],
+            "climate": [{"entity": "climate.t", "name": "Thermostat", "temp": 68, "target": 70, "action": "heating"}],
+            "switches": [{"entity": "switch.fan", "name": "Ceiling fan", "on": True, "brightness": None}]}
+    d.push({"type": "card", "card": room})
+    assert d.text("#sheet-title") == "Bedroom"
+    assert d.page.locator(".dev-group-name").all_inner_texts() == ["Lights", "Speakers & TVs", "Climate", "Other"]
+    level = lambda name: d.page.locator(f'.dev[aria-label="{name}"] .dev-level').first.inner_text()  # noqa: E731
+    lit = lambda name: d.page.locator(f'.dev[aria-label="{name}"]').evaluate("t => t.style.getPropertyValue('--b')")  # noqa: E731
+    assert [(level(n), lit(n)) for n in ("TV", "Sonos", "Thermostat", "Ceiling fan")] == [
+        ("Playing", "100%"), ("Idle", "0%"), ("68°", "0%"), ("On", "100%")]
+    d.shot("room", settle=400)
+    d.page.locator('.dev[aria-label="Ceiling fan"]').tap()
+    d.page.locator('.dev[aria-label="TV"]').tap()
+    d.page.wait_for_timeout(50)
+    assert {"type": "light", "entity": "switch.fan", "on": False} in d.sent
+    assert opened()[-1] == {"type": "open", "sheet": "media", "entity": "media_player.tv"}
+
+    # A refresh of the same page doesn't stack; Back goes up a level and asks for it again, fresh
+    d.push({"type": "card", "card": dict(room, switches=[])})
+    d.tap("#sheet-back")
+    assert d.text("#sheet-title") == "Rooms" and opened()[-1] == {"type": "open", "sheet": "rooms"}
+    d.tap("#sheet-back")
+    assert d.text("#sheet-title") == "Home" and opened()[-1] == {"type": "open", "sheet": "house"}
+    d.tap("#sheet-back")
+    assert d.text("#sheet-title") == "Menu" and d.page.locator("#sheet-back").is_hidden()
+    assert big(d.page.locator("#sheet-close").bounding_box())
+
+    # Close forgets the way back: the next sheet starts fresh
+    d.tap(".menu-row >> nth=0")
+    d.push({"type": "card", "card": HOUSE})
+    d.tap("#sheet-close")
+    d.push({"type": "card", "card": HOUSE})
+    assert d.page.locator("#sheet-back").is_hidden()
     d.close()
 
 
@@ -690,6 +755,8 @@ def test_navigation_every_screen_gets_home(b):
         "music": {"kind": "music"},
         "house": HOUSE,
         "lights": {"kind": "lights", "rooms": []},
+        "rooms": {"kind": "rooms", "rooms": []},
+        "room": {"kind": "room", "name": "Porch", "lights": [], "media": [], "climate": [], "switches": []},
     }
     d = Display(b)
     home = lambda: not d.visible("#sheet") and not d.visible("#overlay")  # noqa: E731

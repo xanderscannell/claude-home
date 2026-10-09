@@ -10,6 +10,7 @@ const els = {
   time: $("time"), date: $("date"), mic: $("mic"), menu: $("menu"), weather: $("weather"), strip: $("strip"),
   overlay: $("overlay"), heard: $("heard"), reply: $("reply"), stop: $("stop"), close: $("close-overlay"),
   sheet: $("sheet"), sheetTitle: $("sheet-title"), sheetBody: $("sheet-body"), sheetClose: $("sheet-close"),
+  sheetBack: $("sheet-back"),
   ringing: $("ringing"), ringingTime: $("ringing-time"), ringingLabel: $("ringing-label"),
   ringingStop: $("ringing-stop"), snooze: $("snooze"),
   offline: $("offline"), nightTime: $("night-time"),
@@ -46,6 +47,7 @@ function connect() {
 }
 
 function send(msg) {
+  if (msg.type === "open") lastOpen = msg;
   if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(msg));
 }
 
@@ -391,8 +393,17 @@ function tick() {
 const SHEET_IDLE_MS = 45000;
 let sheetCard = null;
 let sheetIdle = null;
+// The sheets a different one opened over (Home, then Rooms, then a room), for Back. A card the brain sent in answer
+// to an open keeps that request, so Back can ask again and show it fresh rather than as it was.
+let sheetStack = [];
+let lastOpen = null;
 
 function openSheet(card) {
+  if (lastOpen && lastOpen.sheet === card.kind) [card.request, lastOpen] = [lastOpen, null];
+  if (sheetCard && sheetCard.kind !== card.kind) sheetStack.push(sheetCard);
+  else if (sheetCard && !card.request) card.request = sheetCard.request;  // the same kind is a refresh of it
+  els.sheetBack.hidden = !sheetStack.length;
+  els.sheet.classList.toggle("has-back", sheetStack.length > 0);
   sheetCard = card;
   // A timers card can beat the next ambient update by up to half a second; it is just as fresh, so use it.
   if (card.kind === "timers") ambient = { ...ambient, timers: card.timers };
@@ -403,10 +414,19 @@ function openSheet(card) {
   touchSheet();
 }
 
+function goBack() {
+  if (sheetCard.kind === "recipe") send({ type: "recipe", action: "close" });  // ends recipe mode
+  const prev = sheetStack.pop();
+  sheetCard = null;  // so reopening prev doesn't stack the one being left
+  openSheet(prev);
+  if (prev.request) send(prev.request);
+}
+
 function closeSheet() {
   clearTimeout(sheetIdle);
   if (sheetCard && sheetCard.kind === "recipe") send({ type: "recipe", action: "close" });  // ends recipe mode
   sheetCard = null;
+  sheetStack = [];
   els.sheet.classList.remove("shown");
   els.sheet.hidden = true;
   els.sheetBody.replaceChildren();
@@ -503,13 +523,7 @@ const renderers = {
   // Lights by room, rooms scrolling sideways. A light that's on fills with the accent from the bottom, as high as
   // it is bright: tap to switch it, drag up or down to dim it (a drag to the bottom turns it off).
   lights: (c) => {
-    const rooms = el("div", "lights");
-    for (const r of c.rooms) {
-      const room = el("section", "lt-room"), grid = el("div", "lt-grid");
-      grid.append(...r.lights.map(lightTile));
-      room.append(el("h3", "lt-room-name", r.name), grid);
-      rooms.append(room);
-    }
+    const rooms = deviceGroups(c.rooms.map((r) => [r.name, r.lights.map(lightTile)]));
     const all = c.rooms.flatMap((r) => r.lights);
     if (!all.some((l) => l.on)) return ["Lights", [rooms]];
     const off = el("button", "pill lights-off", "All off");
@@ -520,6 +534,35 @@ const renderers = {
       send({ type: "lights_off" });
     });
     return ["Lights", [rooms, off]];
+  },
+
+  // Every room, its name the big thing and what's on in it underneath. A room with a light on is lit, so the page
+  // reads like the house at night from outside.
+  rooms: (c) => {
+    const grid = el("div", "rooms");
+    for (const r of c.rooms) {
+      const b = el("button", r.lights_on ? "tile room lit" : "tile room");
+      b.type = "button";
+      const lines = [];
+      if (r.lights) lines.push(r.lights_on ? `${r.lights_on} ${r.lights_on === 1 ? "light" : "lights"} on` : "Lights off");
+      lines.push(...r.playing.map((n) => `${n} playing`), ...r.switched_on.map((n) => `${n} on`));
+      const what = el("span", "room-what");
+      what.append(...lines.map((l) => el("span", "tile-detail", l)));
+      b.append(el("span", "room-name", r.name), what);
+      b.addEventListener("click", () => send({ type: "open", sheet: "room", room: r.id }));
+      grid.append(b);
+    }
+    return ["Rooms", [grid]];
+  },
+
+  // One room's devices by kind, the way the lights page has lights by room
+  room: (c) => {
+    // A player is lit while it's doing something (playing, paused, a TV that's just on); idle and off are quiet
+    const quiet = (m) => ["off", "standby", "idle", "unavailable"].includes(m.state);
+    const media = (m) => openingTile(m, "media", sentence(m.state), !quiet(m), quiet(m));
+    const climate = (t) => openingTile(t, "climate", `${t.temp}°`, false, false);
+    return [c.name, [deviceGroups([["Lights", c.lights.map(lightTile)], ["Speakers & TVs", c.media.map(media)],
+                                   ["Climate", c.climate.map(climate)], ["Other", c.switches.map(lightTile)]])]];
   },
 
   menu: () => {
@@ -739,24 +782,57 @@ function tile(sheet, label, icon, num, unit, detail, lit = false) {
   return b;
 }
 
-// One light. The face is drawn twice, frost on the tile and night on the accent fill clipped to the brightness,
-// so the name and level stay legible wherever the edge of the light falls across them.
+// Groups of device tiles side by side, each under its name, scrolling sideways: lights by room, a room's devices by kind
+function deviceGroups(groups) {
+  const row = el("div", "dev-groups");
+  for (const [name, tiles] of groups) {
+    if (!tiles.length) continue;
+    const group = el("section", "dev-group"), grid = el("div", "dev-grid");
+    grid.append(...tiles);
+    group.append(el("h3", "dev-group-name", name), grid);
+    row.append(group);
+  }
+  return row;
+}
+
+// One device: its name up top, its state at the bottom, and the accent filling it from the bottom while it's on
+// (as high as it's bright, for a light). The face is drawn twice, frost on the tile and night on the fill clipped to
+// its height, so the name and state stay legible wherever the edge of the fill falls across them.
+function deviceTile(name) {
+  const b = el("button", "dev");
+  b.type = "button";
+  b.setAttribute("aria-label", name);
+  const faces = [el("span", "dev-face"), el("span", "dev-face dev-lit")];
+  faces[1].setAttribute("aria-hidden", "true");
+  for (const f of faces) f.append(el("span", "dev-name", name), el("span", "dev-level"));
+  b.append(...faces);
+  const paint = (state, fill, off = !fill) => {
+    b.style.setProperty("--b", `${fill}%`);
+    b.classList.toggle("off", off);  // the state in mist: nothing going on
+    b.classList.toggle("wordy", state.length > 4);  // "Playing" in the smaller size
+    for (const f of faces) f.lastChild.textContent = state;
+  };
+  return [b, paint];
+}
+
+// Speakers, TVs, and thermostats: their state, opening their own page. fill: lit (playing, say); off: in mist.
+function openingTile(d, sheet, state, fill, off) {
+  const [b, paint] = deviceTile(d.name);
+  paint(state, fill ? 100 : 0, off);
+  b.addEventListener("click", () => send({ type: "open", sheet, entity: d.entity }));
+  return b;
+}
+
+// A light, or anything else that switches (a fan, a plug): tap to switch it, and a dimmer also drags up or down
 const DRAG_START_PX = 8;
 
 function lightTile(l) {
   const dims = l.brightness !== null && l.brightness !== undefined;
-  const b = el("button", "lt");
-  b.type = "button";
+  const [b, fill] = deviceTile(l.name);
   b.setAttribute("role", "switch");
-  b.setAttribute("aria-label", l.name);
-  const faces = [el("span", "lt-face"), el("span", "lt-face lt-lit")];
-  faces[1].setAttribute("aria-hidden", "true");
-  for (const f of faces) f.append(el("span", "lt-name", l.name), el("span", "lt-level"));
-  b.append(...faces);
   const paint = () => {
-    b.style.setProperty("--b", `${l.on ? (dims ? l.brightness : 100) : 0}%`);
+    fill(l.on ? (dims ? `${l.brightness}%` : "On") : "Off", l.on ? (dims ? l.brightness : 100) : 0);
     b.setAttribute("aria-checked", String(l.on));
-    for (const f of faces) f.lastChild.textContent = l.on ? (dims ? `${l.brightness}%` : "On") : "Off";
   };
   paint();
 
@@ -1142,6 +1218,7 @@ els.mic.addEventListener("click", () => send({ type: "talk" }));
 els.stop.addEventListener("click", () => send({ type: "stop" }));
 els.close.addEventListener("click", hideOverlay);
 els.sheetClose.addEventListener("click", closeSheet);
+els.sheetBack.addEventListener("click", goBack);
 els.cameraClose.addEventListener("click", closeCamera);
 els.menu.addEventListener("click", () => openSheet({ kind: "menu" }));
 els.ringingStop.addEventListener("click", () => send({ type: "stop" }));

@@ -101,43 +101,82 @@ def talk(heard, *reply):
             *[{"type": "reply", "text": r} for r in reply]]
 
 
-ROOMS = ["Kitchen", "Living room", "Bedroom", "Office", "Kids' room", "Porch"]
+def light(entity, name, on, brightness, domain="light"):
+    """brightness None: a switch, not a dimmer (switch.* entities are always that: fans, plugs)."""
+    return {"entity": f"{domain}.{entity}", "name": name, "on": on, "brightness": brightness}
 
 
-def light(entity, name, on, brightness):
-    """brightness None: a switch, not a dimmer."""
-    return {"entity": f"light.{entity}", "name": name, "on": on, "brightness": brightness}
+def player(entity, name, state):
+    return {"entity": f"media_player.{entity}", "name": name, "state": state}
 
 
-# The house's lights by room, changed by taps the way Home Assistant would be
-LIGHTS = [{"name": "Kitchen", "lights": [light("kitchen_ceiling", "Ceiling", True, 80),
-                                         light("kitchen_island", "Island pendants", True, 100),
-                                         light("kitchen_cabinets", "Under-cabinet", False, 60)]},
-          {"name": "Living room", "lights": [light("living_lamp", "Reading lamp", True, 35),
-                                             light("living_floor", "Floor lamp", False, 70),
-                                             light("living_tv", "TV backlight", False, None)]},
-          {"name": "Bedroom", "lights": [light("bedroom_ceiling", "Ceiling", False, 50),
-                                         light("bedroom_bedside", "Bedside", False, 20)]},
-          {"name": "Office", "lights": [light("office_desk", "Desk lamp", False, 90)]},
-          {"name": "Kids' room", "lights": [light("kids_night", "Night light", False, 10)]},
-          {"name": "Porch", "lights": [light("porch", "Porch light", False, None)]}]
+def switch(entity, name, on):
+    return light(entity, name, on, None, domain="switch")
+
+
+# The house's devices by room (Home Assistant's areas), changed by taps the way Home Assistant would be
+HOUSE = [
+    {"id": "kitchen", "name": "Kitchen",
+     "lights": [light("kitchen_ceiling", "Ceiling", True, 80), light("kitchen_island", "Island pendants", True, 100),
+                light("kitchen_cabinets", "Under-cabinet", False, 60)],
+     "media": [player("kitchen_speaker", "Speaker", "off")], "climate": [], "switches": [switch("coffee", "Coffee maker", False)]},
+    {"id": "living_room", "name": "Living room",
+     "lights": [light("living_lamp", "Reading lamp", True, 35), light("living_floor", "Floor lamp", False, 70),
+                light("living_tv", "TV backlight", False, None)],
+     "media": [player("living_tv", "TV", "playing"), player("living_sonos", "Sonos", "idle")],
+     "climate": [{"entity": "climate.thermostat", "name": "Thermostat", "temp": 68, "target": 70, "action": "heating"}],
+     "switches": []},
+    {"id": "bedroom", "name": "Bedroom",
+     "lights": [light("bedroom_ceiling", "Ceiling", False, 50), light("bedroom_bedside", "Bedside", False, 20)],
+     "media": [player("bedroom_tv", "TV", "off")], "climate": [], "switches": [switch("bedroom_fan", "Ceiling fan", True)]},
+    {"id": "office", "name": "Office", "lights": [light("office_desk", "Desk lamp", False, 90)],
+     "media": [], "climate": [], "switches": [switch("office_heater", "Space heater", False)]},
+    {"id": "kids_room", "name": "Kids' room", "lights": [light("kids_night", "Night light", False, 10)],
+     "media": [], "climate": [], "switches": [switch("kids_humidifier", "Humidifier", True)]},
+    {"id": "porch", "name": "Porch", "lights": [light("porch", "Porch light", False, None)],
+     "media": [], "climate": [], "switches": []},
+]
 
 
 def all_lights():
-    return [l for room in LIGHTS for l in room["lights"]]
+    return [l for room in HOUSE for l in room["lights"]]
 
 
-def house(playing=("Living room TV",)):
+def house():
     """Home control's at-a-glance state: lights on (by room), climate, what's playing, rooms, automations."""
-    lit = [room["name"] for room in LIGHTS if any(l["on"] for l in room["lights"])]
+    lit = [room["name"] for room in HOUSE if any(l["on"] for l in room["lights"])]
+    players = [(room, m) for room in HOUSE for m in room["media"]]
     return card("house", lights={"on": sum(l["on"] for l in all_lights()), "total": len(all_lights()), "rooms": lit},
                 climate={"temp": 68, "target": 70, "action": "heating"},
-                media={"playing": list(playing), "total": 4}, rooms=ROOMS, automations={"on": 12, "total": 14})
+                media={"playing": [f"{room['name']} {m['name']}" for room, m in players if m["state"] == "playing"],
+                       "total": len(players)},
+                rooms=[room["name"] for room in HOUSE], automations={"on": 12, "total": 14})
+
+
+def rooms():
+    """Every room with what's on in it, for the rooms page."""
+    return card("rooms", rooms=[{"id": r["id"], "name": r["name"], "lights": len(r["lights"]),
+                                 "lights_on": sum(l["on"] for l in r["lights"]),
+                                 "playing": [m["name"] for m in r["media"] if m["state"] == "playing"],
+                                 "switched_on": [s["name"] for s in r["switches"] if s["on"]]} for r in HOUSE])
+
+
+def room(id_):
+    r = next((r for r in HOUSE if r["id"] == id_), HOUSE[0])
+    return card("room", **{k: r[k] for k in ("name", "lights", "media", "climate", "switches")})
+
+
+def opened(m):
+    """The card answering an open message, or None for a page the fake brain doesn't have yet."""
+    if m.get("sheet") == "room":
+        return room(m.get("room"))
+    return SHEETS[m["sheet"]]() if m.get("sheet") in SHEETS else None
 
 
 SHEETS = {
     "house": house,
-    "lights": lambda: card("lights", rooms=LIGHTS),
+    "lights": lambda: card("lights", rooms=[{"name": r["name"], "lights": r["lights"]} for r in HOUSE if r["lights"]]),
+    "rooms": rooms,
     "weather": lambda: card("weather", **WEATHER),
     "timers": lambda: card("timers", timers=timers()),
     "alarms": lambda: card("alarms", alarms=alarms()),
@@ -160,7 +199,9 @@ SCENES = {
     **{name: (lambda f=f: [f()]) for name, f in SHEETS.items()},
     "house-off": lambda: [card("house", lights={"on": 0, "total": 11, "rooms": []},
                                climate={"temp": 66, "target": 66, "action": "idle"},
-                               media={"playing": [], "total": 4}, rooms=ROOMS, automations={"on": 14, "total": 14})],
+                               media={"playing": [], "total": 4}, rooms=[r["name"] for r in HOUSE],
+                               automations={"on": 14, "total": 14})],
+    "room": lambda: [room("living_room")],
     "text": lambda: [card("text", title="Pancakes", lines=PANCAKES["ingredients"])],
     "briefing": lambda: [card("briefing", greeting="Good morning", weather=WEATHER, events=events()[:4],
                               next_alarm=alarms()[0], timers=timers()[:1], shopping=7)],
@@ -193,11 +234,14 @@ async def display(ws: WebSocket):
     try:
         await push(hello("23:59", "23:59"), *SCENES["home"](), {"type": "volume", "level": 40},
                    {"type": "now_playing", "track": TRACK}, to=ws)
+        showing = {"sheet": "lights"}  # the last page this screen opened: a tap's change answers with it, fresh
         while True:
             m = json.loads(await ws.receive_text())
-            print("screen ->", m)
-            if m.get("type") == "open" and m.get("sheet") in SHEETS:
-                await push(SHEETS[m["sheet"]](), to=ws)
+            print("screen ->", m, flush=True)
+            if m.get("type") == "open":
+                showing = m
+                if answer := opened(m):
+                    await push(answer, to=ws)
             elif m.get("type") == "recipe" and m.get("action") in ("next", "previous"):
                 step = recipe["step"] + (1 if m["action"] == "next" else -1)
                 recipe["step"] = max(-1, min(len(PANCAKES["steps"]) - 1, step))
@@ -205,12 +249,13 @@ async def display(ws: WebSocket):
             elif m.get("type") == "recipe":
                 recipe["step"] = -1
             elif m.get("type") in ("light", "lights_off"):
-                for l in all_lights():
-                    if m["type"] == "lights_off":
+                for l in all_lights() + [s for r in HOUSE for s in r["switches"]]:
+                    if m["type"] == "lights_off" and l["entity"].startswith("light."):
                         l["on"] = False
                     elif l["entity"] == m.get("entity"):
                         l.update({k: m[k] for k in ("on", "brightness") if k in m})
-                await push(SHEETS["lights"](), to=ws)
+                if answer := opened(showing):
+                    await push(answer, to=ws)
     except WebSocketDisconnect:
         pass
     finally:

@@ -191,9 +191,15 @@ Home control (in `fake_brain.py` only so far; the brain doesn't send or answer t
 `house {lights: {on, total, rooms}, climate: {temp, target, action}, media: {playing, total}, rooms, automations: {on, total}}`
 is the tile page, and `lights {rooms}` lists each room's `{name, lights}`, a light being
 `{entity, name, on, brightness}` (brightness 1-100, or null for a light that only switches).
-The screen sends `open {sheet}` for `house`, `lights`, and the other tiles' pages,
-`light {entity, on, brightness?}` for a tap or a drag, and `lights_off` for All off; the reply is
-the updated `lights` card.
+`rooms {rooms}` lists Home Assistant's areas as `{id, name, lights, lights_on, playing, switched_on}`
+(the last two are device names), and `room {name, lights, media, climate, switches}` is one area's
+devices: lights and switches as above, players `{entity, name, state}` (Home Assistant's state),
+thermostats `{entity, name, temp, target, action}`.
+The screen sends `open {sheet}` for `house`, `lights`, `rooms`, `room` (with `room`: the area id), and
+`media` or `climate` (with `entity`, pages still to come); `light {entity, on, brightness?}` for a
+tap or a drag on a light or a switch; and `lights_off` for All off. The answer to a change is a fresh
+card of the page that screen last opened. Back re-sends the open that brought up the page it returns
+to, so that page comes back fresh too.
 
 Display -> brain:
 
