@@ -47,7 +47,7 @@ WEATHER = {"place": "New York", "now": {"temp": 47, "feels": 43, "condition": "c
 
 
 def timers():
-    return [{"id": 1, "label": "pasta", "ends_at": soon(4.2)},
+    return [{"id": 1, "label": "pasta", "ends_at": soon(4.2), "duration": 540},
             {"id": 2, "label": "", "ends_at": soon(10), "duration": 600},
             {"id": 3, "label": "bread", "ends_at": soon(), "duration": 3600, "paused_left": 2400}]
 
