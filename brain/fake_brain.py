@@ -13,7 +13,7 @@ import urllib.parse
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 HERE = pathlib.Path(__file__).parent
@@ -338,7 +338,18 @@ async def scene(name: str):
 
 @app.get("/photos")
 async def photo_list():
-    return JSONResponse([])
+    return JSONResponse(["dusk.svg"])
+
+
+@app.get("/photos/{name}")
+async def photo(name: str):
+    """A stand-in for the family's photos: a dusk sky over hills"""
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="960"><defs><linearGradient id="s" x2="0" y2="1">'
+           '<stop stop-color="#2b4a7a"/><stop offset=".55" stop-color="#d9825b"/><stop offset="1" stop-color="#f2c27a"/>'
+           '</linearGradient></defs><rect width="1600" height="960" fill="url(#s)"/><circle cx="1180" cy="560" r="70" '
+           'fill="#fbe3a6"/><path d="M0 700 Q400 560 800 690 T1600 650 V960 H0z" fill="#3a3550"/>'
+           '<path d="M0 820 Q500 700 1000 800 T1600 790 V960 H0z" fill="#1f2236"/></svg>')
+    return Response(svg, media_type="image/svg+xml")
 
 
 @app.get("/")
