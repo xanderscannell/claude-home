@@ -3,7 +3,7 @@
 Run from satellite/:  uv run satellite.py
 Optional env: BRAIN_URL (default ws://localhost:8765), DEVICE (default: hostname),
               AUDIO_IN / AUDIO_OUT (sounddevice device index or name), WAKE_THRESHOLD (default 0.5),
-              MIXER_CARD (ALSA card with the Master and Music controls from asound.conf, default Headphones).
+              MIXER_CARD (ALSA card with the Master and Music controls from asound.conf, default 2).
 """
 
 import asyncio
@@ -27,7 +27,7 @@ FRAME = 1280  # 80 ms, the chunk size openWakeWord expects
 FRAME_S = FRAME / RATE
 WAKE_WORD = "hey_jarvis"
 DEVICE = os.environ.get("DEVICE", socket.gethostname())
-MIXER_CARD = os.environ.get("MIXER_CARD", "Headphones")
+MIXER_CARD = os.environ.get("MIXER_CARD", "2")
 
 # Tuning knobs: every mic and room is different.
 WAKE_THRESHOLD = float(os.environ.get("WAKE_THRESHOLD", 0.5))

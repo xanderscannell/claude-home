@@ -7,7 +7,7 @@ collects what the unit files' headers and the scripts say, in one place and in o
 
 - Raspberry Pi 3 B+, Raspberry Pi OS (Debian 13 Trixie, arm64), about 900 MB of RAM. With Chromium
   and the satellite running, about 330 MB is left.
-- 5" 800x480 HDMI touchscreen (USB touch), speakers on the Pi's 3.5 mm jack (ALSA card `Headphones`), a USB mic (card `Audio`).
+- 5" 800x480 HDMI touchscreen (USB touch), USB headset as ALSA card 2.
 - User `claude-pi`, at `192.168.0.178`. The brain PC is `192.168.0.172`; both addresses are in the
   unit files, so reserve them in the router.
 - SSH by key only: `ssh -i ~/.ssh/claude_home_pi claude-pi@192.168.0.178`.
@@ -42,9 +42,9 @@ bare pattern also matches the SSH shell running it.
 2. **Files.** Copy `satellite/` to `~/claude-home/satellite/`.
 3. **uv** in `~/.local/bin/uv`. The satellite needs Python 3.11 (openWakeWord's `tflite-runtime` has
    no newer builds), and uv installs it on first run.
-4. **Audio.** `sudo cp asound.conf /etc/asound.conf`. It plays through the 3.5 mm jack (card `Headphones`) and records
-   from a USB mic (card `Audio`); check the names with `aplay -l` and `arecord -l`, and change them in
-   the file (and the satellite's `MIXER_CARD`, the playback card) for other devices. The `Master` and `Music` controls appear the first time something plays.
+4. **Audio.** `sudo cp asound.conf /etc/asound.conf`. It assumes the headset is card 2; check with
+   `aplay -l`, and change `defaults.pcm.card`, `defaults.ctl.card`, and the satellite's `MIXER_CARD`
+   if not. The `Master` and `Music` controls appear the first time something plays.
 5. **Satellite.** Install `claude-home-satellite.service` as its header says. It needs the brain
    reachable on TCP 8765.
 6. **Kiosk.** Install `cage`, `chromium`, and `grim`. Run `python3 blank_cursor.py` as `claude-pi`,

@@ -7,8 +7,8 @@ from satellite import FRAME, MIC_BACKLOG, VOLUME, Heard, amixer_args, parse_leve
 
 # amixer commands: read, set, clamped
 assert VOLUME == "Master", "the speaker volume is asound.conf's software control, not the device's own"
-assert amixer_args(VOLUME) == ["amixer", "-c", "Headphones", "sget", "Master"]
-assert amixer_args("Music", 20) == ["amixer", "-c", "Headphones", "-q", "sset", "Music", "20%"]
+assert amixer_args(VOLUME) == ["amixer", "-c", "2", "sget", "Master"]
+assert amixer_args("Music", 20) == ["amixer", "-c", "2", "-q", "sset", "Music", "20%"]
 assert amixer_args(VOLUME, 140)[-1] == "100%" and amixer_args(VOLUME, -5)[-1] == "0%"
 assert amixer_args(VOLUME, 37.6)[-1] == "37%"
 

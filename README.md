@@ -51,7 +51,7 @@ Connect speaker; the brain controls it through the Spotify Web API. Open
 | `CLAUDE_HOME_LOG` | Where the turn log goes (default `brain/turns.jsonl`); `ha_actions.jsonl` is written beside it |
 
 On the Pi, the satellite's unit file sets `BRAIN_URL`, `DEVICE`, `AUDIO_IN`, and `AUDIO_OUT`;
-`MIXER_CARD` (default `Headphones`) and `WAKE_THRESHOLD` (default `0.5`) are optional.
+`MIXER_CARD` (default `2`) and `WAKE_THRESHOLD` (default `0.5`) are optional.
 
 **Logs** (git-ignored, in `brain/`): `turns.jsonl` has every turn's transcript, reply, and stage timings;
 `ha_actions.jsonl` has every Home Assistant action Claude took and what it heard first.
