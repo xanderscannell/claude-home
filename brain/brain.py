@@ -288,6 +288,8 @@ class Device:
         self.stopped = False  # Stop was tapped during this turn
         self.volume: int | None = None  # the speaker's level, as last reported by the satellite
         self.ringing: dict | None = None  # the alarm or timer ringing right now, as shown on screens
+        self.ring_task: asyncio.Task | None = None  # what rings it; still running for a moment after a stop
+        self.timers_waiting: list[tuple[float, str, float | None]] = []  # finished timers waiting to ring
         self.snoozed = False
         self.displays: set[WebSocket] = set()
         self.state = "idle"  # idle | listening | thinking | speaking
@@ -329,6 +331,7 @@ def spawn(coro):
     task = asyncio.create_task(coro)
     background.add(task)
     task.add_done_callback(background.discard)
+    return task
 
 
 async def announce(dev: Device, text: str | None):
@@ -408,8 +411,6 @@ async def ring_timer(dev: Device, label: str, duration: float | None):
     name = tools.timer_name({"label": label, "duration": duration})
     print(f"[{dev.name}] timer done: {name}")
     text = f"Your {label} timer is done." if label else f"Your {name} is done."
-    if dev.ringing is not None:  # ponytail: one ring at a time, so a timer ending meanwhile is only announced
-        return await announce(dev, text)
     await ring(dev, {"kind": "timer", "label": label, "duration": duration}, text)
 
 
@@ -594,7 +595,9 @@ async def poll_music():
 async def ring_timers():
     """Timers and alarms live in SQLite, so they survive restarts. Overdue timers ring once a satellite
     connects; an alarm more than RING_LIMIT_S late (the brain was down) is skipped rather than ringing late.
+    A device rings one thing at a time, and not over a conversation: the rest wait their turn, oldest first.
     Also keeps screens' timers and next alarm current, whatever changed them (Claude, a finish, a tap)."""
+    started = clock()
     shown: dict[str, tuple] = {}
     while True:
         await asyncio.sleep(0.5)
@@ -605,21 +608,28 @@ async def ring_timers():
             if now != shown.get(dev.name, ([], None)):
                 shown[dev.name] = now
                 await dev.show(ambient(dev))
+        alarms: dict[str, list[dict]] = {}  # alarms stay due until rung, so they wait in SQLite
         for alarm in tools.alarms_due(clock()):
-            dev = device(alarm["device"])
-            if dev.ringing is not None:
-                continue  # one at a time; it stays due until this one is done
-            if clock() - alarm["next_ring"] > RING_LIMIT_S:
-                print(f"[{dev.name}] skipped an alarm that was due while the brain was down: {alarm['time']}")
+            if alarm["next_ring"] < started - RING_LIMIT_S:
+                print(f"[{alarm['device']}] skipped an alarm that was due while the brain was down: {alarm['time']}")
                 tools.alarm_done(alarm["id"])
                 continue
-            spawn(ring_alarm(dev, alarm))
-        connected = [d for d in devices.values() if d.sat is not None]
-        if not connected:
-            continue
-        for name, label, duration in tools.timers_due():
-            dev = devices.get(name) if name in devices and devices[name].sat else connected[0]
-            spawn(ring_timer(dev, label, duration))
+            device(alarm["device"])  # so the loop below finds it
+            alarms.setdefault(alarm["device"], []).append(alarm)
+        if connected := [d for d in devices.values() if d.sat is not None]:
+            for name, label, duration in tools.timers_due():
+                dev = devices.get(name) if name in devices and devices[name].sat else connected[0]
+                dev.timers_waiting.append((clock(), label, duration))
+        for dev in list(devices.values()):
+            # The ring task, not dev.ringing: a stopped alarm stays due until its task has finished with it
+            if (dev.ring_task and not dev.ring_task.done()) or dev.busy or dev.state == "listening":
+                continue
+            alarm = min(alarms.get(dev.name, []), key=lambda a: a["next_ring"], default=None)
+            if dev.timers_waiting and (alarm is None or dev.timers_waiting[0][0] < alarm["next_ring"]):
+                _, label, duration = dev.timers_waiting.pop(0)
+                dev.ring_task = spawn(ring_timer(dev, label, duration))
+            elif alarm:
+                dev.ring_task = spawn(ring_alarm(dev, alarm))
 
 
 @contextlib.asynccontextmanager

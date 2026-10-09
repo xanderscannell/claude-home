@@ -295,6 +295,9 @@ which checks the transcript for those words (and a few like them: cancel, off, e
 repeating ones get their next time. An alarm more than 10 minutes overdue (the brain was down) is
 skipped rather than rung late.
 
+**One ring at a time:** an alarm or timer that comes due while another rings on the same device,
+or while someone is talking to it, waits its turn and rings once that ends, oldest first.
+
 **Memory** is a list of facts in SQLite, injected whole into the prompt. That is fine for a
 few hundred facts; past that it needs search.
 

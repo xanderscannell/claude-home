@@ -400,6 +400,41 @@ async def alarm_flow(port: int):
         await satellite_told(False)
         assert next(heard, None) is None
 
+        async def drain():  # from here on, take the satellite's beeps as a real one would, so sends never back up
+            while True:
+                await sat.recv()
+
+        draining = asyncio.create_task(drain())
+
+        # One ring at a time: what comes due meanwhile waits its turn, oldest first, alarms and timers alike
+        first, second = due_now(label="first"), due_now(label="second")
+        assert (await rings())["id"] == first
+        brain.tools.timer_add("bedroom", "tea", 0)
+        await asyncio.sleep(1)
+        assert brain.device("bedroom").ringing["id"] == first, "the others wait"
+        await screen.send(json.dumps({"type": "stop"}))
+        await stops()
+        assert (await rings())["id"] == second
+        await screen.send(json.dumps({"type": "stop"}))
+        await stops()
+        m = await until_type(screen, "ringing")
+        assert m["ringing"] == {"kind": "timer", "label": "tea", "duration": 0}, m
+        await screen.send(json.dumps({"type": "stop"}))
+        await stops()
+        await asyncio.sleep(1)
+        assert brain.device("bedroom").ringing is None, "a stopped alarm doesn't ring again"
+        assert not any(a["id"] in (first, second) for a in brain.tools.alarm_list("bedroom"))
+
+        # Nor over a conversation: an alarm due while listening rings once that's over
+        await sat.send(json.dumps({"type": "wake"}))
+        waits = due_now()
+        await asyncio.sleep(1)
+        assert brain.device("bedroom").ringing is None, "not while listening"
+        await sat.send(json.dumps({"type": "cancel"}))
+        assert (await rings())["id"] == waits
+        await screen.send(json.dumps({"type": "stop"}))
+        await stops()
+
         # Left alone, it gives up after the limit, and the one-time alarm is done
         brain.RING_LIMIT_S = 1
         gives_up = due_now()
@@ -432,6 +467,7 @@ async def alarm_flow(port: int):
             raise AssertionError(f"a missed alarm rang late: {stray}")
         except TimeoutError:
             pass
+        draining.cancel()
     await screen.close()
 
 
