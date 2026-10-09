@@ -805,8 +805,8 @@ def test_swiping_between_sheets(b):
     photo = d.page.locator("#dash-photo").bounding_box()
     assert round(photo["x"] - left("#sheet-dash")) == 36 and round(photo["width"]) == 800 - 2 * 36, photo
     assert d.page.eval_on_selector("#home", "h => getComputedStyle(h).opacity") == "0"
-    shrunk = d.page.eval_on_selector("#home", "h => new DOMMatrix(getComputedStyle(h).transform).a")
-    assert abs(shrunk - (800 - 2 * 36) / 800) < 0.01, f"the clock and the rest shrink with the picture, to {shrunk}"
+    home = d.page.locator("#home").bounding_box()
+    assert home["x"] >= photo["x"] - 1 and home["x"] + home["width"] <= photo["x"] + photo["width"] + 1 and         home["y"] >= photo["y"] - 1 and home["y"] + home["height"] <= photo["y"] + photo["height"] + 1,         f"the clock and the rest shrink to fit inside the photo: {home} in {photo}"
     assert not d.visible("#swipe-dim"), "side by side, nothing is covered, so nothing dims"
     d.page.mouse.up()
     d.page.clock.run_for(300)

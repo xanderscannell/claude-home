@@ -520,7 +520,12 @@ function showDash(animate) {
   const cx = x + w / 2, cy = y + h / 2;
   const k = Math.max(w / innerWidth, h / innerHeight);
   els.dash.style.setProperty("--k", String(k));
-  els.dashboard.style.setProperty("--ui-framed", `translate(${cx - innerWidth / 2}px, ${cy - innerHeight / 2}px) scale(${k})`);
+  // The clock and the rest shrink toward the frame too, but to fit inside it (the picture overflows it, cropped).
+  // The scrim shades the picture, so it shrinks as the picture does: its sides on the frame's, and what overflows
+  // lies on the sheet's background, the same night it's tinted with.
+  const toFrame = `translate(${cx - innerWidth / 2}px, ${cy - innerHeight / 2}px)`;
+  els.dashboard.style.setProperty("--ui-framed", `${toFrame} scale(${Math.min(w / innerWidth, h / innerHeight)})`);
+  els.dashboard.style.setProperty("--scrim-framed", `${toFrame} scale(${k})`);
   els.dash.style.setProperty("--frame-full",
     `translate(${innerWidth / 2 - cx}px, ${innerHeight / 2 - cy}px) scale(${innerWidth / w}, ${innerHeight / h})`);
   els.dash.style.setProperty("--pic-full", `translate(-50%, -50%) scale(${w / innerWidth}, ${h / innerHeight})`);
