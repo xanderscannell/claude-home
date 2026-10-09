@@ -5,7 +5,7 @@ Home Assistant. It replaces a Google Home / Nest Hub.
 
 **Status:** Phase 1 works on a Raspberry Pi 3 with a USB headset, talking to a brain on a
 Windows PC. Most of Phase 3's display runs on the same Pi's 5" touchscreen (see
-[Phase 3 progress](#phase-3-progress)). Phase 2 (Home Assistant) hasn't started. See
+[Phase 3 progress](#phase-3-progress)). Phase 2 has started: Claude controls Home Assistant through its MCP Server. See
 [docs/architecture.md](docs/architecture.md) for the system design.
 
 ## Running it
@@ -45,6 +45,7 @@ Connect speaker; the brain controls it through the Spotify Web API. Open
 | `SPOTIFY_CLIENT_ID`, `SPOTIFY_DEVICE` | A Spotify app's client ID, and the speaker's name in Spotify (default `Claude Home`) |
 | `SPOTIFY_TOKEN` | Where the Spotify sign-in is kept (default `brain/spotify_token.json`) |
 | `TODOIST_TOKEN`, `TODOIST_SHOPPING_PROJECT` | A Todoist API token (Settings > Integrations > Developer), and the project that is the shopping list (default `Shopping List`) |
+| `HA_URL`, `HA_TOKEN` | Home Assistant's address (e.g. `http://homeassistant.local:8123`, with the Model Context Protocol Server integration added) and a long-lived access token. Claude sees the entities exposed to Assist. |
 | `CLAUDE_HOME_DB` | Where the SQLite file lives (default `brain/home.db`) |
 
 On the Pi, the satellite's unit file sets `BRAIN_URL`, `DEVICE`, `AUDIO_IN`, and `AUDIO_OUT`;

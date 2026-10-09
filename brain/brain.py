@@ -8,7 +8,8 @@ Optional env: BRAIN_HOST (default localhost; set 0.0.0.0 to accept satellites fr
               HOME_LOCATION (city name or "lat,lon", for weather), CLAUDE_HOME_DB (default brain/home.db),
               NIGHT_START / NIGHT_END (display night mode, default 22:00 / 07:00),
               CALENDAR_<LABEL> (one secret iCal address per calendar, e.g. CALENDAR_WORK), PHOTOS_DIR,
-              SPOTIFY_CLIENT_ID / SPOTIFY_DEVICE (see spotify.py).
+              SPOTIFY_CLIENT_ID / SPOTIFY_DEVICE (see spotify.py),
+              HA_URL / HA_TOKEN (Home Assistant's MCP Server and a long-lived access token).
 
 Displays connect to /display?device=<name> and follow that device's conversation (see docs/architecture.md).
 
@@ -61,6 +62,7 @@ SYSTEM_PROMPT = """You are Claude Home, a voice assistant on a smart speaker. Ev
 - After a web search, never list sources or links; the listener cannot see them.
 - Each user message starts with the current local time in brackets; use it when relevant, never read it back unprompted.
 - Use your tools for timers, alarms, the shopping list, weather, the calendar, a morning briefing, recipes, music, the speaker's volume, and remembering things. Confirm what you did in a few words.
+- Home Assistant controls the house's lights, switches, climate, TVs, and other speakers. Music requests use your own music tools unless a TV or other speaker is named.
 - When you end with a question, the speaker listens for the answer without the wake word, so only ask when you need to."""
 
 OPTIONS = ClaudeAgentOptions(
@@ -68,7 +70,11 @@ OPTIONS = ClaudeAgentOptions(
     model="claude-haiku-5-5",  # pinned: the "haiku" alias in this SDK's Claude Code still means 4.5
     setting_sources=[],  # ignore ~/.claude and project config (CLAUDE.md, hooks, plugins)
     tools=["WebSearch"],  # no shell or file tools on this machine
-    allowed_tools=["WebSearch", "mcp__home__*"],
+    allowed_tools=["WebSearch", "mcp__home__*", "mcp__ha__*"],
+    # Home Assistant tools the brain already does itself: timers, the (Todoist) shopping list, the time, announcements.
+    disallowed_tools=[f"mcp__ha__{t}" for t in ("intent__HassCancelAllTimers", "todo__get_items", "todo__HassListAddItem",
+                                                 "todo__HassListCompleteItem", "todo__HassListRemoveItem",
+                                                 "llm__GetDateTime", "assist_satellite__HassBroadcast")],
     permission_mode="dontAsk",
     include_partial_messages=True,  # text deltas, for speaking sentence by sentence
     # On a subscription login, claude.ai connectors (Gmail, Drive, ...) load into every session.
@@ -141,7 +147,7 @@ async def ask(client: ClaudeSDKClient, text: str):
         if ev.get("type") == "content_block_delta" and ev["delta"].get("type") == "text_delta":
             sentences, buf = pop_sentences(buf + ev["delta"]["text"])
         elif ev.get("type") == "content_block_start" and ev["content_block"].get("type") in ("tool_use", "server_tool_use"):
-            print(f"  tool: {ev['content_block']['name'].removeprefix('mcp__home__')}")
+            print(f"  tool: {ev['content_block']['name'].removeprefix('mcp__home__').removeprefix('mcp__ha__')}")
             continue
         elif ev.get("type") == "content_block_stop":
             sentences, buf = [buf], ""  # end of a text block (e.g. before a web search) flushes the tail
@@ -178,14 +184,16 @@ async def fake_ask(client, text: str):
 
 
 def options(device: str, categories: list[str] = ()) -> ClaudeAgentOptions:
-    """Per-satellite session: its own timer tools, the shopping list's categories, and saved facts baked into
-    the prompt."""
+    """Per-satellite session: its own timer tools, the shopping list's categories, saved facts baked into
+    the prompt, and Home Assistant when HA_URL is set."""
     known = tools.facts()
     memory = "\n\nThings you remember about this household:\n" + "\n".join(f"- {f}" for f in known) if known else ""
-    return replace(OPTIONS, system_prompt=SYSTEM_PROMPT + memory,
-                   mcp_servers={"home": tools.make_tools(device, on_card=show_card(device), on_volume=speaker(device),
-                                                         music=app.state.spotify, categories=categories,
-                                                         after_reply=after_reply(device))})
+    servers = {"home": tools.make_tools(device, on_card=show_card(device), on_volume=speaker(device),
+                                        music=app.state.spotify, categories=categories, after_reply=after_reply(device))}
+    if os.environ.get("HA_URL"):
+        servers["ha"] = {"type": "http", "url": os.environ["HA_URL"].rstrip("/") + "/api/mcp",
+                         "headers": {"Authorization": f"Bearer {os.environ.get('HA_TOKEN', '')}"}}
+    return replace(OPTIONS, system_prompt=SYSTEM_PROMPT + memory, mcp_servers=servers)
 
 
 def after_reply(name: str):
