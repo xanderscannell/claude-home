@@ -518,7 +518,9 @@ function showDash(animate) {
   let x = 0, y = 0;  // the frame's place on the screen (the dashboard sheet covers it from 0, 0)
   for (let n = f; n && n !== els.dash; n = n.offsetParent) [x, y] = [x + n.offsetLeft, y + n.offsetTop];
   const cx = x + w / 2, cy = y + h / 2;
-  els.dash.style.setProperty("--k", String(Math.max(w / innerWidth, h / innerHeight)));
+  const k = Math.max(w / innerWidth, h / innerHeight);
+  els.dash.style.setProperty("--k", String(k));
+  els.dashboard.style.setProperty("--ui-framed", `translate(${cx - innerWidth / 2}px, ${cy - innerHeight / 2}px) scale(${k})`);
   els.dash.style.setProperty("--frame-full",
     `translate(${innerWidth / 2 - cx}px, ${innerHeight / 2 - cy}px) scale(${innerWidth / w}, ${innerHeight / h})`);
   els.dash.style.setProperty("--pic-full", `translate(-50%, -50%) scale(${w / innerWidth}, ${h / innerHeight})`);

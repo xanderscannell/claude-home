@@ -805,6 +805,8 @@ def test_swiping_between_sheets(b):
     photo = d.page.locator("#dash-photo").bounding_box()
     assert round(photo["x"] - left("#sheet-dash")) == 36 and round(photo["width"]) == 800 - 2 * 36, photo
     assert d.page.eval_on_selector("#home", "h => getComputedStyle(h).opacity") == "0"
+    shrunk = d.page.eval_on_selector("#home", "h => new DOMMatrix(getComputedStyle(h).transform).a")
+    assert abs(shrunk - (800 - 2 * 36) / 800) < 0.01, f"the clock and the rest shrink with the picture, to {shrunk}"
     assert not d.visible("#swipe-dim"), "side by side, nothing is covered, so nothing dims"
     d.page.mouse.up()
     d.page.clock.run_for(300)
@@ -832,6 +834,7 @@ def test_swiping_between_sheets(b):
         seen.append(title())
     assert seen == ["Music", "Shopping list", "Alarms", "Timers", "Home", "dashboard", "dashboard"], seen
     assert not d.visible("#sheet-dash") and d.page.eval_on_selector("#home", "h => getComputedStyle(h).opacity") == "1",         "landed: the photo grows back out and the clock and the rest come back"
+    assert d.page.eval_on_selector("#home", "h => getComputedStyle(h).transform") == "none"
 
     # A page seen before shows its last card while it's swiped in
     swipe(d, 300, frm=700, y=200)

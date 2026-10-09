@@ -244,8 +244,10 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 .dash.full .dash-pic { transform: var(--pic-full); }
 .dash.full .sheet-title { opacity: 0; }
 .dash.snap, .dash.snap * { transition: none !important; }
-.scrim { transition: opacity .26s ease-out; }
-.dashboard.framed .scrim, .dashboard.framed .home { opacity: 0; pointer-events: none; }
+/* The clock and the rest shrink with the picture as they fade (--ui-framed: the picture's own shrink, so each stays
+   over the same part of the photo) */
+.dashboard .scrim, .dashboard .home { transition: opacity .26s ease-out, transform .26s ease-out; }
+.dashboard.framed .scrim, .dashboard.framed .home { opacity: 0; transform: var(--ui-framed); pointer-events: none; }
 .swipe-dim { position: fixed; inset: 0; background: rgba(0, 0, 0, .45); pointer-events: none; }
 /* Sideways on the dashboard and the row's pages is a swipe between them, so the browser only takes up and down */
 .home, .sheet-body { touch-action: pan-y; }
