@@ -25,6 +25,7 @@ DAYS = 7  # how far ahead events are expanded, after today
 
 feeds_raw: dict[str, bytes] = {}  # label -> the last copy that fetched cleanly
 events: list[dict] = []  # every event in the window, all feeds, by start time
+failing: set[str] = set()  # labels whose last fetch failed, so an outage is logged once
 
 
 def feeds(environ=os.environ) -> dict[str, str]:
@@ -83,10 +84,15 @@ async def refresh(client: httpx.AsyncClient | None = None, environ=os.environ,
             r = await client.get(url.replace("webcal://", "https://", 1))
             r.raise_for_status()
             feeds_raw[label] = r.content
+            if label in failing:
+                failing.discard(label)
+                print(f"calendar {label}: fetching again")
         except httpx.HTTPError as e:
             failed.append(label)
-            kept = "keeping the last copy" if label in feeds_raw else "nothing to show from it yet"
-            print(f"calendar {label}: fetch failed ({type(e).__name__}); {kept}")
+            if label not in failing:  # once per outage, not once per retry
+                failing.add(label)
+                kept = "keeping the last copy" if label in feeds_raw else "nothing to show from it yet"
+                print(f"calendar {label}: fetch failed ({type(e).__name__}); {kept} until it's back")
 
     try:
         await asyncio.gather(*(fetch(label, url) for label, url in sources.items()))
@@ -95,6 +101,7 @@ async def refresh(client: httpx.AsyncClient | None = None, environ=os.environ,
             await client.aclose()
     for gone in set(feeds_raw) - set(sources):
         del feeds_raw[gone]
+    failing.intersection_update(sources)
     await asyncio.to_thread(_rebuild, today or dt.date.today())  # big feeds take a while to parse; keep the loop free
     return failed
 

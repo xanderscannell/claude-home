@@ -1,5 +1,6 @@
 """Run: uv run python test_brain.py"""
 import asyncio
+import contextlib
 import datetime
 import io
 import json
@@ -341,6 +342,11 @@ assert asyncio.run(agenda.refresh(feed_server(set()), env, WED)) == []
 assert {e["calendar"] for e in agenda.events} == {"Family", "Work"} and len(agenda.events) == 8
 assert asyncio.run(agenda.refresh(feed_server({"work"}), env, WED)) == ["Work"]  # Work fails: its last good copy stays
 assert sum(e["calendar"] == "Work" for e in agenda.events) == 4, agenda.events
+with contextlib.redirect_stdout(io.StringIO()) as log:  # an outage is logged when it starts and ends, not per retry
+    asyncio.run(agenda.refresh(feed_server({"work"}), env, WED))
+    asyncio.run(agenda.refresh(feed_server(set()), env, WED))
+    asyncio.run(agenda.refresh(feed_server(set()), env, WED))
+assert log.getvalue() == "calendar Work: fetching again\n", log.getvalue()
 asyncio.run(agenda.refresh(feed_server(set()), {"CALENDAR_FAMILY": "https://family/basic.ics"}, WED))  # Work removed
 assert {e["calendar"] for e in agenda.events} == {"Family"}
 
