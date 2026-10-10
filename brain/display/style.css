@@ -85,7 +85,10 @@ body.talking .home { opacity: 0; pointer-events: none; }
 }
 .weather .condition { display: block; font-size: 17px; margin-top: 4px; opacity: .92; }
 
-.clock { position: absolute; left: var(--edge); bottom: 92px; text-shadow: var(--on-photo); }
+.clock { position: absolute; left: var(--edge); bottom: 92px; text-shadow: var(--on-photo); transition: transform .4s ease; }
+/* Nothing on the strip: the clock comes down into its room, the date where the strip's text would be. The night clock
+   comes down the same way (below), so the two still line up at bedtime. */
+body.strip-empty .clock, body.strip-empty .night-time { transform: translateY(62px); }
 .time {
   display: block;
   font: 330 156px/.86 var(--far);
@@ -769,7 +772,7 @@ body.is-night .photo, body.is-night .scrim, body.is-night .home, body.is-night .
   font-feature-settings: "tnum" 1, "lnum" 1;
   letter-spacing: -2px;
   color: var(--ember); opacity: .35;
-  transition: opacity .6s ease;  /* comes up slowly, out of the dark */
+  transition: opacity .6s ease, transform .4s ease;  /* comes up slowly, out of the dark */
 }
 /* Forcing night from the dashboard: the night screen waits under it, black, while it's swiped away; the clock comes
    up once it's gone. The edge for it starts below the menu button, so it never takes the button's taps. */

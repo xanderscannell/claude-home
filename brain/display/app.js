@@ -384,6 +384,7 @@ function renderStrip() {
     item.addEventListener("click", () => openSheet({ kind: "music" }));
     els.strip.append(item);
   }
+  document.body.classList.toggle("strip-empty", !els.strip.childElementCount);  // the clock comes down into the room
   // Tick once a second only while something is counting down (the Pi's CPU is better spent idle).
   if (running.length && !ticker) ticker = setInterval(tick, 1000);
   if (!running.length && ticker) { clearInterval(ticker); ticker = null; }

@@ -126,6 +126,40 @@ def test_home_and_clock(b):
     d.close()
 
 
+def test_clock_comes_down_when_the_strip_is_empty(b):
+    """Nothing on the strip, the clock comes down into the room, the date where the strip's text would be; something
+    on it, the clock goes back up over it. The night clock comes down with it, so the two still line up."""
+    d = Display(b)
+    shift = lambda sel: d.page.eval_on_selector(sel, "e => new DOMMatrix(getComputedStyle(e).transform).f")  # noqa: E731
+    middle = lambda sel: (lambda r: r["y"] + r["height"] / 2)(d.page.locator(sel).bounding_box())  # noqa: E731
+    d.push(ambient([], weather=None))
+    d.page.wait_for_timeout(500)  # (its move is real time)
+    assert shift(".clock") == 62
+    down = middle("#date")
+
+    pasta = {"id": 1, "label": "pasta", "ends_at": START.timestamp() + 300, "duration": 600, "paused_left": None}
+    d.push(ambient([pasta], weather=None))
+    d.page.wait_for_timeout(500)
+    assert shift(".clock") == 0
+    assert abs(middle(".strip .item .label") - down) < 6, "the date sat where the strip's text is"
+    assert middle("#date") < middle(".strip .item"), "the clock is back up over the strip"
+
+    d.push(ambient([], weather=None))
+    d.page.wait_for_timeout(500)
+    assert shift(".clock") == 62, "and down again when the strip empties"
+    d.close()
+
+    # At night (the night clock is only drawn then), it comes down and goes up the same way
+    d = Display(b, start=dt.datetime(2026, 10, 7, 23, 0, 0))
+    d.push(hello(), ambient([], weather=None))
+    d.page.wait_for_timeout(500)
+    assert is_night(d) and shift(".night-time") == 62
+    d.push(ambient([dict(pasta, ends_at=dt.datetime(2026, 10, 7, 23, 5).timestamp())], weather=None))
+    d.page.wait_for_timeout(500)
+    assert shift(".night-time") == 0
+    d.close()
+
+
 def test_conversation(b):
     d = Display(b)
     d.push({"type": "state", "state": "listening"})
