@@ -1084,6 +1084,31 @@ def test_climate(b):
     d.page.clock.run_for(800)
     assert climate_sent() == [{"type": "climate", "entity": "climate.living", "target": 73}]
 
+    # A cloud thermostat confirms each step seconds later: the page keeps what was asked until it reports that
+    target = lambda: page(0).locator(".th-target").inner_text()  # noqa: E731
+    climate = lambda t: {"kind": "climate", "thermostats": [dict(living, target=t), ac]}  # noqa: E731
+    d.push({"type": "update", "card": climate(71)})
+    assert target() == "73°", "an older confirmation pulled the number back"
+    # A redraw between taps leaves one timer: one change goes out, the last
+    page(0).locator('[aria-label^="Raise"]').tap()
+    d.push({"type": "update", "card": climate(72)})
+    assert target() == "74°"
+    page(0).locator('[aria-label^="Raise"]').tap()
+    d.page.clock.run_for(800)
+    assert climate_sent()[1:] == [{"type": "climate", "entity": "climate.living", "target": 75}], climate_sent()
+    d.push({"type": "update", "card": climate(75)})
+    d.push({"type": "update", "card": climate(68)})  # then changed at the thermostat itself
+    assert target() == "68°", "once Home Assistant reported the ask, its own changes show"
+    # Never reported (rounded, refused): after 20 s Home Assistant's value shows again
+    page(0).locator('[aria-label^="Lower"]').tap()
+    d.page.clock.run_for(800)
+    d.push({"type": "update", "card": climate(68)})
+    assert target() == "67°"
+    d.page.clock.run_for(20_000)
+    d.push({"type": "update", "card": climate(68)})
+    assert target() == "68°"
+    d.push({"type": "card", "card": {"kind": "climate", "thermostats": [living, ac]}})
+
     # A mode; then the brain's fresh card keeps the page showing (the AC, swiped to) rather than jumping back
     d.page.locator(".thermostats").evaluate("p => { p.style.scrollSnapType = 'none'; p.scrollLeft = p.scrollWidth; }")
     page(1).locator(".pill", has_text="Off").tap()
@@ -1142,6 +1167,11 @@ def test_speakers_and_tvs(b):
     assert panel(1).locator(".pl-volume").inner_text() == "37" and not media_sent()
     d.page.clock.run_for(800)
     assert media_sent() == [{"type": "media", "entity": "media_player.tv", "volume": 37}]
+    # The volume asked for stays until Home Assistant reports it, as a thermostat's setting does
+    d.push({"type": "update", "card": {"kind": "media", "players": players}})
+    assert panel(1).locator(".pl-volume").inner_text() == "37"
+    tv = [dict(p, volume=37) if p["entity"] == "media_player.tv" else p for p in players]
+    d.push({"type": "update", "card": {"kind": "media", "players": tv}})
     panel(1).locator('[aria-label="Pause the TV"]').tap()
     panel(0).locator('[aria-label="Play the Speaker"]').tap()
     panel(3).locator('[aria-label="Turn on the TV"]').tap()

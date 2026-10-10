@@ -1257,9 +1257,41 @@ function roundButton(cls, label, icon, onPress) {
 // One player: room and name, what's on, then volume and the buttons at the bottom. Volume taps go out as one
 // change once they stop, like a thermostat's.
 const VOLUME_STEP = 5;
+
+// What this screen just asked a device for (a thermostat's setting or mode, a player's volume) stays on the page over
+// the brain's cards until Home Assistant reports that same value. A cloud thermostat confirms each step seconds later,
+// and drawing those confirmations pulled the number back mid-adjustment. After ASKED_MS it gives up (Home Assistant
+// rounded it, or never made the change) and shows Home Assistant's value again.
+const ASKED_MS = 20000;
+const asked = new Map();  // "entity field" -> {value, until}
+
+function ask(d, field) {
+  asked.set(`${d.entity} ${field}`, { value: d[field], until: Date.now() + ASKED_MS });
+}
+
+function stillAsked(d, ...fields) {
+  for (const field of fields) {
+    const key = `${d.entity} ${field}`, a = asked.get(key);
+    if (!a) continue;
+    if (d[field] === a.value || Date.now() > a.until) asked.delete(key);
+    else d[field] = a.value;
+  }
+}
+
+// − and + go out as one change once the taps stop: one timer per device and field, so a redraw between taps (the
+// house changed) can't leave the old page's timer running beside the new one's
+const nudges = new Map();
+
+function nudgeLater(d, field, msg) {
+  const key = `${d.entity} ${field}`;
+  ask(d, field);
+  clearTimeout(nudges.get(key));
+  nudges.set(key, setTimeout(() => send(msg()), NUDGE_MS));
+}
 const PLAYER_ON = ["playing", "paused", "idle", "on", "buffering"];
 
 function playerPanel(p) {
+  stillAsked(p, "volume");
   const panel = el("section", "player");
   panel.dataset.entity = p.entity;
   const what = el("div", "pl-what");
@@ -1274,12 +1306,10 @@ function playerPanel(p) {
     paint();
     send({ type: "media", entity: p.entity, action: p.state === "off" ? "turn_off" : "turn_on" });
   });
-  let pending = null;
   const nudge = (dir) => {
     p.volume = Math.min(100, Math.max(0, p.volume + dir * VOLUME_STEP));
     paint();
-    clearTimeout(pending);
-    pending = setTimeout(() => send({ type: "media", entity: p.entity, volume: p.volume }), NUDGE_MS);
+    nudgeLater(p, "volume", () => ({ type: "media", entity: p.entity, volume: p.volume }));
   };
   const vol = el("div", "pl-vol");
   vol.append(roundButton("pl-btn small", `Turn down the ${p.name}`, ICONS.minus, () => nudge(-1)), volume,
@@ -1360,12 +1390,12 @@ const SCALE_SPAN = 20;
 const NUDGE_MS = 700;  // + tapped three times sends one change, not three that answer out of order
 
 function thermostatPage(t) {
+  stillAsked(t, "target", "mode");
   const page = el("section", "thermo");
   page.dataset.entity = t.entity;
   const target = el("p", "th-target"), status = el("p", "th-status");
   const about = el("div");
   about.append(el("p", "th-name", t.name), target, status);
-  let pending = null;
   const step = (dir, label, icon) => {
     const b = el("button", "th-step");
     b.type = "button";
@@ -1374,8 +1404,7 @@ function thermostatPage(t) {
     b.addEventListener("click", () => {
       t.target = Math.min(t.max, Math.max(t.min, t.target + dir * (t.step || 1)));
       paint();
-      clearTimeout(pending);
-      pending = setTimeout(() => send({ type: "climate", entity: t.entity, target: t.target }), NUDGE_MS);
+      nudgeLater(t, "target", () => ({ type: "climate", entity: t.entity, target: t.target }));
     });
     return b;
   };
@@ -1394,6 +1423,7 @@ function thermostatPage(t) {
     b.type = "button";
     b.addEventListener("click", () => {
       t.mode = m;
+      ask(t, "mode");
       paint();
       send({ type: "climate", entity: t.entity, mode: m });
     });
