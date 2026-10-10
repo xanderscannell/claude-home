@@ -580,7 +580,7 @@ def test_menu(b):
     d = Display(b)
     d.tap("#menu")
     assert d.visible("#sheet") and d.text("#sheet-title") == "Menu"
-    assert d.page.locator(".menu-label").all_inner_texts() == ["Home", "Timers", "Alarms", "Shopping list", "Music", "Volume"]
+    assert d.page.locator(".menu-label").all_inner_texts() == ["Home", "Timers", "Alarms", "Shopping list", "Music"]
     overhang = d.page.evaluate("""() => {  // both measured at once: the sheet may still be sliding up
       const rows = document.querySelectorAll(".menu-row"), body = document.querySelector("#sheet-body");
       return rows[rows.length - 1].getBoundingClientRect().bottom - body.getBoundingClientRect().bottom; }""")
@@ -597,49 +597,92 @@ def test_menu(b):
     d.close()
 
 
+def volume_up(d, to=380, pause=0, release=True):
+    """A finger up from the bottom edge to y=to. pause: real ms between moves (slow, so not a flick)."""
+    d.page.mouse.move(400, 474)
+    d.page.mouse.down()
+    for y in range(474, to, -16):
+        d.page.mouse.move(400, y)
+        if pause:
+            d.page.wait_for_timeout(pause)
+    d.page.mouse.move(400, to)
+    if release:
+        d.page.mouse.up()
+        d.page.clock.run_for(300)  # past the settle's timer
+        d.page.wait_for_timeout(300)  # and its transition (CSS runs in real time)
+
+
 def test_volume(b):
+    """Swiped up from the bottom edge, the volume bar floats over whatever's showing: the speaker, the slider, the
+    level. A tap anywhere else, or 5 s untouched, puts it away. Claude changing the volume puts it up."""
     d = Display(b)
     volumes = lambda: [m["level"] for m in d.sent if m.get("type") == "volume"]  # noqa: E731
+    bar_up = lambda: d.visible("#vol-bar") and d.page.eval_on_selector(  # noqa: E731
+        "#vol-bar", "b => Math.round(b.getBoundingClientRect().bottom)") == 480 - 24
 
-    # From the menu, before the speaker has reported a level: say so
-    d.tap("#menu")
-    d.page.locator(".menu-row").nth(5).tap()
-    d.page.wait_for_timeout(50)
-    assert d.text("#sheet-title") == "Volume" and d.text("#sheet-body .quiet") == "The speaker isn't connected."
-    d.shot("volume-unknown", settle=400)
+    # Before the speaker has reported a level: say so
+    edge = d.page.locator("#vol-edge").bounding_box()
+    assert edge["y"] + edge["height"] == 480 and edge["width"] == 800 and edge["height"] <= 20, edge
+    volume_up(d)
+    assert bar_up() and d.text("#vol-none") == "The speaker isn't connected." and not d.visible("#vol-slider")
+    d.shot("volume-unknown")
 
-    # The level arrives: the hero number and a slider as wide as the screen, thumb-high
+    # The level arrives: the speaker on the left, the slider across the middle, the level on the right
     d.push({"type": "volume", "level": 40})
-    assert d.text(".vol-level") == "40" and d.page.input_value(".vol-slider") == "40"
-    box = d.page.locator(".vol-slider").bounding_box()
-    assert big(box, w=560, h=72), box
-    d.shot("volume", settle=400)
+    assert d.text("#vol-level") == "40" and d.page.input_value("#vol-slider") == "40" and not d.visible("#vol-none")
+    bar = d.page.locator("#vol-bar").bounding_box()
+    icon, slider, level = (d.page.locator(sel).bounding_box() for sel in (".vol-icon", "#vol-slider", "#vol-level"))
+    assert round(bar["x"]) == 36 and round(bar["width"]) == 800 - 2 * 36, bar
+    assert icon["x"] < slider["x"] < slider["x"] + slider["width"] < level["x"], (icon, slider, level)
+    assert big(slider, w=480, h=64), slider
+    d.shot("volume")
 
     # Drag from 40 to 80: the number follows the finger; one message, sent when the finger lifts
-    y = box["y"] + box["height"] / 2
-    at = lambda v: box["x"] + 24 + v / 100 * (box["width"] - 48)  # noqa: E731  (thumb centre for a value)
+    y = slider["y"] + slider["height"] / 2
+    at = lambda v: slider["x"] + 24 + v / 100 * (slider["width"] - 48)  # noqa: E731  (thumb centre for a value)
     d.page.mouse.move(at(40), y)
     d.page.mouse.down()
     d.page.mouse.move(at(80), y, steps=12)
     d.page.wait_for_timeout(50)
     assert volumes() == [], "nothing is sent while the finger is still down"
     d.push({"type": "volume", "level": 10})  # a report arriving mid-drag must not yank the slider
-    assert abs(int(d.page.input_value(".vol-slider")) - 80) <= 1, d.page.input_value(".vol-slider")
-    d.shot("volume-dragging", settle=100)
+    assert abs(int(d.page.input_value("#vol-slider")) - 80) <= 1, d.page.input_value("#vol-slider")
     d.page.mouse.up()
     d.page.wait_for_timeout(50)
     assert len(volumes()) == 1 and abs(volumes()[0] - 80) <= 1, volumes()
-    assert d.text(".vol-level") == str(volumes()[0])
+    assert d.text("#vol-level") == str(volumes()[0])
 
     # With no finger on it, the brain's report moves it
     d.push({"type": "volume", "level": 55})
-    assert d.text(".vol-level") == "55" and d.page.input_value(".vol-slider") == "55"
+    assert d.text("#vol-level") == "55" and d.page.input_value("#vol-slider") == "55"
     assert len(volumes()) == 1, "a report from the brain must not echo back"
 
-    # Claude turning it up opens the sheet at the new level
-    d.page.clock.run_for(46_000)  # (left alone, the sheet goes home)
+    # Left alone 5 s, it goes away
+    d.page.clock.run_for(5_500)
+    d.page.wait_for_timeout(300)
+    assert not d.visible("#vol-bar")
+
+    # A tap anywhere else puts it away, and doesn't press what's under it
+    volume_up(d)
+    assert bar_up()
+    menu = d.page.locator("#menu").bounding_box()
+    d.page.mouse.click(menu["x"] + menu["width"] / 2, menu["y"] + menu["height"] / 2)  # on the menu button
+    d.page.wait_for_timeout(300)
+    assert not d.visible("#vol-bar") and not d.visible("#sheet"), "the tap only put the bar away, the menu didn't open"
+
+    # A short, slow swipe drops it back down; over a sheet it works the same
+    volume_up(d, to=450, pause=30)
+    assert not d.visible("#vol-bar")
+    d.push({"type": "card", "card": HOUSE})
+    volume_up(d)
+    assert bar_up()
+    d.page.clock.run_for(5_500)
+    d.page.wait_for_timeout(300)
+
+    # Claude turning it up puts the bar up at the new level (there's no volume sheet any more)
     d.push({"type": "card", "card": {"kind": "volume", "level": 65}})
-    assert d.visible("#sheet") and d.text(".vol-level") == "65"
+    d.page.wait_for_timeout(300)
+    assert bar_up() and d.text("#vol-level") == "65" and d.text("#sheet-title") == "Home"
     d.close()
 
 
@@ -876,7 +919,7 @@ def test_swiping_between_sheets(b):
     for _ in range(6):
         swipe(d, 300, frm=700, y=200)
         seen.append(title())
-    assert seen == ["Timers", "Alarms", "Shopping list", "Music", "Volume", "Volume"], seen
+    assert seen == ["Timers", "Alarms", "Shopping list", "Music", "Music", "Music"], seen
     assert left("#sheet") == 0, "past the end it gives a little and springs back"
     assert opened() == ["house", "alarms", "shopping"], "only pages the brain serves are asked for, on landing"
     assert fetched()[3:] == ["house", "alarms", "shopping", "alarms", "shopping"], "and the ones either side of each landing"
@@ -887,8 +930,9 @@ def test_swiping_between_sheets(b):
     for _ in range(7):
         swipe(d, 500, frm=100, y=200)
         seen.append(title())
-    assert seen == ["Music", "Shopping list", "Alarms", "Timers", "Home", "dashboard", "dashboard"], seen
-    assert not d.visible("#sheet-dash") and d.page.eval_on_selector("#home", "h => getComputedStyle(h).opacity") == "1",         "landed: the photo grows back out and the clock and the rest come back"
+    assert seen == ["Shopping list", "Alarms", "Timers", "Home", "dashboard", "dashboard", "dashboard"], seen
+    assert not d.visible("#sheet-dash") and d.page.eval_on_selector("#home", "h => getComputedStyle(h).opacity") == "1", \
+        "landed: the photo grows back out and the clock and the rest come back"
     assert d.page.eval_on_selector("#home", "h => getComputedStyle(h).transform") == "none"
 
     # Coming back from Home the dashboard arrives already framed: nothing plays while it slides in
@@ -1116,7 +1160,7 @@ def test_header(b):
     d.page.wait_for_timeout(300)  # its fade (real time)
     assert opacity("#header-home") == "1" and d.text("#header-time") == "9:41"
     assert d.page.locator(".tab").all_inner_texts() == [
-        "Dashboard", "Home", "Timers", "Alarms", "Shopping list", "Music", "Volume"]
+        "Dashboard", "Home", "Timers", "Alarms", "Shopping list", "Music"]
     assert round(tab(1)["x"]) == 36 and round(line()["x"]) == 36 and abs(line()["width"] - tab(1)["width"]) < 1
     assert d.page.eval_on_selector("#sheet-title", "t => getComputedStyle(t).color") == "rgba(0, 0, 0, 0)", \
         "a row page's own title gives way to the header's"
@@ -1183,7 +1227,6 @@ def test_navigation_every_screen_gets_home(b):
         "alarms": {"kind": "alarms", "alarms": []},
         "shopping": {"kind": "shopping", "groups": [{"name": "", "items": ["Milk"]}]},
         "text": {"kind": "text", "title": "Note", "lines": ["Hello"]},
-        "volume": {"kind": "volume", "level": 40},
         "agenda": {"kind": "agenda", "events": []},
         "briefing": briefing()["card"],
         "music": {"kind": "music"},

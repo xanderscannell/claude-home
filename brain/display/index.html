@@ -66,6 +66,15 @@
     <time id="header-time"></time>
   </button>
 
+  <!-- Volume: swiped up from the bottom edge, a bar floating over whatever's showing -->
+  <button id="vol-edge" class="vol-edge" type="button" aria-label="Volume"></button>
+  <section id="vol-bar" class="vol-bar" hidden aria-label="Volume">
+    <span class="vol-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></svg></span>
+    <input id="vol-slider" class="vol-slider" type="range" min="0" max="100" step="1" aria-label="Volume">
+    <span id="vol-level" class="vol-level"></span>
+    <p id="vol-none" class="vol-none" hidden>The speaker isn't connected.</p>
+  </section>
+
   <section id="overlay" class="overlay" data-state="idle" hidden aria-live="polite">
     <button id="close-overlay" class="close" type="button" aria-label="Close">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>

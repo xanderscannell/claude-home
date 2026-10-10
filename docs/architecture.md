@@ -185,8 +185,9 @@ Brain -> display:
 Card kinds: `weather` (the forecast), `timers` (each with `ends_at` epoch seconds, `duration` in seconds, and `paused_left`: seconds left while paused, else null), `alarms`,
 `shopping {groups}` (each `{name, items}`: a Todoist section, uncategorized first with name `""`), `agenda {events}`, `briefing` (forecast, today's events, next alarm, timers,
 shopping count), `recipe {title, ingredients, steps, step}` (step -1 is the ingredients),
-`text {title, lines}` (Claude's `show_on_screen`), `volume {level}`, and `music` (no data; the
-screen shows what it knows is playing).
+`text {title, lines}` (Claude's `show_on_screen`), `volume {level}` (not a sheet: it puts up the screen's volume
+bar at that level, the one swiped up from the bottom edge), and `music` (no data; the screen shows what it knows is
+playing).
 
 Home control (in `fake_brain.py` only so far; the brain doesn't send or answer these yet):
 `house {lights: {on, total, rooms}, climate: {temp, target, action}, media: {playing, total}, rooms, automations: {on, total}}`

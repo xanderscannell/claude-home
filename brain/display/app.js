@@ -14,6 +14,7 @@ const els = {
   tabsWrap: document.querySelector(".tabs-wrap"),
   edge: $("sheet-edge"), under: $("sheet-under"), underTitle: $("under-title"), underBody: $("under-body"),
   swipeDim: $("swipe-dim"), dash: $("sheet-dash"), dashPhoto: $("dash-photo"), dashPic: $("dash-pic"), dashboard: $("dashboard"), dashEdge: $("dash-edge"), night: $("night"),
+  volEdge: $("vol-edge"), volBar: $("vol-bar"), volSlider: $("vol-slider"), volLevel: $("vol-level"), volNone: $("vol-none"),
   ringing: $("ringing"), ringingTime: $("ringing-time"), ringingLabel: $("ringing-label"),
   ringingStop: $("ringing-stop"), snooze: $("snooze"),
   offline: $("offline"), nightTime: $("night-time"),
@@ -79,7 +80,7 @@ const handlers = {
     renderStrip();
     if (sheetCard && sheetCard.kind === "timers") renderSheet();  // keep an open timers sheet live
   },
-  card: (m) => openSheet(m.card),
+  card: (m) => (m.card.kind === "volume" ? openVolume(m.card.level) : openSheet(m.card)),  // Claude set the volume
   page: (m) => keepRowCard(m.card),
   ringing: (m) => showRinging(m.ringing),
   volume: (m) => showVolume(m.level),
@@ -414,7 +415,6 @@ const ROW = [
   { kind: "alarms", label: "Alarms", icon: "alarm" },
   { kind: "shopping", label: "Shopping list", icon: "list" },
   { kind: "music", label: "Music", icon: "music", local: true },
-  { kind: "volume", label: "Volume", icon: "volume", local: true },
 ];
 const rowAt = (kind) => ROW.findIndex((r) => r.kind === kind);
 
@@ -441,7 +441,6 @@ function openSheet(card, back = false) {
   sheetCard = card;
   // A timers card can beat the next ambient update by up to half a second; it is just as fresh, so use it.
   if (card.kind === "timers" && card.timers) ambient = { ...ambient, timers: card.timers };
-  if (card.kind === "volume" && card.level !== undefined) speakerVolume = card.level;
   const wasHidden = els.sheet.hidden;
   els.sheet.hidden = false;  // before rendering, so long text can be measured and fitted
   renderSheet();
@@ -738,7 +737,7 @@ function scrollsSideways(node) {
 }
 
 document.addEventListener("pointerdown", (e) => {
-  if (gesture || slide || !e.isPrimary) return;
+  if (gesture || slide || !e.isPrimary || e.target === els.volEdge || els.volBar.contains(e.target)) return;
   const start = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp, dx: 0, v: 0 };
   if (e.target === els.edge && sheetStack.length) {
     gesture = start;
@@ -1011,32 +1010,6 @@ const renderers = {
     return ["Music", [wrap]];
   },
 
-  // One big number and a slider as wide as the screen. The level is sent once, when the finger lifts.
-  volume: () => {
-    if (speakerVolume === null) {
-      return ["Volume", [el("p", "quiet", "The speaker isn't connected."),
-                         el("p", "hint", "Volume can be changed once it's back.")]];
-    }
-    const level = el("p", "vol-level");
-    const slider = el("input", "vol-slider");
-    Object.assign(slider, { type: "range", min: 0, max: 100, step: 1, value: speakerVolume });
-    slider.setAttribute("aria-label", "Volume");
-    const paint = () => {
-      level.textContent = slider.value;
-      slider.style.setProperty("--fill", `${slider.value}%`);
-    };
-    slider.addEventListener("input", paint);
-    slider.addEventListener("change", () => send({ type: "volume", level: Number(slider.value) }));
-    paint();
-    const quiet = el("span", "vol-end"), loud = el("span", "vol-end");
-    quiet.innerHTML = ICONS.quiet;  // fixed markup from ICONS
-    loud.innerHTML = ICONS.volume;
-    const row = el("div", "vol-row");
-    row.append(quiet, slider, loud);
-    const sheet = el("div", "vol");
-    sheet.append(level, row);
-    return ["Volume", [sheet]];
-  },
 
   // The days ahead in order: a heading per day, then each event at its time with the calendar it's on.
   // Something under way says "Now"; the next thing coming up today has its time in the accent.
@@ -1648,18 +1621,103 @@ function paintMusic() {
 
 let speakerVolume = null;  // the speaker's level as the brain last reported it; null until it does
 
-// A new level from the brain (the satellite's report, another screen, or Claude). An open volume sheet
-// follows it, unless a finger is on the slider right now.
+// A new level from the brain (the satellite's report, another screen, or Claude): the bar follows it, if it's up,
+// unless a finger is on the slider right now
 function showVolume(level) {
   speakerVolume = level;
-  if (!sheetCard || sheetCard.kind !== "volume") return;
-  const slider = els.sheetBody.querySelector(".vol-slider");
-  if (!slider) renderSheet();  // it was saying the speaker isn't connected
-  else if (!slider.matches(":active")) {
-    slider.value = level;
-    slider.dispatchEvent(new Event("input"));
-  }
+  paintVolume();
 }
+
+// The bar: swiped up from the bottom edge (it rises with the finger; let go a third of the way up, or flick, and it
+// stays), or put up when Claude changes the volume. A tap anywhere else, or 5 s untouched, puts it away. The level is
+// sent once, when the finger lifts off the slider.
+const VOL_IDLE_MS = 5000;
+let volUp = false;
+let volIdle = null;
+let volDrag = null;  // {id, y, t, dy, v} while a finger brings it up
+
+function paintVolume() {
+  const known = speakerVolume !== null;
+  els.volSlider.hidden = els.volLevel.hidden = !known;
+  els.volNone.hidden = known;
+  if (known && !els.volSlider.matches(":active")) els.volSlider.value = speakerVolume;
+  els.volLevel.textContent = els.volSlider.value;
+  els.volSlider.style.setProperty("--fill", `${els.volSlider.value}%`);
+}
+
+const volBelow = () => els.volBar.offsetHeight + 26;  // far enough down to be off the screen
+
+function placeVolume(y, settle) {  // y: px below its place
+  els.volBar.classList.toggle("dragging", !settle);
+  els.volBar.classList.toggle("settling", settle);
+  els.volBar.style.transform = `translateY(${y}px)`;
+}
+
+const volumeAllowed = () =>
+  !document.body.classList.contains("is-night") && els.overlay.hidden && els.ringing.hidden && els.camera.hidden;
+
+function openVolume(level) {
+  if (level !== undefined) speakerVolume = level;
+  paintVolume();
+  if (!volUp) {
+    els.volBar.hidden = false;
+    placeVolume(volBelow(), false);
+    void els.volBar.offsetWidth;  // start below, so it rises
+  }
+  placeVolume(0, true);
+  volUp = true;
+  touchVolume();
+}
+
+function closeVolume() {
+  clearTimeout(volIdle);
+  volUp = false;
+  placeVolume(volBelow(), true);
+  setTimeout(() => { if (!volUp) els.volBar.hidden = true; }, SETTLE_MS);
+}
+
+function touchVolume() {
+  clearTimeout(volIdle);
+  volIdle = setTimeout(closeVolume, VOL_IDLE_MS);
+}
+
+els.volEdge.addEventListener("pointerdown", (e) => {
+  if (volUp || !volumeAllowed()) return;
+  volDrag = { id: e.pointerId, y: e.clientY, t: e.timeStamp, dy: 0, v: 0 };
+  els.volEdge.setPointerCapture(e.pointerId);
+  paintVolume();
+  els.volBar.hidden = false;
+  placeVolume(volBelow(), false);
+});
+els.volEdge.addEventListener("pointermove", (e) => {
+  if (!volDrag || e.pointerId !== volDrag.id) return;
+  const dy = Math.max(0, volDrag.y - e.clientY);
+  volDrag.v = (dy - volDrag.dy) / Math.max(1, e.timeStamp - volDrag.t);
+  Object.assign(volDrag, { dy, t: e.timeStamp });
+  placeVolume(Math.max(0, volBelow() - dy), false);
+});
+for (const type of ["pointerup", "pointercancel"]) {
+  els.volEdge.addEventListener(type, (e) => {
+    if (!volDrag || e.pointerId !== volDrag.id) return;
+    const { dy, v } = volDrag;
+    volDrag = null;
+    if (dy > volBelow() * SWIPE_AT || (v > SWIPE_FLICK && dy > 20)) openVolume();
+    else closeVolume();
+  });
+}
+els.volEdge.addEventListener("click", (e) => { if (e.detail === 0) openVolume(); });  // from a keyboard
+els.volBar.addEventListener("pointerdown", touchVolume);
+els.volSlider.addEventListener("input", () => { paintVolume(); touchVolume(); });
+els.volSlider.addEventListener("change", () => send({ type: "volume", level: Number(els.volSlider.value) }));
+// A tap anywhere else puts it away, and only does that (it doesn't press what's under it)
+document.addEventListener("pointerdown", (e) => {
+  if (!volUp || els.volBar.contains(e.target) || e.target === els.volEdge) return;
+  closeVolume();
+  const swallow = (c) => { c.stopPropagation(); c.preventDefault(); };
+  document.addEventListener("click", swallow, true);
+  setTimeout(() => document.removeEventListener("click", swallow, true), 0);
+  e.stopPropagation();
+}, true);
 
 // A card's title and body; a row page the brain hasn't sent yet is just its title
 function renderCard(card) {

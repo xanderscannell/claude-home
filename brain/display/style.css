@@ -677,17 +677,32 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 .np-btn:active { transform: scale(.94); }
 .strip .np-thumb { width: 28px; height: 28px; border-radius: 3px; object-fit: cover; align-self: center; }
 
-/* Volume: the level as the hero, the slider low and wide where a thumb reaches it */
-.vol { height: 100%; display: flex; flex-direction: column; justify-content: space-between; padding-bottom: 18px; }
-.vol-level {
-  font: 330 132px/.9 var(--far);
-  font-variation-settings: "opsz" 144, "SOFT" 100;
-  font-feature-settings: "tnum" 1, "lnum" 1;
-  letter-spacing: -2px;
+/* Volume: a bar swiped up from the bottom edge, floating over whatever's showing (in a sheet's margins): the speaker
+   on the left, the slider across the middle, the level on the right. The edge has a faint handle, like a phone's home
+   bar, matching the one on a subpage's side. Above the sheets and their header, under the conversation, the ringing
+   alarm, and the camera. */
+.vol-edge { position: fixed; z-index: 6; left: 0; right: 0; bottom: 0; height: 18px; touch-action: none; }
+.vol-edge::after {
+  content: ""; position: absolute; left: 50%; bottom: 6px;
+  width: 64px; height: 5px; margin-left: -32px; border-radius: 3px;
+  background: rgba(238, 243, 247, .22);
 }
-.vol-row { display: flex; align-items: center; gap: 22px; }
-.vol-end { flex: none; width: 34px; height: 34px; color: var(--mist); }
-.vol-end svg { width: 100%; height: 100%; }
+.vol-edge:focus-visible { outline-offset: -4px; }
+body.is-night .vol-edge { display: none; }
+.vol-bar {
+  position: fixed; z-index: 7; left: 36px; right: 36px; bottom: 24px; height: 88px; padding: 0 26px;
+  display: flex; align-items: center; gap: 22px;
+  border-radius: 18px; background: #1c2b3b; border: 1px solid rgba(238, 243, 247, .1);
+}
+.vol-icon { flex: none; width: 34px; height: 34px; color: var(--mist); }
+.vol-icon svg { width: 100%; height: 100%; }
+.vol-level {
+  flex: none; min-width: 2.4ch; text-align: right;
+  font: 340 40px/1 var(--far);
+  font-variation-settings: "opsz" 48, "SOFT" 100;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+.vol-none { flex: 1; margin: 0; font-size: 20px; color: var(--mist); }
 .vol-slider {
   --fill: 50%;
   flex: 1; height: 80px; margin: 0; background: none;
