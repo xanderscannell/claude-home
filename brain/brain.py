@@ -750,20 +750,23 @@ HOME_TAPS = ("light", "lights_off", "climate", "automation_run", "automation_tog
 async def home_tap(dev: Device, m: dict, ws: WebSocket):
     """A tap on a Home page, as a Home Assistant service call (home.service says which, and refuses what the screen
     isn't shown). The change comes back as Home Assistant reports it; if the call fails, the screen gets its page
-    afresh, so its own change of what it shows reverts. Logged beside Claude's Home Assistant actions."""
+    afresh, so its own change of what it shows reverts. A call Home Assistant is slow to answer (a cloud thermostat)
+    isn't a failure: the screen keeps the change, and the update comes when it happens. Logged beside Claude's Home
+    Assistant actions."""
     ha = app.state.ha
     if ha is None or ha.house is None or (call := home.service(ha.house, m)) is None:
         return
     domain, service, data = call
     try:
         await ha.call(domain, service, data)
-        error = None
+        result, error = "ok", None
+    except home.HATimeout as e:
+        result, error = f"timeout: {e}", None
     except home.HAError as e:
-        error = e
+        result, error = f"error: {e}", e
     with HA_LOG.open("a", encoding="utf-8") as f:
         f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), "device": dev.name, "source": "screen",
-                            "tool": f"{domain}.{service}", "args": data,
-                            "result": f"error: {error}" if error else "ok"}) + "\n")
+                            "tool": f"{domain}.{service}", "args": data, "result": result}) + "\n")
     if error:
         print(f"[{dev.name}] Home Assistant refused {domain}.{service}: {error}")
         if (showing := dev.showing.get(ws)) and (card := await sheet_card(dev, showing[0])):

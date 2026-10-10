@@ -253,6 +253,11 @@ class HAError(Exception):
     """Home Assistant refused a request, or isn't connected."""
 
 
+class HATimeout(HAError):
+    """Home Assistant hasn't answered yet. Not a refusal: a cloud device can take longer than we wait, and still
+    change (its state_changed comes when it does)."""
+
+
 def socket(url: str):
     """Home Assistant's WebSocket API, not yet authenticated: use as `async with socket(url) as ha`, then auth.
     max_size: a whole house's states are well over websockets' 1 MiB default."""
@@ -276,6 +281,7 @@ class Connection:
 
     def __init__(self, url: str, token: str, on_change=None, backoff: float = 5.0):
         self.url, self.token, self.on_change, self.backoff = url, token, on_change, backoff
+        self.timeout = 15.0  # seconds to wait for an answer
         self.house: dict | None = None
         self.ws = None
         self.ids = itertools.count(1)
@@ -342,9 +348,11 @@ class Connection:
         self.waiting[i] = fut = asyncio.get_running_loop().create_future()
         try:
             await self.ws.send(json.dumps({"id": i, **msg}))
-            return await asyncio.wait_for(fut, 15)
-        except (websockets.ConnectionClosed, TimeoutError) as e:
-            raise HAError(f"Home Assistant didn't answer ({e!r})") from e
+            return await asyncio.wait_for(fut, self.timeout)
+        except TimeoutError as e:
+            raise HATimeout(f"Home Assistant didn't answer within {self.timeout:g} s") from e
+        except websockets.ConnectionClosed as e:
+            raise HAError(f"Home Assistant disconnected ({e!r})") from e
         finally:
             self.waiting.pop(i, None)
 

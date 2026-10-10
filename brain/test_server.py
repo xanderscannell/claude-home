@@ -3,6 +3,7 @@
 Run: uv run python test_server.py
 """
 import asyncio
+import contextlib
 import io
 import json
 import logging
@@ -73,6 +74,7 @@ class FakeHA:
         self.areas, self.entities, self.devices = raw["areas"], raw["entities"], raw["devices"]
         self.states = {s["entity_id"]: s for s in raw["states"]}
         self.calls, self.auths, self.fail = [], 0, None
+        self.slow, self.late = 0, set()  # slow: seconds the next service call takes to answer
         self.clients: dict = {}  # socket -> {event_type: subscription id}
         self.loop = asyncio.new_event_loop()
         threading.Thread(target=self.loop.run_forever, daemon=True).start()
@@ -110,15 +112,25 @@ class FakeHA:
                                                   "error": {"code": "home_assistant_error", "message": self.fail}}))
                         self.fail = None
                         continue
-                    await ws.send(json.dumps({"id": m["id"], "type": "result", "success": True,
-                                              "result": {"context": {"id": "c"}, "response": None}}))
-                    await self.serviced(m["domain"], m["service"], m["service_data"])
+                    if self.slow:  # a cloud device: the answer and the change come late, without holding up the socket
+                        task = asyncio.create_task(self.answer(ws, m, self.slow))
+                        self.late.add(task)
+                        task.add_done_callback(self.late.discard)
+                        self.slow = 0
+                        continue
+                    await self.answer(ws, m)
                     continue
                 await ws.send(json.dumps({"id": m["id"], "type": "result", "success": True, "result": result}))
         except websockets.ConnectionClosed:
             pass
         finally:
             self.clients.pop(ws, None)
+
+    async def answer(self, ws, m, after=0.0):
+        await asyncio.sleep(after)
+        await ws.send(json.dumps({"id": m["id"], "type": "result", "success": True,
+                                  "result": {"context": {"id": "c"}, "response": None}}))
+        await self.serviced(m["domain"], m["service"], m["service_data"])
 
     async def serviced(self, domain, service, data):
         ids = data["entity_id"] if isinstance(data["entity_id"], list) else [data["entity_id"]]
@@ -773,6 +785,20 @@ async def home_flow(port: int, fake: FakeHA):
     lights = await until_card(ws, "lights")
     assert next(l for r in lights["rooms"] for l in r["lights"] if l["entity"] == "light.kitchen_pendants")["on"]
     assert json.loads(brain.HA_LOG.read_text().splitlines()[-1])["result"] == "error: Unable to reach the light"
+
+    # A slow answer (a cloud thermostat) isn't a failure: no page put back, and the change arrives as an update
+    ha = brain.app.state.ha
+    ha.timeout, fake.slow = 0.3, 1.2
+    await ws.send(json.dumps({"type": "light", "entity": "light.kitchen_pendants", "on": False}))
+    early = []
+    with contextlib.suppress(TimeoutError):
+        while True:
+            early.append(await recv_json(ws, timeout=0.9))
+    assert not [m for m in early if m["type"] in ("card", "update")], "nothing until Home Assistant reports it"
+    assert json.loads(brain.HA_LOG.read_text().splitlines()[-1])["result"].startswith("timeout:")
+    update = await until_type(ws, "update")
+    assert not next(l for r in update["card"]["rooms"] for l in r["lights"] if l["entity"] == "light.kitchen_pendants")["on"]
+    ha.timeout = 15.0
 
     # Without Home Assistant, Home pages say so
     ha = brain.app.state.ha
