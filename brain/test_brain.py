@@ -15,6 +15,7 @@ import httpx
 from claude_agent_sdk import ResultMessage, StreamEvent
 from PIL import Image
 
+import home
 import photos
 import todoist
 import tools
@@ -652,4 +653,86 @@ async def music_tool_checks():
 
 
 asyncio.run(music_tool_checks())
+
+
+# Home control's cards from an invented house in Home Assistant's shapes
+HOUSE_RAW = json.loads((pathlib.Path(__file__).parent / "test_data" / "ha_house.json").read_text(encoding="utf-8"))
+h = home.index(HOUSE_RAW)
+
+
+def find(items, entity):
+    return next((d for d in items if d["entity"] == entity), None)
+
+
+lights = home.card(h, {"sheet": "lights"})
+assert [r["name"] for r in lights["rooms"]] == ["Den", "Kitchen", "Main Bedroom", "Studio", "Other"], lights["rooms"]
+by_room = {r["name"]: r["lights"] for r in lights["rooms"]}
+every_light = [l for ls in by_room.values() for l in ls]
+assert by_room["Kitchen"] == [{"entity": "light.kitchen_pendants", "name": "Pendants", "on": True, "brightness": 100},
+                              {"entity": "light.sink", "name": "Sink", "on": True, "brightness": 50}], by_room["Kitchen"]
+assert find(by_room["Den"], "light.den_lamp_den_lamp") == {"entity": "light.den_lamp_den_lamp", "name": "Lamp",
+                                                           "on": True, "brightness": None}, "onoff only: doesn't dim"
+assert find(by_room["Den"], "light.den_strip")["brightness"] == 100, "an off rgb dimmer never seen on shows 100"
+assert by_room["Other"] == [{"entity": "light.hallway", "name": "Hallway", "on": True, "brightness": 1}], "never 0 while on"
+assert by_room["Studio"][0]["name"] == "Studio", "a name that is its area stays whole"
+assert by_room["Main Bedroom"] == [{"entity": "light.reading", "name": "Reading Light", "on": False, "brightness": 100,
+                                    "unavailable": True}]
+assert not any(l.get("unavailable") for l in every_light if l["entity"] != "light.reading")
+assert not find(every_light, "light.old_bulb") and not find(every_light, "light.broken_bulb"), "hidden, disabled"
+
+# An off dimmer shows the brightness it last had
+h2 = home.index(HOUSE_RAW)
+pendants = h2["states"]["light.kitchen_pendants"]
+home.remember(h2, {**pendants, "attributes": {**pendants["attributes"], "brightness": 64}})
+home.remember(h2, {**pendants, "state": "off", "attributes": {**pendants["attributes"], "brightness": None}})
+assert find(home.card(h2, {"sheet": "lights"})["rooms"][1]["lights"], "light.kitchen_pendants") == {
+    "entity": "light.kitchen_pendants", "name": "Pendants", "on": False, "brightness": 25}
+
+rooms = home.card(h, {"sheet": "rooms"})["rooms"]
+assert [r["id"] for r in rooms] == ["den", "kitchen", "main_bedroom", "studio"], "sorted; Patio and Garage have nothing"
+assert rooms[0] == {"id": "den", "name": "Den", "lights": 2, "lights_on": 1, "playing": ["TV"], "switched_on": []}, rooms[0]
+assert rooms[1]["switched_on"] == [] and rooms[2]["lights_on"] == 0, "an unavailable light isn't on"
+
+kitchen = home.card(h, {"sheet": "room", "room": "kitchen"})
+assert kitchen["kind"] == "room" and kitchen["name"] == "Kitchen" and kitchen["climate"] == []
+assert kitchen["switches"] == [{"entity": "switch.coffee", "name": "Coffee Maker", "on": False, "brightness": None}]
+assert kitchen["media"] == [{"entity": "media_player.kitchen_speaker", "room": "Kitchen", "name": "Speaker",
+                             "state": "paused", "title": "Harvest Moon", "artist": "Neil Young", "app": None,
+                             "volume": None}], "area through the device; no VOLUME_SET, no volume"
+assert home.card(h, {"sheet": "room", "room": "garage"}) is None, "the remote start is all the garage has: not shown"
+assert home.card(h, {"sheet": "room", "room": "nowhere"}) is None
+
+players = home.card(h, {"sheet": "media"})["players"]
+assert [p["entity"] for p in players] == ["media_player.den_tv", "media_player.kitchen_speaker",
+                                          "media_player.bedroom_tv", "media_player.studio",
+                                          "media_player.garage_radio"], "by room, no room last; unlabelled cast left out"
+assert players[0] == {"entity": "media_player.den_tv", "room": "Den", "name": "TV", "state": "playing",
+                      "title": "The Long Way Home", "artist": None, "app": "Netflix", "volume": 22}
+assert players[2]["unavailable"] and players[2]["name"] == "TV" and players[4]["room"] == ""
+
+ts = home.card(h, {"sheet": "climate"})["thermostats"]
+assert ts == [{"entity": "climate.thermostat", "name": "Thermostat", "temp": 68, "target": 70, "mode": "heat",
+               "modes": ["off", "heat", "cool"], "action": "heating", "min": 45, "max": 95, "step": None,
+               "humidity": 41.0},
+              {"entity": "climate.window_ac", "name": "Window AC", "temp": 67, "target": 67, "mode": "off",
+               "modes": ["off", "cool"], "action": "off", "min": 45, "max": 95, "step": None, "humidity": None}], ts
+
+autos = home.card(h, {"sheet": "automations"})["automations"]
+assert [a["name"] for a in autos] == ["Goodnight", "Porch light at dusk", "Vacation lights"], "no registry entry still shows"
+assert autos[1] == {"entity": "automation.porch_at_dusk", "name": "Porch light at dusk", "on": True,
+                    "last_ran": datetime.datetime(2026, 10, 7, 22, 3, 57, 431792, datetime.timezone.utc).timestamp()}
+assert autos[2]["last_ran"] is None and not autos[2]["on"]
+
+house = home.card(h, {"sheet": "house"})
+assert house == {"kind": "house", "lights": {"on": 4, "total": 7, "rooms": ["Den", "Kitchen"]},
+                 "climate": {"temp": 68, "target": 70, "action": "heating"},
+                 "media": {"playing": ["Den TV", "Studio", "Garage Radio"], "total": 5},
+                 "rooms": ["Den", "Kitchen", "Main Bedroom", "Studio"],
+                 "automations": {"on": 2, "total": 3}}, house
+# The house thermostat, else the first; none without thermostats
+h3 = home.index({**HOUSE_RAW, "states": [s for s in HOUSE_RAW["states"] if s["entity_id"] != "climate.thermostat"]})
+assert home.card(h3, {"sheet": "house"})["climate"] == {"temp": 67, "target": 67, "action": "off"}
+h3 = home.index({**HOUSE_RAW, "states": [s for s in HOUSE_RAW["states"] if not s["entity_id"].startswith("climate.")]})
+assert home.card(h3, {"sheet": "house"})["climate"] is None
+assert home.card(h, {"sheet": "weather"}) is None
 print("ok")
