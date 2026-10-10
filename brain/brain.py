@@ -296,6 +296,7 @@ class Device:
         self.state = "idle"  # idle | listening | thinking | speaking
         self.after_reply: list = []  # async actions held until the reply has played (music starting, say)
         self.heard = ""  # what was said in the latest turn, for the Home Assistant action log
+        self.showing: dict[WebSocket, dict] = {}  # each screen's last Home page open, which its taps refresh
 
     async def show(self, msg: dict):
         """Send to every display of this device; drop displays that have gone away or stopped reading.
@@ -646,6 +647,9 @@ async def lifespan(app: FastAPI):
     app.state.cameras = await ha_cameras()  # ponytail: read once; a camera added in Home Assistant needs a restart
     loops = [asyncio.create_task(ring_timers()), asyncio.create_task(refresh_weather()),
              asyncio.create_task(refresh_agenda())]
+    app.state.ha = home.Connection(os.environ["HA_URL"], os.environ.get("HA_TOKEN", "")) if os.environ.get("HA_URL") else None
+    if app.state.ha:
+        loops.append(asyncio.create_task(app.state.ha.run()))  # the house for the screen's Home pages
     if os.environ.get("SPOTIFY_CLIENT_ID"):
         loops.append(asyncio.create_task(poll_music()))
     yield
@@ -715,8 +719,14 @@ async def serve_satellite(ws: WebSocket, dev: Device):
             await dev.show({"type": "volume", "level": dev.volume})
 
 
-async def sheet_card(dev: Device, sheet: str) -> dict | None:
-    """The card for a sheet opened from the screen (the menu, or tapping something on the home screen)."""
+async def sheet_card(dev: Device, m: dict) -> dict | None:
+    """The card for a sheet opened from the screen (the menu, tapping something on the home screen, a Home page)."""
+    sheet = m.get("sheet")
+    if sheet in home.SHEETS:
+        ha = app.state.ha
+        if ha is None or ha.house is None:
+            return tools.text_card("Home", ["Home Assistant isn't connected right now."])
+        return home.card(ha.house, m)
     if sheet == "weather":
         return (tools.weather_card(weather_now) if weather_now else
                 tools.text_card("Weather", ["The forecast hasn't loaded yet. Try again in a minute."]))
@@ -731,13 +741,47 @@ async def sheet_card(dev: Device, sheet: str) -> dict | None:
     return None
 
 
+HOME_TAPS = ("light", "lights_off", "climate", "automation_run", "automation_toggle")  # and media with an entity
+
+
+async def home_tap(dev: Device, m: dict, ws: WebSocket):
+    """A tap on a Home page, as a Home Assistant service call (home.service says which, and refuses what the screen
+    isn't shown). The change comes back as Home Assistant reports it; if the call fails, the screen gets its page
+    afresh, so its own change of what it shows reverts. Logged beside Claude's Home Assistant actions."""
+    ha = app.state.ha
+    if ha is None or ha.house is None or (call := home.service(ha.house, m)) is None:
+        return
+    domain, service, data = call
+    try:
+        await ha.call(domain, service, data)
+        error = None
+    except home.HAError as e:
+        error = e
+    with HA_LOG.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), "device": dev.name, "source": "screen",
+                            "tool": f"{domain}.{service}", "args": data,
+                            "result": f"error: {error}" if error else "ok"}) + "\n")
+    if error:
+        print(f"[{dev.name}] Home Assistant refused {domain}.{service}: {error}")
+        if (showing := dev.showing.get(ws)) and (card := await sheet_card(dev, showing)):
+            with contextlib.suppress(*GONE):
+                await ws.send_text(json.dumps({"type": "card", "card": card}))
+
+
 async def from_display(dev: Device, m: dict, ws: WebSocket):
     """A touch on the screen."""
     kind = m.get("type")
-    if kind == "open" and (card := await sheet_card(dev, m.get("sheet"))):
-        await ws.send_text(json.dumps({"type": "card", "card": card}))  # just the screen that asked
-    elif kind == "fetch" and (card := await sheet_card(dev, m.get("sheet"))):
+    if kind == "open":
+        if m.get("sheet") in home.SHEETS:
+            dev.showing[ws] = m
+        else:
+            dev.showing.pop(ws, None)
+        if card := await sheet_card(dev, m):
+            await ws.send_text(json.dumps({"type": "card", "card": card}))  # just the screen that asked
+    elif kind == "fetch" and (card := await sheet_card(dev, m)):
         await ws.send_text(json.dumps({"type": "page", "card": card}))  # to have ready to swipe to, not to open
+    elif kind in HOME_TAPS or (kind == "media" and "entity" in m):
+        spawn(home_tap(dev, m, ws))  # spawned: a slow Home Assistant mustn't hold up this screen's next message
     elif kind == "timer_cancel" and isinstance(m.get("id"), int):
         tools.timer_cancel_id(dev.name, m["id"])  # the timer watcher updates every screen
     elif kind in ("timer_pause", "timer_resume") and isinstance(m.get("id"), int):
@@ -810,6 +854,7 @@ async def display(ws: WebSocket):
         pass
     finally:
         dev.displays.discard(ws)
+        dev.showing.pop(ws, None)
 
 
 # --- Cameras -------------------------------------------------------------------------------------

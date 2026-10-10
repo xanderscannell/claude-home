@@ -733,10 +733,63 @@ async def after_reply_check():
     assert ran == ["played"], "only once"
 
 
+async def home_flow(port: int, fake: FakeHA):
+    """The screen's Home pages and taps, served from the fake Home Assistant"""
+    await until(lambda: brain.app.state.ha.house is not None, what="the brain to load the house")
+    ws = await open_display(port, "home-screen")
+    for sheet, extra in [("house", {}), ("lights", {}), ("rooms", {}), ("room", {"room": "kitchen"}),
+                         ("climate", {"entity": "climate.window_ac"}), ("media", {}), ("automations", {})]:
+        await ws.send(json.dumps({"type": "open", "sheet": sheet, **extra}))
+        card = await until_type(ws, "card")
+        assert card["card"]["kind"] == sheet, card
+    assert card["card"]["automations"][0]["name"] == "Goodnight"
+    await ws.send(json.dumps({"type": "open", "sheet": "room", "room": "kitchen"}))
+    kitchen = (await until_type(ws, "card"))["card"]
+    assert kitchen["name"] == "Kitchen" and kitchen["switches"][0]["entity"] == "switch.coffee", kitchen
+    await ws.send(json.dumps({"type": "fetch", "sheet": "house"}))
+    page = await until_type(ws, "page")
+    assert page["card"]["kind"] == "house" and page["card"]["lights"]["total"] == 7, page
+
+    # Taps reach Home Assistant as service calls, and are logged as the screen's
+    await ws.send(json.dumps({"type": "light", "entity": "light.sink", "on": True, "brightness": 40}))
+    await until(lambda: fake.calls[-1:] == [("light", "turn_on", {"entity_id": "light.sink", "brightness_pct": 40})],
+                what="the light tap to reach Home Assistant")
+    calls = len(fake.calls)
+    await ws.send(json.dumps({"type": "light", "entity": "switch.pickup_remote_start", "on": True}))
+    await ws.send(json.dumps({"type": "media", "entity": "media_player.den_tv", "action": "pause"}))
+    await until(lambda: len(fake.calls) > calls, what="the player tap")
+    assert fake.calls[calls:] == [("media_player", "media_pause", {"entity_id": "media_player.den_tv"})], \
+        "the remote start is refused; the TV's pause goes through, not to Spotify"
+    screen_log = [e for e in map(json.loads, brain.HA_LOG.read_text().splitlines()) if e.get("source") == "screen"]
+    assert [(e["device"], e["tool"], e["args"], e["result"]) for e in screen_log] == [
+        ("home-screen", "light.turn_on", {"entity_id": "light.sink", "brightness_pct": 40}, "ok"),
+        ("home-screen", "media_player.media_pause", {"entity_id": "media_player.den_tv"}, "ok")], screen_log
+
+    # A failed call puts the screen's page back as it is
+    await ws.send(json.dumps({"type": "open", "sheet": "lights"}))
+    await until_card(ws, "lights")
+    fake.fail = "Unable to reach the light"
+    await ws.send(json.dumps({"type": "light", "entity": "light.kitchen_pendants", "on": False}))
+    lights = await until_card(ws, "lights")
+    assert next(l for r in lights["rooms"] for l in r["lights"] if l["entity"] == "light.kitchen_pendants")["on"]
+    assert json.loads(brain.HA_LOG.read_text().splitlines()[-1])["result"] == "error: Unable to reach the light"
+
+    # Without Home Assistant, Home pages say so
+    ha = brain.app.state.ha
+    brain.app.state.ha = None
+    await ws.send(json.dumps({"type": "open", "sheet": "house"}))
+    card = (await until_type(ws, "card"))["card"]
+    assert card["kind"] == "text" and "isn't connected" in card["lines"][0], card
+    await ws.send(json.dumps({"type": "light", "entity": "light.sink", "on": False}))  # ignored, nothing breaks
+    brain.app.state.ha = ha
+    await ws.close()
+
+
 def main():
     asyncio.run(after_reply_check())
     fake_ha = FakeHA()
     asyncio.run(ha_flow(fake_ha))
+    os.environ.update(HA_URL=fake_ha.url, HA_TOKEN=FakeHA.TOKEN)  # the brain's Home pages come from the fake
     server, port = start()
     base = f"http://127.0.0.1:{port}"
 
@@ -806,6 +859,7 @@ def main():
     asyncio.run(display_flow(port))
     asyncio.run(music_flow(port))
     asyncio.run(alarm_flow(port))
+    asyncio.run(home_flow(port, fake_ha))
     assert not errors.records, [r.getMessage() for r in errors.records]
 
     server.should_exit = True
