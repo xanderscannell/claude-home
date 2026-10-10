@@ -411,7 +411,7 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 
 /* Menu: the same row language as the sheets it opens, not a grid of tiles */
 .menu-row {
-  width: 100%; display: flex; align-items: center; gap: 22px; min-height: 62px; text-align: left;  /* six fit */
+  width: 100%; display: flex; align-items: center; gap: 22px; min-height: 62px; text-align: left;  /* all fit */
   border-bottom: 1px solid rgba(238, 243, 247, .1);
 }
 .menu-icon { flex: none; width: 34px; height: 34px; color: var(--accent); }

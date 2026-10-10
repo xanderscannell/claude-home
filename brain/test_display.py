@@ -938,13 +938,16 @@ def test_swiping_between_sheets(b):
     assert d.visible("#sheet-dash") and d.text("#sheet-dash .sheet-title") == "Dashboard"
     assert 530 <= left("#sheet-under") <= 570 and -270 <= left("#sheet-dash") <= -230, (left("#sheet-under"), left("#sheet-dash"))
     assert d.page.eval_on_selector("#home", "h => getComputedStyle(h).opacity") != "1", "the clock and the rest fade away"
-    assert d.page.eval_on_selector(".dash-bg", "b => getComputedStyle(b).opacity") == "1",         "solid from the start: the shrinking photo uncovers it, never the real photo fading out behind"
+    assert d.page.eval_on_selector(".dash-bg", "b => getComputedStyle(b).opacity") == "1", \
+        "solid from the start: the shrinking photo uncovers it, never the real photo fading out behind"
     d.page.wait_for_timeout(350)  # the photo shrinking into its frame (real time)
     photo = d.page.locator("#dash-photo").bounding_box()
     assert round(photo["x"] - left("#sheet-dash")) == 36 and round(photo["width"]) == 800 - 2 * 36, photo
     assert d.page.eval_on_selector("#home", "h => getComputedStyle(h).opacity") == "0"
     home = d.page.locator("#home").bounding_box()
-    assert home["x"] >= photo["x"] - 1 and home["x"] + home["width"] <= photo["x"] + photo["width"] + 1 and         home["y"] >= photo["y"] - 1 and home["y"] + home["height"] <= photo["y"] + photo["height"] + 1,         f"the clock and the rest shrink to fit inside the photo: {home} in {photo}"
+    assert home["x"] >= photo["x"] - 1 and home["x"] + home["width"] <= photo["x"] + photo["width"] + 1 and \
+        home["y"] >= photo["y"] - 1 and home["y"] + home["height"] <= photo["y"] + photo["height"] + 1, \
+        f"the clock and the rest shrink to fit inside the photo: {home} in {photo}"
     assert not d.visible("#swipe-dim"), "side by side, nothing is covered, so nothing dims"
     d.page.mouse.up()
     d.page.clock.run_for(300)

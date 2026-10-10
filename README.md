@@ -146,20 +146,30 @@ than the Pi 5 build, with the brain on the PC:
 - **Home screen:** a large clock over a slideshow of the household's photos (the accent color
   follows each photo), weather, and a strip of what's next: timers, the next alarm, the next
   calendar event, and the song playing.
+- **Getting around:** swipe right to left from the home screen along a row of screens (Home, Timers,
+  Alarms, Shopping list, Music), under a header that lists them with the current one underlined and
+  shows the time (tap it to go home). Screens opened from one (Lights from Home) or put up by Claude
+  go back with a swipe in from the left edge.
 - **Conversation:** listening, thinking, and speaking states, what you said, and Claude's reply as
   it's spoken, with a Stop button. Tap the mic to talk without the wake word.
 - **Screens Claude or a tap can open:** weather, timers (a draining dial each, with Pause and Stop), alarms, shopping list (the Todoist
-  project, by category; tap to check off), calendar, morning briefing, recipe steps, music with controls, volume, and anything else
+  project, by category; tap to check off), calendar, morning briefing, recipe steps, music with controls, and anything else
   Claude wants to show.
+- **Home control (the screen side only so far):** tiles for lights, climate, speakers and TVs, rooms, and automations, each
+  opening its own page (lights to tap or drag-dim, a room's devices, thermostats, players, automations to run or switch).
+  The brain doesn't serve these yet; `fake_brain.py` does, for designing them.
+- **Volume:** swipe up from the bottom edge for a volume bar.
 - **Alarms and timers** that ring until stopped (alarms can snooze), by touch or by voice: just say
   "stop", no wake word needed.
 - **Spotify:** voice control of the Pi as a Spotify Connect speaker, now playing on screen, and
   music that dips while Claude listens or talks.
-- **Night mode:** a dim clock on black overnight; a tap brings the home screen back for 30 s.
+- **Night mode:** a dim clock on black overnight; a tap brings the home screen back for 30 s. Swipe the
+  home screen away from its left edge for the night clock now, until a tap or the morning.
 - **Cameras:** a full-screen live view of a Home Assistant camera, asked for by voice ("show me the front
   yard") or opened by an automation through `POST /show` (the doorbell popup).
 
-Not done yet: the Pi 5 hardware with the mic array, Home Assistant tiles, and hearing the wake word over
+Not done yet: the Pi 5 hardware with the mic array, the brain's side of home control (Home Assistant's state for those
+pages, and acting on their taps), and hearing the wake word over
 loud music.
 
 ### Later (not committed)

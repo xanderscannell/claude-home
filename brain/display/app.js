@@ -1554,8 +1554,6 @@ const ICONS = {
   stop: svg('<rect x="6" y="6" width="12" height="12" rx="2"/>'),
   list: svg('<path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1.2 1.2L7 4.8M3.5 12l1.2 1.2L7 10.8M3.5 18l1.2 1.2L7 16.8"/>'),
   music: svg('<path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>'),
-  volume: svg('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/>'),
-  quiet: svg('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/>'),
   previous: svg('<path d="M6 5h2.5v14H6zM19 5.5v13L9.5 12z"/>'),
   play: svg('<path d="M8 5v14l11-7z"/>'),
   pause: svg('<path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/>'),
