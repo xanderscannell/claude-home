@@ -735,4 +735,63 @@ assert home.card(h3, {"sheet": "house"})["climate"] == {"temp": 67, "target": 67
 h3 = home.index({**HOUSE_RAW, "states": [s for s in HOUSE_RAW["states"] if not s["entity_id"].startswith("climate.")]})
 assert home.card(h3, {"sheet": "house"})["climate"] is None
 assert home.card(h, {"sheet": "weather"}) is None
+
+# Taps on Home pages to Home Assistant services, only for what the screen is shown
+S = home.service
+assert S(h, {"type": "light", "entity": "light.sink", "on": True, "brightness": 40}) == (
+    "light", "turn_on", {"entity_id": "light.sink", "brightness_pct": 40})
+assert S(h, {"type": "light", "entity": "light.sink", "on": True, "brightness": 0})[2]["brightness_pct"] == 1
+assert S(h, {"type": "light", "entity": "light.sink", "on": True, "brightness": 140.6})[2]["brightness_pct"] == 100
+assert S(h, {"type": "light", "entity": "light.sink", "on": True}) == ("light", "turn_on", {"entity_id": "light.sink"})
+assert S(h, {"type": "light", "entity": "light.sink", "on": False, "brightness": 40}) == (
+    "light", "turn_off", {"entity_id": "light.sink"})
+assert S(h, {"type": "light", "entity": "switch.coffee", "on": True, "brightness": 40}) == (
+    "switch", "turn_on", {"entity_id": "switch.coffee"}), "a switch never gets a brightness"
+assert S(h, {"type": "light", "entity": "switch.coffee", "on": False}) == ("switch", "turn_off", {"entity_id": "switch.coffee"})
+off = S(h, {"type": "lights_off"})
+assert off[:2] == ("light", "turn_off") and sorted(off[2]["entity_id"]) == [
+    "light.den_lamp_den_lamp", "light.hallway", "light.kitchen_pendants", "light.sink"], "on and available lights only"
+h_dark = home.index({**HOUSE_RAW, "states": [{**s, "state": "off"} if s["entity_id"].startswith("light.") else s
+                                             for s in HOUSE_RAW["states"]]})
+assert S(h_dark, {"type": "lights_off"}) is None
+assert S(h, {"type": "climate", "entity": "climate.thermostat", "target": 72}) == (
+    "climate", "set_temperature", {"entity_id": "climate.thermostat", "temperature": 72})
+assert S(h, {"type": "climate", "entity": "climate.thermostat", "target": 120})[2]["temperature"] == 95
+assert S(h, {"type": "climate", "entity": "climate.thermostat", "target": 20})[2]["temperature"] == 45
+assert S(h, {"type": "climate", "entity": "climate.window_ac", "mode": "cool"}) == (
+    "climate", "set_hvac_mode", {"entity_id": "climate.window_ac", "hvac_mode": "cool"})
+assert S(h, {"type": "climate", "entity": "climate.window_ac", "mode": "heat"}) is None, "the AC doesn't heat"
+for action, svc in [("play", "media_play"), ("pause", "media_pause"), ("turn_on", "turn_on"), ("turn_off", "turn_off")]:
+    assert S(h, {"type": "media", "entity": "media_player.den_tv", "action": action}) == (
+        "media_player", svc, {"entity_id": "media_player.den_tv"})
+assert S(h, {"type": "media", "entity": "media_player.den_tv", "volume": 35}) == (
+    "media_player", "volume_set", {"entity_id": "media_player.den_tv", "volume_level": 0.35})
+assert S(h, {"type": "media", "entity": "media_player.den_tv", "volume": 150})[2]["volume_level"] == 1
+assert S(h, {"type": "media", "entity": "media_player.den_tv", "action": "next"}) is None
+assert S(h, {"type": "media", "action": "pause"}) is None, "no entity: Spotify's"
+assert S(h, {"type": "automation_run", "entity": "automation.vacation"}) == (
+    "automation", "trigger", {"entity_id": "automation.vacation"})
+assert S(h, {"type": "automation_toggle", "entity": "automation.porch_at_dusk", "enabled": False}) == (
+    "automation", "turn_off", {"entity_id": "automation.porch_at_dusk"})
+assert S(h, {"type": "automation_toggle", "entity": "automation.goodnight", "enabled": True}) == (
+    "automation", "turn_on", {"entity_id": "automation.goodnight"})
+for refused in [{"type": "light", "entity": "switch.pickup_remote_start", "on": True},  # not labelled
+                {"type": "light", "entity": "switch.garage_camera_motion", "on": False},  # entity_category
+                {"type": "light", "entity": "switch.den_fan", "on": False},  # hidden
+                {"type": "light", "entity": "light.old_bulb", "on": True},  # hidden
+                {"type": "light", "entity": "light.nowhere", "on": True},  # unknown
+                {"type": "light", "entity": "lock.pickup_doors", "on": False},  # not a light
+                {"type": "light", "entity": "automation.vacation", "on": True},
+                {"type": "light", "entity": "media_player.den_tv", "on": False},
+                {"type": "media", "entity": "media_player.den_tv_cast", "action": "play"},  # not labelled
+                {"type": "media", "entity": "light.sink", "action": "turn_off"},
+                {"type": "climate", "entity": "light.sink", "target": 70},
+                {"type": "automation_run", "entity": "switch.pickup_remote_start"},
+                {"type": "automation_toggle", "entity": "automation.vacation"},  # no enabled
+                {"type": "light", "entity": "light.sink", "on": "yes"},
+                {"type": "light", "entity": ["light.sink"], "on": True},
+                {"type": "climate", "entity": "climate.thermostat", "target": float("nan")},
+                {"type": "climate", "entity": "climate.thermostat", "target": True},
+                {"type": "launch", "entity": "light.sink"}]:
+    assert S(h, refused) is None, refused
 print("ok")

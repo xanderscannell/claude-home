@@ -6,6 +6,7 @@ players only when they carry the label "Claude Home" (LABEL). Nothing hidden, di
 ever shows.
 """
 
+import math
 import re
 from datetime import datetime
 
@@ -196,3 +197,41 @@ def card(h: dict, m: dict) -> dict | None:
 
 
 SHEETS = ("house", "lights", "rooms", "room", "climate", "media", "automations")
+MEDIA = {"play": "media_play", "pause": "media_pause", "turn_on": "turn_on", "turn_off": "turn_off"}
+
+
+def number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def service(h: dict, m: dict) -> tuple[str, str, dict] | None:
+    """A tap on a Home page as the Home Assistant service to call: (domain, service, data), or None to ignore it.
+    The screen is untrusted: an entity is used only if it's one the screen is shown, in the domain the tap is for (a
+    light tap naming the car's remote start does nothing). media without an entity is Spotify's, not this."""
+    kind, eid = m.get("type"), m.get("entity")
+    if kind == "lights_off":
+        ids = [l["entity"] for room in devices(h).values() for l in room["lights"] if on(l)]
+        return ("light", "turn_off", {"entity_id": ids}) if ids else None
+    if not isinstance(eid, str) or eid not in h["states"] or not shown(h, eid):
+        return None
+    domain, a, target = eid.split(".")[0], h["states"][eid]["attributes"], {"entity_id": eid}
+    if kind == "light" and domain in ("light", "switch") and isinstance(m.get("on"), bool):
+        if m["on"] and domain == "light" and number(m.get("brightness")):
+            return "light", "turn_on", {**target, "brightness_pct": max(1, min(100, round(m["brightness"])))}
+        return domain, "turn_on" if m["on"] else "turn_off", target
+    if kind == "climate" and domain == "climate":
+        if number(m.get("target")):
+            return "climate", "set_temperature", {
+                **target, "temperature": max(a.get("min_temp", 45), min(a.get("max_temp", 95), m["target"]))}
+        if m.get("mode") in a.get("hvac_modes", []):
+            return "climate", "set_hvac_mode", {**target, "hvac_mode": m["mode"]}
+    if kind == "media" and domain == "media_player":
+        if m.get("action") in MEDIA:
+            return "media_player", MEDIA[m["action"]], target
+        if number(m.get("volume")):
+            return "media_player", "volume_set", {**target, "volume_level": max(0, min(100, m["volume"])) / 100}
+    if kind == "automation_run" and domain == "automation":
+        return "automation", "trigger", target
+    if kind == "automation_toggle" and domain == "automation" and isinstance(m.get("enabled"), bool):
+        return "automation", "turn_on" if m["enabled"] else "turn_off", target
+    return None
