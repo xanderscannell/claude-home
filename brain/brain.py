@@ -45,6 +45,7 @@ from fastapi.staticfiles import StaticFiles
 from piper import PiperVoice
 
 import agenda
+import home
 import photos
 import spotify
 import todoist
@@ -833,18 +834,6 @@ async def ha_cameras() -> list[dict]:
         return []
 
 
-def ha_socket():
-    """Home Assistant's WebSocket API, not yet authenticated: use as `async with ha_socket() as ha`, then ha_auth."""
-    return websockets.connect(os.environ["HA_URL"].replace("http", "ws", 1).rstrip("/") + "/api/websocket")
-
-
-async def ha_auth(ha):
-    await ha.recv()  # auth_required
-    await ha.send(json.dumps({"type": "auth", "access_token": os.environ.get("HA_TOKEN", "")}))
-    if json.loads(await ha.recv())["type"] != "auth_ok":
-        raise PermissionError("Home Assistant refused HA_TOKEN")
-
-
 @app.websocket("/camera")
 async def camera(ws: WebSocket):
     """One live view for one screen. The screen sends {offer} and then {candidate}s; it gets {type: config} (ICE
@@ -854,8 +843,8 @@ async def camera(ws: WebSocket):
     entity = ws.query_params.get("entity", "")
     if not entity.startswith("camera.") or not os.environ.get("HA_URL"):
         return await ws.close()
-    async with ha_socket() as ha:
-        await ha_auth(ha)
+    async with home.socket(os.environ["HA_URL"]) as ha:
+        await home.auth(ha, os.environ.get("HA_TOKEN", ""))
         await ha.send(json.dumps({"id": 1, "type": "camera/webrtc/get_client_config", "entity_id": entity}))
         config = json.loads(await ha.recv()).get("result") or {}
         await ws.send_text(json.dumps({"type": "config", "config": config.get("configuration", {})}))

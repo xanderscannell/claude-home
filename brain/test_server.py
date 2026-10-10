@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import os
+import pathlib
 import socket
 import tempfile
 import threading
@@ -26,6 +27,7 @@ import websockets  # noqa: E402
 from PIL import Image  # noqa: E402
 
 import brain  # noqa: E402
+import home  # noqa: E402
 import todoist  # noqa: E402
 
 todoist.fake()
@@ -56,6 +58,181 @@ def start() -> tuple[uvicorn.Server, int]:
         assert time.time() < deadline, "server didn't start"
         time.sleep(0.05)
     return server, port
+
+
+class FakeHA:
+    """A Home Assistant on 127.0.0.1 for the brain to connect to: the invented house from test_data/ha_house.json
+    behind the WebSocket API's auth, registry lists, get_states, subscribe_events and call_service. Runs on its own
+    thread's loop, so it's there for code on any loop. Service calls change its state the way Home Assistant would
+    and send state_changed; set fail to make the next one fail."""
+
+    TOKEN = "fake-token"
+
+    def __init__(self):
+        raw = json.loads((pathlib.Path(__file__).parent / "test_data" / "ha_house.json").read_text(encoding="utf-8"))
+        self.areas, self.entities, self.devices = raw["areas"], raw["entities"], raw["devices"]
+        self.states = {s["entity_id"]: s for s in raw["states"]}
+        self.calls, self.auths, self.fail = [], 0, None
+        self.clients: dict = {}  # socket -> {event_type: subscription id}
+        self.loop = asyncio.new_event_loop()
+        threading.Thread(target=self.loop.run_forever, daemon=True).start()
+        async def listen():
+            return await websockets.serve(self.serve, "127.0.0.1", 0)
+        self.server = self.run(listen())
+        self.url = f"http://127.0.0.1:{self.server.sockets[0].getsockname()[1]}"
+
+    def run(self, coro):
+        """Run on the fake's own loop, from any thread, and wait for it"""
+        return asyncio.run_coroutine_threadsafe(asyncio.wait_for(coro, 10), self.loop).result()
+
+    async def serve(self, ws):
+        await ws.send(json.dumps({"type": "auth_required", "ha_version": "2026.9.3"}))
+        self.auths += 1
+        if json.loads(await ws.recv()).get("access_token") != self.TOKEN:
+            await ws.send(json.dumps({"type": "auth_invalid", "message": "Invalid access token"}))
+            return
+        await ws.send(json.dumps({"type": "auth_ok", "ha_version": "2026.9.3"}))
+        self.clients[ws] = subs = {}
+        try:
+            async for raw in ws:
+                m = json.loads(raw)
+                result, kind = None, m["type"]
+                if kind == "get_states":
+                    result = list(self.states.values())
+                elif kind.startswith("config/") and kind.endswith("_registry/list"):
+                    result = {"area": self.areas, "entity": self.entities, "device": self.devices}[kind[7:-14]]
+                elif kind == "subscribe_events":
+                    subs[m["event_type"]] = m["id"]
+                elif kind == "call_service":
+                    self.calls.append((m["domain"], m["service"], m["service_data"]))
+                    if self.fail:
+                        await ws.send(json.dumps({"id": m["id"], "type": "result", "success": False,
+                                                  "error": {"code": "home_assistant_error", "message": self.fail}}))
+                        self.fail = None
+                        continue
+                    await ws.send(json.dumps({"id": m["id"], "type": "result", "success": True,
+                                              "result": {"context": {"id": "c"}, "response": None}}))
+                    await self.serviced(m["domain"], m["service"], m["service_data"])
+                    continue
+                await ws.send(json.dumps({"id": m["id"], "type": "result", "success": True, "result": result}))
+        except websockets.ConnectionClosed:
+            pass
+        finally:
+            self.clients.pop(ws, None)
+
+    async def serviced(self, domain, service, data):
+        ids = data["entity_id"] if isinstance(data["entity_id"], list) else [data["entity_id"]]
+        for eid in ids:
+            s = self.states[eid]
+            attrs = dict(s["attributes"])
+            value = s["state"]
+            if service in ("turn_on", "turn_off") and domain != "media_player":
+                value = "on" if service == "turn_on" else "off"
+                if domain == "light":
+                    attrs["brightness"] = round(data.get("brightness_pct", 100) * 255 / 100) if value == "on" else None
+            elif domain == "media_player":
+                value = {"media_play": "playing", "media_pause": "paused", "turn_on": "idle", "turn_off": "off"}.get(
+                    service, value)
+                if service == "volume_set":
+                    attrs["volume_level"] = data["volume_level"]
+            elif service == "set_temperature":
+                attrs["temperature"] = data["temperature"]
+            elif service == "set_hvac_mode":
+                value = data["hvac_mode"]
+            elif service == "trigger":
+                attrs["last_triggered"] = "2026-10-09T12:00:00+00:00"
+            await self._set(eid, value, attrs)
+
+    async def _set(self, eid, value, attrs):
+        old = self.states.get(eid)
+        new = {**(old or {"entity_id": eid, "context": {"id": "c"}}), "state": value, "attributes": attrs}
+        self.states[eid] = new
+        await self._event("state_changed", {"entity_id": eid, "old_state": old, "new_state": new})
+
+    async def _event(self, event_type, data):
+        for ws, subs in list(self.clients.items()):
+            if event_type in subs:
+                await ws.send(json.dumps({"id": subs[event_type], "type": "event", "event": {
+                    "event_type": event_type, "data": data, "origin": "LOCAL", "time_fired": "2026-10-09T12:00:00+00:00",
+                    "context": {"id": "c"}}}))
+
+    def set(self, eid, value, **attrs):
+        """A change in the house (a wall switch, an automation)"""
+        self.run(self._set(eid, value, {**self.states[eid]["attributes"], **attrs}))
+
+    def label(self, eid, *labels):
+        next(e for e in self.entities if e["entity_id"] == eid)["labels"] = list(labels)
+        self.run(self._event("entity_registry_updated", {"action": "update", "entity_id": eid}))
+
+    def drop(self):
+        """Every connection to the fake drops, as when Home Assistant restarts (abruptly: a closing handshake would
+        wait on the caller's loop, which this blocks)"""
+        async def cut():
+            for ws in list(self.clients):
+                ws.transport.abort()
+        self.run(cut())
+
+
+async def until(check, timeout=10, what="condition"):
+    deadline = time.time() + timeout
+    while not check():
+        assert time.time() < deadline, f"timed out waiting for {what}"
+        await asyncio.sleep(0.02)
+
+
+async def ha_flow(fake: FakeHA):
+    """home.Connection against the fake Home Assistant"""
+    changes = []
+    ha = home.Connection(fake.url, FakeHA.TOKEN, on_change=changes.append, backoff=0.1)
+    task = asyncio.create_task(ha.run())
+    await until(lambda: ha.house is not None, what="the house to load")
+    assert len(ha.house["states"]) == len(fake.states) and ha.house["areas"]["den"] == "Den"
+    assert None in changes, "a connect says everything may have changed"
+
+    # A change in the house reaches memory and on_change
+    changes.clear()
+    fake.set("light.studio", "on", brightness=255)
+    await until(lambda: {"light.studio"} in changes, what="the studio light's change")
+    assert home.card(ha.house, {"sheet": "rooms"})["rooms"][3]["lights_on"] == 1
+
+    # Labelling a player in Home Assistant shows it without a restart
+    assert not home.shown(ha.house, "media_player.den_tv_cast")
+    fake.label("media_player.den_tv_cast", "claude_home")
+    await until(lambda: home.shown(ha.house, "media_player.den_tv_cast"), what="the registry to be re-read")
+    fake.label("media_player.den_tv_cast")
+
+    # Service calls: a result, then the change as an event; a refusal raises
+    changes.clear()
+    assert await ha.call("light", "turn_off", {"entity_id": "light.sink"}) is not None
+    await until(lambda: {"light.sink"} in changes, what="the sink light's change")
+    assert ha.house["states"]["light.sink"]["state"] == "off" and fake.calls[-1] == (
+        "light", "turn_off", {"entity_id": "light.sink"})
+    fake.fail = "Service not found"
+    try:
+        await ha.call("light", "turn_on", {"entity_id": "light.sink"})
+        raise AssertionError("a failed call should raise")
+    except home.HAError as e:
+        assert "Service not found" in str(e)
+
+    # Home Assistant restarts: the house is gone while it's away, then read again
+    auths = fake.auths
+    fake.drop()
+    await until(lambda: fake.auths > auths and ha.house is not None, what="a reconnect")
+    assert ha.house["states"]["light.sink"]["state"] == "off"
+    task.cancel()
+
+    # A bad token keeps retrying without crashing, and never has a house
+    bad = home.Connection(fake.url, "wrong", backoff=0.05)
+    auths = fake.auths
+    task = asyncio.create_task(bad.run())
+    await until(lambda: fake.auths >= auths + 2, what="retries after a refused token")
+    assert not task.done() and bad.house is None
+    task.cancel()
+    try:
+        await bad.call("light", "turn_on", {"entity_id": "light.sink"})
+        raise AssertionError("a call without a connection should raise")
+    except home.HAError:
+        pass
 
 
 async def satellite_turn(port: int, text: str) -> list:
@@ -558,6 +735,8 @@ async def after_reply_check():
 
 def main():
     asyncio.run(after_reply_check())
+    fake_ha = FakeHA()
+    asyncio.run(ha_flow(fake_ha))
     server, port = start()
     base = f"http://127.0.0.1:{port}"
 

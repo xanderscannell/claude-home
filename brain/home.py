@@ -6,9 +6,15 @@ players only when they carry the label "Claude Home" (LABEL). Nothing hidden, di
 ever shows.
 """
 
+import asyncio
+import contextlib
+import itertools
+import json
 import math
 import re
 from datetime import datetime
+
+import websockets
 
 LABEL = "claude_home"
 HOUSE_THERMOSTAT = "climate.thermostat"  # the one the Home tile sums up
@@ -235,3 +241,149 @@ def service(h: dict, m: dict) -> tuple[str, str, dict] | None:
     if kind == "automation_toggle" and domain == "automation" and isinstance(m.get("enabled"), bool):
         return "automation", "turn_on" if m["enabled"] else "turn_off", target
     return None
+
+
+# --- The connection ------------------------------------------------------------------------------
+
+class HAError(Exception):
+    """Home Assistant refused a request, or isn't connected."""
+
+
+def socket(url: str):
+    """Home Assistant's WebSocket API, not yet authenticated: use as `async with socket(url) as ha`, then auth.
+    max_size: a whole house's states are well over websockets' 1 MiB default."""
+    return websockets.connect(url.replace("http", "ws", 1).rstrip("/") + "/api/websocket", max_size=2**24)
+
+
+async def auth(ha, token: str):
+    await ha.recv()  # auth_required
+    await ha.send(json.dumps({"type": "auth", "access_token": token}))
+    if json.loads(await ha.recv())["type"] != "auth_ok":
+        raise PermissionError("Home Assistant refused HA_TOKEN")
+
+
+REGISTRY_EVENTS = ("entity_registry_updated", "device_registry_updated", "area_registry_updated")
+
+
+class Connection:
+    """Home Assistant kept open: the house in memory (None while disconnected), kept current by its events, and
+    service calls over the same socket. on_change(entity_ids) is told what changed (None: anything may have, after a
+    connect or a registry change); it's called from the reader, so it must return at once."""
+
+    def __init__(self, url: str, token: str, on_change=None, backoff: float = 5.0):
+        self.url, self.token, self.on_change, self.backoff = url, token, on_change, backoff
+        self.house: dict | None = None
+        self.ws = None
+        self.ids = itertools.count(1)
+        self.waiting: dict[int, asyncio.Future] = {}
+        self.early: list[dict] = []  # state changes that came in while the house was loading
+        self.tasks: set = set()
+
+    async def run(self):
+        """Stay connected: reconnect after a drop or a refusal, 5 s doubling to a minute apart."""
+        delay, said = self.backoff, ""
+        while True:
+            try:
+                async with socket(self.url) as ha:
+                    await auth(ha, self.token)
+                    self.ws = ha
+                    reader = asyncio.create_task(self.read(ha))
+                    try:
+                        for event in ("state_changed", *REGISTRY_EVENTS):
+                            await self.request(type="subscribe_events", event_type=event)
+                        await self.load()
+                        delay, said = self.backoff, ""
+                        print("home assistant: connected")
+                        self.changed(None)
+                        await reader
+                    finally:
+                        reader.cancel()
+                        self.give_up()
+                        self.ws, self.house, self.early = None, None, []
+            except (OSError, TimeoutError, PermissionError, HAError, websockets.WebSocketException) as e:
+                if repr(e) != said:  # say each problem once, not every retry
+                    print(f"home assistant: {e!r}; reconnecting")
+                    said = repr(e)
+            self.changed(None)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 60)
+
+    async def load(self):
+        raw = {"states": await self.request(type="get_states"), **await self.registries()}
+        house = index(raw)
+        for event in self.early:
+            self.apply(house, event)
+        self.house, self.early = house, []
+
+    async def registries(self) -> dict:
+        return {"areas": await self.request(type="config/area_registry/list"),
+                "entities": await self.request(type="config/entity_registry/list"),
+                "devices": await self.request(type="config/device_registry/list")}
+
+    async def reload_registries(self):
+        try:
+            raw = await self.registries()
+        except HAError:
+            return  # disconnected meanwhile: the reconnect reads everything
+        if self.house is not None:
+            fresh = index({**raw, "states": []})
+            self.house.update(areas=fresh["areas"], entities=fresh["entities"], devices=fresh["devices"])
+            self.changed(None)
+
+    async def request(self, **msg):
+        """One command; its result, or HAError if Home Assistant refused it."""
+        if self.ws is None:
+            raise HAError("Home Assistant isn't connected")
+        i = next(self.ids)
+        self.waiting[i] = fut = asyncio.get_running_loop().create_future()
+        try:
+            await self.ws.send(json.dumps({"id": i, **msg}))
+            return await asyncio.wait_for(fut, 15)
+        except (websockets.ConnectionClosed, TimeoutError) as e:
+            raise HAError(f"Home Assistant didn't answer ({e!r})") from e
+        finally:
+            self.waiting.pop(i, None)
+
+    async def call(self, domain: str, service: str, data: dict):
+        return await self.request(type="call_service", domain=domain, service=service, service_data=data)
+
+    async def read(self, ha):
+        with contextlib.suppress(websockets.ConnectionClosed):
+            async for raw in ha:
+                m = json.loads(raw)
+                if m.get("type") == "result" and (fut := self.waiting.get(m.get("id"))) and not fut.done():
+                    if m["success"]:
+                        fut.set_result(m.get("result"))
+                    else:
+                        fut.set_exception(HAError(m.get("error", {}).get("message", "failed")))
+                elif m.get("type") == "event":
+                    self.event(m["event"])
+        self.give_up()
+
+    def give_up(self):
+        """Disconnected: nothing more is coming for the requests still waiting"""
+        for fut in self.waiting.values():
+            fut.done() or fut.set_exception(HAError("Home Assistant disconnected"))
+
+    def event(self, ev: dict):
+        if ev.get("event_type") in REGISTRY_EVENTS:
+            task = asyncio.create_task(self.reload_registries())  # not awaited here: the reader must keep reading
+            self.tasks.add(task)
+            task.add_done_callback(self.tasks.discard)
+        elif ev.get("event_type") == "state_changed":
+            if self.house is None:
+                self.early.append(ev)
+            else:
+                self.apply(self.house, ev)
+                self.changed({ev["data"]["entity_id"]})
+
+    @staticmethod
+    def apply(house: dict, ev: dict):
+        if (new := ev["data"].get("new_state")) is None:  # removed
+            house["states"].pop(ev["data"]["entity_id"], None)
+        else:
+            remember(house, new)
+
+    def changed(self, ids: set | None):
+        if self.on_change:
+            self.on_change(ids)
