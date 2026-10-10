@@ -905,8 +905,9 @@ const renderers = {
       tile("lights", "Lights", ICONS.bulb, lights.on ? String(lights.on) : "Off", lights.on ? "on" : "",
            lights.on ? lights.rooms.join(", ") : `All ${lights.total} lights`, lights.on > 0),
       climate ? tile("climate", "Climate", ICONS.thermometer, climate.temp === null ? "–" : `${climate.temp}°`, "",
-                     climate.action === "off" ? "Off" : climate.action === "idle" ? `Set to ${climate.target}°`
-                       : `${sentence(climate.action)} to ${climate.target}°`)
+                     climate.action === "off" ? "Off"
+                       : ["heating", "cooling"].includes(climate.action) ? `${sentence(climate.action)} to ${climate.target}°`
+                       : `Set to ${climate.target}°`)
         : tile("climate", "Climate", ICONS.thermometer, "None", "", "No thermostats"),
       tile("media", "Speakers & TVs", ICONS.tv, media.playing.length ? String(media.playing.length) : "Off",
            media.playing.length ? "playing" : "", media.playing.length ? media.playing.join(", ") : "Nothing playing"),
@@ -1372,7 +1373,7 @@ function thermostatPage(t) {
     b.innerHTML = icon;  // fixed markup from ICONS
     b.addEventListener("click", () => {
       t.target = Math.min(t.max, Math.max(t.min, t.target + dir * (t.step || 1)));
-      paint();  // ponytail: the fill keeps the old action's colour until the brain says what it's doing now
+      paint();
       clearTimeout(pending);
       pending = setTimeout(() => send({ type: "climate", entity: t.entity, target: t.target }), NUDGE_MS);
     });
@@ -1409,7 +1410,11 @@ function thermostatPage(t) {
     lo.textContent = `${from}°`;
     hi.textContent = `${from + SCALE_SPAN}°`;
     const off = t.mode === "off";
-    page.className = `thermo ${t.unavailable ? "gone" : off ? "off" : t.action}`;
+    // The stretch is coloured by what it's set to do, not hvac_action: thermostats report "fan" or "idle" between
+    // cycles (and some window ACs never anything else) while they're still working toward the setting
+    const heating = t.temp < t.target && ["heat", "heat_cool", "auto"].includes(t.mode);
+    const cooling = t.temp > t.target && ["cool", "heat_cool", "auto"].includes(t.mode);
+    page.className = `thermo ${t.unavailable ? "gone" : off ? "off" : heating ? "heating" : cooling ? "cooling" : t.action}`;
     target.textContent = t.unavailable ? "Unavailable" : off ? "Off" : `${t.target}°`;
     const here = `${t.temp}° now${t.humidity !== null && t.humidity !== undefined ? `, ${t.humidity}% humidity` : ""}`;
     const doing = { heating: "Heating", cooling: "Cooling", fan: "Fan running", drying: "Drying" }[t.action];

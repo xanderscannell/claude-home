@@ -1245,7 +1245,20 @@ def test_home_updates_and_unavailable(b):
     d.page.eval_on_selector(".thermostats", "e => { e.scrollLeft = e.scrollWidth }")
     d.shot("climate-unavailable", settle=400)
 
-    # Home: an off thermostat reads Off; none at all reads None
+    # Set to cool above the room but between cycles (hvac_action "fan"): still the ice stretch; the status says fan
+    waiting = thermostat("climate.house", "Thermostat", 71, 69, "cool", "fan", modes=("off", "cool", "heat"))
+    d.push({"type": "card", "card": {"kind": "climate", "thermostats": [waiting]}})
+    assert "cooling" in page(0).get_attribute("class") and page(0).locator(".th-fill").is_visible()
+    assert page(0).locator(".th-status").inner_text() == "Fan running, 71° now"
+    d.shot("climate-cooling-fan", settle=400)
+    # A window AC that only ever says idle: heat below the setting is ember, at the setting nothing
+    d.push({"type": "card", "card": {"kind": "climate", "thermostats": [
+        thermostat("climate.ac", "Window AC", 67, 70, "heat", "idle"), thermostat("climate.ac2", "AC", 68, 68, "cool", "idle")]}})
+    assert "heating" in page(0).get_attribute("class") and not page(1).locator(".th-fill").is_visible()
+
+    # Home: an off thermostat reads Off; between cycles it reads its setting; none at all reads None
+    d.push({"type": "card", "card": {**HOUSE, "climate": {"temp": 71, "target": 69, "action": "fan"}}})
+    assert d.page.locator(".tile-detail").all_inner_texts()[1] == "Set to 69°"
     d.push({"type": "card", "card": {**HOUSE, "climate": {"temp": 71, "target": 71, "action": "off"}}})
     assert d.page.locator(".tile-num").all_inner_texts()[1] == "71°"
     assert d.page.locator(".tile-detail").all_inner_texts()[1] == "Off"
