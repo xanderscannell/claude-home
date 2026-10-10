@@ -64,14 +64,16 @@ def area_name(h: dict, eid: str) -> str:
 
 
 def name(h: dict, s: dict) -> str:
-    """The friendly name without its area in front ("Kitchen Cabinets" in the Kitchen is "Cabinets"), and said once
-    ("Window AC Window AC" is "Window AC"). A name that is just its area stays whole."""
-    n = s["attributes"].get("friendly_name") or s["entity_id"].split(".", 1)[1].replace("_", " ")
+    """The friendly name without its area in front ("Kitchen Cabinets" in the Kitchen is "Cabinets"), said once
+    ("Window AC Window AC" is "Window AC"), and not shouted ("THERMOSTAT" is "Thermostat", "TV" stays). A name that
+    is just its area stays whole."""
+    n = " ".join((s["attributes"].get("friendly_name") or s["entity_id"].split(".", 1)[1].replace("_", " ")).split())
     area = area_name(h, s["entity_id"])
     if area and n.lower().startswith(area.lower() + " "):
         n = n[len(area) + 1:]
         n = n[:1].upper() + n[1:]
-    return re.sub(r"^(.+) \1$", r"\1", n)
+    n = re.sub(r"^(.+) \1$", r"\1", n)
+    return n.capitalize() if n.isupper() and " " not in n and len(n) > 4 else n
 
 
 def unavailable(s: dict, d: dict) -> dict:
@@ -100,14 +102,15 @@ def player(h: dict, s: dict) -> dict:
 
 
 def thermostat(h: dict, s: dict) -> dict:
-    """The setting is the current temperature when Home Assistant has none (off, or a heat_cool range)."""
+    """The setting is the current temperature when Home Assistant has none (off, or a heat_cool range). Off is off,
+    whatever hvac_action says (some report idle while off)."""
     a = s["attributes"]
     temp = a.get("current_temperature")
     return unavailable(s, {
         "entity": s["entity_id"], "name": name(h, s), "temp": temp,
         "target": a["temperature"] if a.get("temperature") is not None else temp,
         "mode": s["state"], "modes": a.get("hvac_modes", []),
-        "action": a.get("hvac_action") or ("idle" if s["state"] not in ("off", "unavailable") else "off"),
+        "action": "off" if s["state"] in ("off", "unavailable") else a.get("hvac_action") or "idle",
         "min": a.get("min_temp", 45), "max": a.get("max_temp", 95), "step": a.get("target_temp_step"),
         "humidity": a.get("current_humidity")})
 
@@ -387,3 +390,58 @@ class Connection:
     def changed(self, ids: set | None):
         if self.on_change:
             self.on_change(ids)
+
+
+async def snapshot(url: str, token: str) -> dict:
+    """The house read once, read only: the registries and states, nothing else asked of Home Assistant."""
+    async with socket(url) as ha:
+        await auth(ha, token)
+        raw = {}
+        for i, (key, kind) in enumerate([("areas", "config/area_registry/list"), ("entities", "config/entity_registry/list"),
+                                         ("devices", "config/device_registry/list"), ("states", "get_states")], 1):
+            await ha.send(json.dumps({"id": i, "type": kind}))
+            while (m := json.loads(await ha.recv())).get("id") != i:
+                pass
+            raw[key] = m["result"]
+        return index(raw)
+
+
+def show(h: dict):
+    """Every Home card, readably"""
+    def onoff(d):
+        return ("unavailable" if d.get("unavailable") else "on" if d["on"] else "off") + (
+            f" {d['brightness']}%" if d.get("brightness") is not None and d["on"] else "")
+
+    house = card(h, {"sheet": "house"})
+    print(f"HOME  lights {house['lights']['on']}/{house['lights']['total']} on in {house['lights']['rooms']}"
+          f" | climate {house['climate']} | playing {house['media']['playing']} of {house['media']['total']}"
+          f" | automations {house['automations']['on']}/{house['automations']['total']}")
+    print("\nLIGHTS")
+    for r in card(h, {"sheet": "lights"})["rooms"]:
+        print(f"  {r['name']}: " + ", ".join(f"{l['name']} ({onoff(l)})" for l in r["lights"]))
+    print("\nROOMS")
+    for r in card(h, {"sheet": "rooms"})["rooms"]:
+        room = card(h, {"sheet": "room", "room": r["id"]})
+        print(f"  {r['name']} [{r['id']}]: {r['lights_on']}/{r['lights']} lights on, playing {r['playing']},"
+              f" on {r['switched_on']}; players {[p['name'] for p in room['media']]},"
+              f" thermostats {[t['name'] for t in room['climate']]}, other {[s['name'] for s in room['switches']]}")
+    print("\nCLIMATE")
+    for t in card(h, {"sheet": "climate"})["thermostats"]:
+        print(f"  {t['name']}: {t['temp']}° now, set {t['target']}°, {t['mode']} of {t['modes']}, {t['action']},"
+              f" {t['min']}-{t['max']} step {t['step']}, humidity {t['humidity']}" + (" UNAVAILABLE" if t.get("unavailable") else ""))
+    print("\nSPEAKERS & TVS")
+    for p in card(h, {"sheet": "media"})["players"]:
+        print(f"  {p['room'] or '(no room)'} / {p['name']}: {p['state']}, {p['title']!r} {p['artist'] or p['app'] or ''},"
+              f" volume {p['volume']}")
+    print("\nAUTOMATIONS")
+    for a in card(h, {"sheet": "automations"})["automations"]:
+        ran = datetime.fromtimestamp(a["last_ran"]).strftime("%b %d %H:%M") if a["last_ran"] else "never"
+        print(f"  {'on ' if a['on'] else 'off'} {a['name']} (ran {ran})")
+
+
+if __name__ == "__main__":
+    # Prints every card from the live house, read only: uv run --env-file ../.env python home.py
+    import os
+    import sys
+    sys.stdout.reconfigure(encoding="utf-8")
+    show(asyncio.run(snapshot(os.environ["HA_URL"], os.environ.get("HA_TOKEN", ""))))

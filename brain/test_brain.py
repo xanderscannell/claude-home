@@ -735,6 +735,12 @@ assert home.card(h3, {"sheet": "house"})["climate"] == {"temp": 67, "target": 67
 h3 = home.index({**HOUSE_RAW, "states": [s for s in HOUSE_RAW["states"] if not s["entity_id"].startswith("climate.")]})
 assert home.card(h3, {"sheet": "house"})["climate"] is None
 assert home.card(h, {"sheet": "weather"}) is None
+# Names as some integrations give them: padded, shouted
+for given, shown_as in [("Roku Express 4K ", "Roku Express 4K"), ("THERMOSTAT", "Thermostat"), ("TV", "TV"),
+                        ("HVAC", "HVAC"), ("DEN LANTERN", "Lantern"), ("Den  Lamp", "Lamp")]:
+    assert home.name(h, {"entity_id": "light.den_strip", "attributes": {"friendly_name": given}}) == shown_as, given
+ac = h["states"]["climate.window_ac"]
+assert home.thermostat(h, {**ac, "attributes": {**ac["attributes"], "hvac_action": "idle"}})["action"] == "off"
 
 # Taps on Home pages to Home Assistant services, only for what the screen is shown
 S = home.service
