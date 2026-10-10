@@ -230,9 +230,21 @@ function hsl(r, g, b) {
   return [(h * 60 + 360) % 360, s, l];
 }
 
+// The slideshow only moves on the dashboard: the accent follows the photo, and pages shouldn't change color under you.
+let photoTimer = null;
+function photoTicks() {
+  clearInterval(photoTimer);
+  photoTimer = setInterval(() => { if (!sheetCard && !slide) nextPhoto(); }, PHOTO_SECONDS * 1000);
+}
+
 function startPhotos() {
   nextPhoto();
-  setInterval(nextPhoto, PHOTO_SECONDS * 1000);
+  photoTicks();
+}
+
+// Back on the dashboard, the photo there gets a full PHOTO_SECONDS before the next (once the slideshow has started).
+function backOnDashboard() {
+  if (photoTimer && !sheetCard) photoTicks();
 }
 
 // --- Home: weather and the glanceable strip ---------------------------------------------------
@@ -744,6 +756,7 @@ function endSlide(dashLands) {
   els.headerHome.style.opacity = "";
   slide = null;
   syncHeader();
+  backOnDashboard();
 }
 
 function letGo() {
@@ -825,6 +838,7 @@ function closeSheet() {
   els.sheet.hidden = true;
   els.sheetBody.replaceChildren();
   syncHeader();
+  backOnDashboard();
 }
 
 // Untouched for 45 s, a sheet goes away and the room comes back. A recipe waits 30 minutes: a step can

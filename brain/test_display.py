@@ -313,6 +313,24 @@ def test_slideshow_and_accent(b):
     swipe(d, 500, frm=700, y=200, release=False)
     assert "lake.jpg" in d.page.get_attribute("#dash-pic", "style")
     d.page.mouse.up()
+    d.page.clock.run_for(600)
+    d.page.wait_for_timeout(300)
+    swipe(d, 200, frm=700, y=200)
+    assert d.visible("#sheet"), "the swipe should land on Home"
+    # Away from the dashboard the slideshow holds still, so the page's accent doesn't change under you
+    d.page.clock.run_for(PHOTO_SECONDS * 1000 + 1000)  # a tick, but short of the sheet's 45 s idle close
+    d.page.wait_for_timeout(300)
+    assert d.visible("#sheet")
+    assert "lake.jpg" in d.page.get_attribute(".photo.shown", "style") and accent(d) == cool
+    swipe(d, 700, frm=100, y=200)
+    assert not d.visible("#sheet"), "the swipe back should land on the dashboard"
+    # Back on the dashboard, the photo there gets a whole turn before the next
+    d.page.clock.run_for(PHOTO_SECONDS * 1000 - 1000)
+    d.page.wait_for_timeout(300)
+    assert "lake.jpg" in d.page.get_attribute(".photo.shown", "style"), "the slideshow moved on too soon after coming back"
+    d.page.clock.run_for(1500)
+    d.wait_until(lambda: "sunset.jpg" in (d.page.get_attribute(".photo.shown", "style") or ""),
+                 "slideshow didn't resume on the dashboard")
     d.close()
 
 
