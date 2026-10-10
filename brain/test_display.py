@@ -717,6 +717,22 @@ def test_volume(b):
     assert d.text("#vol-level") == "55" and d.page.input_value("#vol-slider") == "55"
     assert len(volumes()) == 1, "a report from the brain must not echo back"
 
+    # The same with a finger (the Pi's touchscreen): Chromium drops :active once a touch moves, which once snapped the
+    # slider back to the last level on every step of the drag
+    cdp = d.page.context.new_cdp_session(d.page)
+    touch = lambda kind, v=None: cdp.send("Input.dispatchTouchEvent", {  # noqa: E731
+        "type": kind, "touchPoints": [] if v is None else [{"x": at(v), "y": y}]})
+    touch("touchStart", 55)
+    for v in range(52, 19, -3):
+        touch("touchMove", v)
+    touch("touchMove", 20)
+    d.page.wait_for_timeout(50)
+    assert abs(int(d.page.input_value("#vol-slider")) - 20) <= 1, d.page.input_value("#vol-slider")
+    touch("touchEnd")
+    d.page.wait_for_timeout(50)
+    assert len(volumes()) == 2 and abs(volumes()[1] - 20) <= 1, volumes()
+    d.push({"type": "volume", "level": 55})
+
     # Left alone 5 s, it goes away
     d.page.clock.run_for(5_500)
     d.page.wait_for_timeout(300)

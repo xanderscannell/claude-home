@@ -1739,12 +1739,13 @@ const VOL_IDLE_MS = 5000;
 let volUp = false;
 let volIdle = null;
 let volDrag = null;  // {id, y, t, dy, v} while a finger brings it up
+let volSliding = false;  // a finger is on the slider, so it keeps its own value (not :active, which a moving touch drops)
 
 function paintVolume() {
   const known = speakerVolume !== null;
   els.volSlider.hidden = els.volLevel.hidden = !known;
   els.volNone.hidden = known;
-  if (known && !els.volSlider.matches(":active")) els.volSlider.value = speakerVolume;
+  if (known && !volSliding) els.volSlider.value = speakerVolume;
   els.volLevel.textContent = els.volSlider.value;
   els.volSlider.style.setProperty("--fill", `${els.volSlider.value}%`);
 }
@@ -1811,6 +1812,8 @@ for (const type of ["pointerup", "pointercancel"]) {
 }
 els.volEdge.addEventListener("click", (e) => { if (e.detail === 0) openVolume(); });  // from a keyboard
 els.volBar.addEventListener("pointerdown", touchVolume);
+els.volSlider.addEventListener("pointerdown", () => { volSliding = true; });
+for (const type of ["pointerup", "pointercancel"]) document.addEventListener(type, () => { volSliding = false; });
 els.volSlider.addEventListener("input", () => { paintVolume(); touchVolume(); });
 els.volSlider.addEventListener("change", () => send({ type: "volume", level: Number(els.volSlider.value) }));
 // A tap anywhere else puts it away, and only does that (it doesn't press what's under it)
