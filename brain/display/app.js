@@ -943,6 +943,7 @@ const renderers = {
       const lines = [];
       if (r.lights) lines.push(r.lights_on ? `${r.lights_on} ${r.lights_on === 1 ? "light" : "lights"} on` : "Lights off");
       lines.push(...r.playing.map((n) => `${n} playing`), ...r.switched_on.map((n) => `${n} on`));
+      if (!lines.length) lines.push("Nothing on");  // a room of speakers and TVs, all quiet
       const what = el("span", "room-what");
       what.append(...lines.map((l) => el("span", "tile-detail", l)));
       b.append(el("span", "room-name", r.name), what);

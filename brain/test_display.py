@@ -847,7 +847,7 @@ def test_rooms_and_back(b):
     assert d.text("#sheet-title") == "Rooms"
     assert d.page.locator(".room-name").all_inner_texts() == ["Living room", "Bedroom", "Garage"]
     assert [r.inner_text().split("\n")[1:] for r in d.page.locator(".room").all()] == [
-        ["1 light on", "TV playing"], ["Lights off", "Ceiling fan on"], []]
+        ["1 light on", "TV playing"], ["Lights off", "Ceiling fan on"], ["Nothing on"]]
     assert d.page.locator(".room.lit").all_inner_texts()[0].startswith("Living room")
     assert d.page.locator(".room.lit").count() == 1
     d.shot("rooms", settle=400)
