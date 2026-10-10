@@ -2,7 +2,7 @@
 
 Claude's reply is spoken sentence by sentence while it is still being generated.
 Every turn's timings are appended to turns.jsonl (CLAUDE_HOME_LOG overrides the path), and every Home Assistant
-action Claude takes to ha_actions.jsonl beside it.
+action Claude takes (or a tap on the screen's Home pages) to ha_actions.jsonl beside it.
 
 Run from brain/:  uv run --env-file ../.env brain.py
 Optional env: BRAIN_HOST (default localhost; set 0.0.0.0 to accept satellites from the LAN), BRAIN_PORT (8765),
@@ -10,7 +10,8 @@ Optional env: BRAIN_HOST (default localhost; set 0.0.0.0 to accept satellites fr
               NIGHT_START / NIGHT_END (display night mode, default 22:00 / 07:00),
               CALENDAR_<LABEL> (one secret iCal address per calendar, e.g. CALENDAR_WORK), PHOTOS_DIR,
               SPOTIFY_CLIENT_ID / SPOTIFY_DEVICE (see spotify.py),
-              HA_URL / HA_TOKEN (Home Assistant's MCP Server and a long-lived access token).
+              HA_URL / HA_TOKEN (Home Assistant's MCP Server and a long-lived access token; also the screen's Home
+              pages, through home.py's own connection).
 
 Displays connect to /display?device=<name> and follow that device's conversation (see docs/architecture.md).
 

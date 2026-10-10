@@ -46,7 +46,7 @@ Connect speaker; the brain controls it through the Spotify Web API. Open
 | `SPOTIFY_CLIENT_ID`, `SPOTIFY_DEVICE` | A Spotify app's client ID, and the speaker's name in Spotify (default `Claude Home`) |
 | `SPOTIFY_TOKEN` | Where the Spotify sign-in is kept (default `brain/spotify_token.json`) |
 | `TODOIST_TOKEN`, `TODOIST_SHOPPING_PROJECT` | A Todoist API token (Settings > Integrations > Developer), and the project that is the shopping list (default `Shopping List`) |
-| `HA_URL`, `HA_TOKEN` | Home Assistant's address (e.g. `http://homeassistant.local:8123`, with the Model Context Protocol Server integration added) and a long-lived access token. Claude sees the entities exposed to Assist. |
+| `HA_URL`, `HA_TOKEN` | Home Assistant's address (e.g. `http://homeassistant.local:8123`, with the Model Context Protocol Server integration added) and a long-lived access token. Claude sees the entities exposed to Assist; the screen's Home pages are served from the same Home Assistant. |
 | `CLAUDE_HOME_DB` | Where the SQLite file lives (default `brain/home.db`) |
 | `CLAUDE_HOME_LOG` | Where the turn log goes (default `brain/turns.jsonl`); `ha_actions.jsonl` is written beside it |
 
@@ -54,7 +54,8 @@ On the Pi, the satellite's unit file sets `BRAIN_URL`, `DEVICE`, `AUDIO_IN`, and
 `MIXER_CARD` (default `2`) and `WAKE_THRESHOLD` (default `0.5`) are optional.
 
 **Logs** (git-ignored, in `brain/`): `turns.jsonl` has every turn's transcript, reply, and stage timings;
-`ha_actions.jsonl` has every Home Assistant action Claude took and what it heard first.
+`ha_actions.jsonl` has every Home Assistant action Claude took and what it heard first, and every tap on the screen's
+Home pages (`"source": "screen"`).
 
 **Tests** (from `brain/`): `uv run python test_brain.py`, `test_server.py`, and `test_display.py`
 (Playwright, 800x480 with touch); from `satellite/`: `uv run python test_satellite.py`. They use canned
@@ -121,6 +122,8 @@ Done when:
   entities exposed to Assist, minus the ones the brain already does (timers, lists, the time, broadcasts).
   Every action it takes is logged to `ha_actions.jsonl`.
 - **Cameras:** Claude can open a camera's live view on the screen, and `POST /show` lets an automation do it.
+- **The screen's Home pages** read Home Assistant directly and turn taps into service calls (logged to
+  `ha_actions.jsonl` too), without Claude.
 - Not built: the local fast path, spoken confirmation for locks (so don't expose locks, alarm panels, or
   garage doors to Assist yet), and `/announce`. Music went to Spotify instead of Music Assistant.
 
@@ -155,9 +158,11 @@ than the Pi 5 build, with the brain on the PC:
 - **Screens Claude or a tap can open:** weather, timers (a draining dial each, with Pause and Stop), alarms, shopping list (the Todoist
   project, by category; tap to check off), calendar, morning briefing, recipe steps, music with controls, and anything else
   Claude wants to show.
-- **Home control (the screen side only so far):** tiles for lights, climate, speakers and TVs, rooms, and automations, each
-  opening its own page (lights to tap or drag-dim, a room's devices, thermostats, players, automations to run or switch).
-  The brain doesn't serve these yet; `fake_brain.py` does, for designing them.
+- **Home control:** tiles for lights, climate, speakers and TVs, rooms, and automations, each opening its own page
+  (lights to tap or drag-dim, a room's devices, thermostats, players, automations to run or switch), live from Home
+  Assistant: a light switched at the wall changes on the screen too. Lights, thermostats, and automations all show;
+  switches and speakers or TVs show once you give them the label "Claude Home" in Home Assistant. A device Home
+  Assistant can't reach shows as unavailable.
 - **Volume:** swipe up from the bottom edge for a volume bar.
 - **Alarms and timers** that ring until stopped (alarms can snooze), by touch or by voice: just say
   "stop", no wake word needed.
@@ -168,9 +173,7 @@ than the Pi 5 build, with the brain on the PC:
 - **Cameras:** a full-screen live view of a Home Assistant camera, asked for by voice ("show me the front
   yard") or opened by an automation through `POST /show` (the doorbell popup).
 
-Not done yet: the Pi 5 hardware with the mic array, the brain's side of home control (Home Assistant's state for those
-pages, and acting on their taps), and hearing the wake word over
-loud music.
+Not done yet: the Pi 5 hardware with the mic array, and hearing the wake word over loud music.
 
 ### Later (not committed)
 

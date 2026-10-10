@@ -119,7 +119,7 @@ sequenceDiagram
 | TTS | Piper (local) | Free, faster than real time on a Pi, no network hop, still works offline | Cartesia or ElevenLabs streaming for a better voice; Kokoro on a server for good-and-local. Known Piper limit: each sentence is synthesized independently, so pitch and tone can shift between sentences (very noticeable with the Northern English voice). |
 | Home control, P2 | Home Assistant's MCP Server integration, passed to the Agent SDK as an HTTP MCP server | Claude gets Home Assistant's Assist tools for exactly the entities exposed to Assist. Scripts exposed to Assist appear as tools automatically, so most new abilities are Home Assistant config, not code. | Direct calls to Home Assistant's WebSocket/REST API for anything MCP doesn't cover |
 | Music | Spotify Connect: raspotify (librespot) on the Pi, controlled by the brain through the Spotify Web API | Spotify is what the household uses, and it needed no Home Assistant. Auth is PKCE, so there's no client secret. | Music Assistant (Home Assistant add-on) for a local library and radio, once Phase 2 is in |
-| Storage | SQLite (Python stdlib) | Timers, alarms, memory; one file. Two append-only logs sit beside it: `turns.jsonl` (each turn's transcript, reply, and stage timings) and `ha_actions.jsonl` (each Home Assistant action Claude takes, with what was heard). | |
+| Storage | SQLite (Python stdlib) | Timers, alarms, memory; one file. Two append-only logs sit beside it: `turns.jsonl` (each turn's transcript, reply, and stage timings) and `ha_actions.jsonl` (each Home Assistant action Claude takes, with what was heard, and each tap on the screen's Home pages). | |
 | Display UI, P3 | Plain HTML, CSS, and ES modules (`brain/display/`), no build step, served by the brain, shown in Chromium kiosk under `cage`. Fraunces and Inter are bundled. | One page with a handful of screens didn't need a framework, and nothing to build means the Pi gets changes on the next brain restart | Svelte 5 + Vite if the page outgrows one script |
 | Deployment | systemd units | Simplest thing on a Pi | Docker, if the brain moves next to a Docker-based Home Assistant install |
 
@@ -176,6 +176,7 @@ Brain -> display:
 | `reply {text}` | One more sentence of Claude's reply, sent just before its audio |
 | `card {card}` | Open a sheet (kinds below) |
 | `page {card}` | A sheet's card the screen fetched, to have ready to swipe to; kept, not opened |
+| `update {card}` | A Home page afresh because the house changed: redraws it if it's the page open (a room, that room), keeps Home for swiping to, never opens one; waits while a finger is on the sheet |
 | `ambient {weather, timers, next_alarm, agenda}` | Home screen data: on connect, when timers or the next alarm change, and on each weather or calendar refresh |
 | `now_playing {track}` | `null`, or `{title, artist, album, art, uri, is_playing, progress_ms, duration_ms}`; sent when the track, play state, or position really changes (screens advance the position themselves) |
 | `ringing {ringing}` | `null`, the ringing alarm `{kind: "alarm", id, label, time}`, or a finished timer `{kind: "timer", label}` |
@@ -189,10 +190,12 @@ shopping count), `recipe {title, ingredients, steps, step}` (step -1 is the ingr
 bar at that level, the one swiped up from the bottom edge), and `music` (no data; the screen shows what it knows is
 playing).
 
-Home control (in `fake_brain.py` only so far; the brain doesn't send or answer these yet):
+Home control (`brain/home.py`, from Home Assistant; see "Home control on the screen" below):
 `house {lights: {on, total, rooms}, climate: {temp, target, action}, media: {playing, total}, rooms, automations: {on, total}}`
-is the tile page, and `lights {rooms}` lists each room's `{name, lights}`, a light being
-`{entity, name, on, brightness}` (brightness 1-100, or null for a light that only switches).
+is the tile page (`climate` is null without a thermostat), and `lights {rooms}` lists each room's `{name, lights}`
+(lights with no area last, as "Other"), a light being
+`{entity, name, on, brightness}` (brightness 1-100, or null for a light that only switches). Any device may also
+carry `unavailable: true` (Home Assistant can't reach it; it counts as off).
 `rooms {rooms}` lists Home Assistant's areas as `{id, name, lights, lights_on, playing, switched_on}`
 (the last two are device names), and `room {name, lights, media, climate, switches}` is one area's
 devices: lights and switches as above, players `{entity, name, state}` (Home Assistant's state),
@@ -209,9 +212,9 @@ The screen sends `open {sheet}` for `house`, `lights`, `rooms`, `room` (with `ro
 `media {entity, action}` (`play`, `pause`, `turn_on`, `turn_off`) or `media {entity, volume}` (with an
 `entity` it's a Home Assistant player, without one Spotify as above); and `automation_run {entity}` or
 `automation_toggle {entity, enabled}`. Taps on a thermostat's or a player's − and + go out as one
-change once they stop. The answer to a change is a fresh
-card of the page that screen last opened. Going back (a swipe in from the left edge) re-sends the open that brought up the page it returns
-to, so that page comes back fresh too.
+change once they stop. A change comes back as Home Assistant reports it: an `update` of the page that screen
+last opened (if a call fails, a fresh `card` of it at once, so the screen's own change reverts). Going back (a swipe
+in from the left edge) re-sends the open that brought up the page it returns to, so that page comes back fresh too.
 
 Display -> brain:
 
@@ -220,7 +223,8 @@ Display -> brain:
 | `talk` | The satellite starts listening (and a ringing alarm or timer stops) |
 | `stop` | Silence a ringing alarm or timer, else cut the reply short, else drop queued audio |
 | `snooze` | Snooze the ringing alarm 9 minutes |
-| `open {sheet}` | Reply (to this screen only) with the card for `weather`, `timers`, `alarms`, `shopping`, or `agenda` |
+| `open {sheet}` | Reply (to this screen only) with the card for `weather`, `timers`, `alarms`, `shopping`, `agenda`, or a Home page |
+| `light`, `lights_off`, `climate`, `media {entity, ...}`, `automation_run`, `automation_toggle` | A tap on a Home page: a Home Assistant service call (see above) |
 | `fetch {sheet}` | The same card, but as a `page`: sent as the screen connects and around each swipe, so the sheets it can swipe to are ready |
 | `shopping_remove {item}` | Remove it; this screen gets the updated list |
 | `timer_pause {id}`, `timer_resume {id}`, `timer_cancel {id}` | From the timers sheet (Pause, Resume, Stop) |
@@ -331,24 +335,25 @@ few hundred facts; past that it needs search.
 **Announcements and proactive events** come from Home Assistant automations calling the
 brain's `POST /announce` endpoint (not built yet) and `POST /show?device=&camera=` for camera popups.
 Home Assistant decides *when*; the brain only speaks or shows. No event subscription logic
-in the brain.
+in the brain for this (it does follow state changes, but only to keep the screen's Home pages current).
 
 ## Phase 3: the display
 
 Built so far on the Pi 3 with a 5" 800x480 HDMI touchscreen (USB touch), with the brain on the PC.
 
 - **The page** (`brain/display/`: `index.html`, `style.css`, `app.js`) is served by the brain and runs fullscreen in Chromium under the `cage` kiosk compositor. It is driven by pushed messages (the [display protocol](#display-protocol)), never by polling the brain, and reconnects by itself; after 5 s offline it says so.
-- **Screens:** home (clock, date, weather, and a strip of timers, the next alarm, the next event, and the song playing, over the photo slideshow); the conversation overlay (one "state light" for listening, thinking, and speaking; what was heard; the reply growing sentence by sentence; Stop); sheets that slide up for weather, timers (a dial each that drains as time runs out, with Pause and Stop), alarms, shopping list, calendar, briefing, recipe, music, the menu, and Claude's `show_on_screen` text; Home control and its pages (lights, rooms and a room, climate, speakers and TVs, automations: served by `fake_brain.py` only so far); the volume bar; a camera's live view; the ringing screen; and night mode.
+- **Screens:** home (clock, date, weather, and a strip of timers, the next alarm, the next event, and the song playing, over the photo slideshow); the conversation overlay (one "state light" for listening, thinking, and speaking; what was heard; the reply growing sentence by sentence; Stop); sheets that slide up for weather, timers (a dial each that drains as time runs out, with Pause and Stop), alarms, shopping list, calendar, briefing, recipe, music, the menu, and Claude's `show_on_screen` text; Home control and its pages (lights, rooms and a room, climate, speakers and TVs, automations), live from Home Assistant; the volume bar; a camera's live view; the ringing screen; and night mode.
 - **Navigation:** the dashboard and the menu's sheets (Home, Timers, Alarms, Shopping list, Music) form a row, swiped between side by side, right to left going along it, stopping at either end. While the dashboard is swiped it's drawn as a sheet: everything but the photo fades and shrinks away and the photo shrinks into a sheet's frame. Over every sheet is one header: along the row, every row page's title with the current one underlined (the titles slide under the underline as you swipe), elsewhere the sheet's own title; and the time, which takes you back to the dashboard. Subpages (Lights from Home, a room from Rooms) and Claude's cards open over what was showing and go back with a swipe in from the left edge, where a faint handle shows. The row's pages that come from the brain are fetched ahead (`fetch`) so a swipe shows them at once. Every sheet still returns home after 45 s untouched (a recipe after 30 minutes, since a step can simmer that long; ringing never times out on its own).
 - **Volume:** swiped up from the bottom edge (a faint handle there too), a bar floats over whatever's showing, with the slider; a tap elsewhere or 5 s untouched puts it away, and Claude changing the volume puts it up.
-- **Touch never goes through Claude:** checking off a shopping item, cancelling a timer, toggling an alarm, the media buttons, and the volume slider are messages straight to the brain. Flipping a switch must not cost an API call or a second of waiting.
+- **Touch never goes through Claude:** checking off a shopping item, cancelling a timer, toggling an alarm, the media buttons, the volume slider, and every tap on a Home page are messages straight to the brain (the Home taps on to Home Assistant). Flipping a switch must not cost an API call or a second of waiting.
 - **Night mode** is computed in the page from `hello.night` (`NIGHT_START` / `NIGHT_END`): pure black with a dim clock in the day clock's place, no photos fetched; a tap brings the home screen back for 30 s. Ringing, conversations, and sheets still come up over it. Swiping the dashboard away from its left edge forces the night clock until a tap or the night hours next end. With nothing on the strip, the day clock (and the night clock with it) comes down so the date sits where the strip would be.
 - **Photos:** `PHOTOS_DIR` (default `~/Pictures/Claude Home`). `GET /photos` lists JPEG, PNG, and WebP files (shuffled; HEIC is skipped); `GET /photos/{name}` returns one cover-resized to 800x480 with EXIF rotation applied, cached in `brain/.cache/photos/`. Names that would leave the folder are refused. The page crossfades to the next photo every 30 s and takes its accent color from it (the most colorful mid-tone, clamped so it always reads), falling back to marigold.
 - **Calendar** (`brain/agenda.py`): every `CALENDAR_<LABEL>` variable is one secret iCal address (never logged), fetched in the background every 15 minutes, or after a minute when one failed. A failed feed keeps its last good copy. Each refresh expands today through the next 7 days in local time with `recurring-ical-events`, dropping cancelled occurrences and flagging all-day events.
 - **Spotify** (`brain/spotify.py`): the PKCE authorization code flow (no client secret) through `/spotify/login` and `/spotify/callback`; tokens in `brain/spotify_token.json`, refreshed within a minute of expiry. Asked by voice, the song starts once Claude's reply has finished playing (the device goes idle), so it doesn't begin under the voice and the ducking; the search and the speaker check happen during the turn, so Claude can name the song or say what's wrong, and a failure after that goes on the screen. `play` finds the speaker named `SPOTIFY_DEVICE` (default "Claude Home"), and plays on it with one command naming the device (a separate transfer first raced the play in librespot, and Spotify then reported the speaker's previous track). It checks that Spotify reports that track, or the album or playlist, playing there within 6 s; if not, it sends the command once more (librespot only notices that Spotify closed its session when a command arrives, and that command is lost). A 429 stops all requests until its `Retry-After` has passed. The brain polls `GET /me/player` every 5 s while playing and 20 s otherwise, and a control makes it look again a second later.
 - **Performance on the Pi 3's GPU:** only `opacity` and `transform` animate (the one exception: the rounded corners of the dashboard photo's frame as it shrinks); no blur, `backdrop-filter`, or large shadows; at most two photo layers; nothing runs while idle except the once-a-minute clock and the slideshow timer.
 - **Cameras:** Home Assistant's cameras are listed once at startup (name, entity, and area, so "the front yard camera" finds the one in the Front Yard area). Claude's `show_camera` tool, or `POST /show?device=&camera=` from an automation (the doorbell), sends `camera {entity, name}` to the device's screens, which open a full-screen live view with the name and a close button. The video is WebRTC straight from Home Assistant (for Ring, Ring's servers) to the page; the brain's `/camera?entity=` socket only relays the setup (offer, answer, ICE candidates) over Home Assistant's WebSocket API, so the token never reaches the screen. Closing the view closes the socket, which ends the stream. A view closes itself after 2 minutes (Ring reports a battery level even for plugged-in cameras, so battery ones can't be singled out for less), and goes back home 3 s after Ring ends it. Measured on the Pi 3 with the Ring Indoor Cam: 1080p at 15 fps, about 6 s to the first frame, roughly one core of CPU while it plays. Ring serves one live view per camera at a time; a second screen opening the same camera gets no video.
-- **Later:** the brain's side of home control (Home Assistant's state for its pages, and acting on their taps), screen brightness from Home Assistant, and the Pi 5 hardware with the mic array.
+- **Home control on the screen** (`brain/home.py`): the brain keeps one WebSocket connection to Home Assistant open while `HA_URL` is set. It reads the area, entity, and device registries and every state once, keeps the states current from `state_changed` events, and re-reads the registries when they change, so a newly labelled device shows up without a restart; it reconnects with backoff (5 s doubling to a minute), and while it's down the Home pages say Home Assistant isn't connected. Lights, thermostats, and automations always show; switches and media players only when they carry the Home Assistant label "Claude Home" (`claude_home`), so the screen never offers a car's remote start or a camera's motion switch; nothing hidden, disabled, or with an entity category shows. A device's area is its own or its device's; names lose a leading area name ("Kitchen Cabinets" in the Kitchen is "Cabinets"). The Home tile's Climate is `climate.thermostat`. Taps are untrusted: an entity is used only if it's one the screen is shown, in the domain the tap is for, and numbers are clamped; each call is appended to `ha_actions.jsonl` with `"source": "screen"`. The brain remembers each screen's last Home page; when anything shown changes, each such screen gets its page as an `update` after 0.3 s (a burst is one), only if the card changed. `uv run --env-file ../.env python home.py` prints every card from the live house, reading only.
+- **Later:** screen brightness from Home Assistant, and the Pi 5 hardware with the mic array.
 
 ### On the Pi
 
@@ -473,6 +478,7 @@ claude-home/
     agenda.py         calendar feeds
     todoist.py        the shopping list
     spotify.py        Spotify Web API and login
+    home.py           Home Assistant for the screen's Home pages: the connection, the cards, taps to services
     photos.py         the slideshow's photos
     fake_brain.py     canned data for display work, no Claude or Pi
     spotify_lab.py    checks raspotify on the Pi layer by layer
