@@ -1659,10 +1659,10 @@ const volumeAllowed = () =>
 function openVolume(level) {
   if (level !== undefined) speakerVolume = level;
   paintVolume();
-  if (!volUp) {
-    els.volBar.hidden = false;
+  if (els.volBar.hidden) {  // from nowhere (Claude, a keyboard): start below, so it rises; one a finger has brought
+    els.volBar.hidden = false;  // partway up, or that's on its way down, carries on from where it is
     placeVolume(volBelow(), false);
-    void els.volBar.offsetWidth;  // start below, so it rises
+    void els.volBar.offsetWidth;
   }
   placeVolume(0, true);
   volUp = true;

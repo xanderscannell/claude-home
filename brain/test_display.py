@@ -623,7 +623,15 @@ def test_volume(b):
     # Before the speaker has reported a level: say so
     edge = d.page.locator("#vol-edge").bounding_box()
     assert edge["y"] + edge["height"] == 480 and edge["width"] == 800 and edge["height"] <= 20, edge
-    volume_up(d)
+    top = lambda: d.page.eval_on_selector("#vol-bar", "b => b.getBoundingClientRect().top")  # noqa: E731
+    volume_up(d, release=False)
+    held = top()
+    assert held < 480, held
+    d.page.mouse.up()
+    tops = [d.page.wait_for_timeout(30) or top() for _ in range(6)]
+    assert all(t <= held + 1 for t in tops), f"let go, it carries on up from where it was, not from below: {held} {tops}"
+    d.page.clock.run_for(300)
+    d.page.wait_for_timeout(300)
     assert bar_up() and d.text("#vol-none") == "The speaker isn't connected." and not d.visible("#vol-slider")
     d.shot("volume-unknown")
 
