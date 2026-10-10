@@ -20,6 +20,7 @@ LABEL = "claude_home"
 HOUSE_THERMOSTAT = "climate.thermostat"  # the one the Home tile sums up
 ALWAYS = ("light", "climate", "automation")
 LABELLED = ("switch", "media_player")
+DOMAINS = ALWAYS + LABELLED
 VOLUME_SET = 4  # media_player supported_features bit
 
 

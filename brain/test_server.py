@@ -785,6 +785,72 @@ async def home_flow(port: int, fake: FakeHA):
     await ws.close()
 
 
+async def updates_within(ws, seconds: float) -> list:
+    """The update messages a screen gets in the next few seconds"""
+    got, deadline = [], time.time() + seconds
+    while (left := deadline - time.time()) > 0:
+        try:
+            m = await recv_json(ws, timeout=left)
+        except TimeoutError:
+            break
+        if m["type"] == "update":
+            got.append(m["card"])
+    return got
+
+
+async def updates_flow(port: int, fake: FakeHA):
+    """Screens showing a Home page follow the house as it changes; nothing else hears about it"""
+    lights, weather, kitchen, media = [await open_display(port, "updates") for _ in range(4)]
+    for ws, m in [(lights, {"sheet": "lights"}), (weather, {"sheet": "weather"}),
+                  (kitchen, {"sheet": "room", "room": "kitchen"}), (media, {"sheet": "media"})]:
+        await ws.send(json.dumps({"type": "open", **m}))
+        await until_type(ws, "card")
+
+    def light_on(card, entity):
+        return next(l for r in card["rooms"] for l in r["lights"] if l["entity"] == entity)["on"]
+
+    # A wall switch: the Lights screen gets one update with it; the kitchen's page doesn't show it, so it gets none
+    fake.set("light.studio", "off")
+    got = await updates_within(lights, 1.5)
+    assert len(got) == 1 and got[0]["kind"] == "lights" and not light_on(got[0], "light.studio"), got
+    assert await updates_within(kitchen, 0.2) == [] and await updates_within(weather, 0.2) == []
+
+    # A kitchen light: both screens that show it, each its own page
+    fake.set("light.sink", "on", brightness=255)
+    got_lights, got_kitchen = await updates_within(lights, 1.5), await updates_within(kitchen, 0.5)
+    assert len(got_lights) == 1 and light_on(got_lights[0], "light.sink"), got_lights
+    assert len(got_kitchen) == 1 and got_kitchen[0]["kind"] == "room" and next(
+        l for l in got_kitchen[0]["lights"] if l["entity"] == "light.sink")["brightness"] == 100, got_kitchen
+
+    # Nothing a page shows: a sensor, the unlabelled remote start, a TV's position ticking
+    fake.set("sensor.den_temperature", "70")
+    fake.set("switch.pickup_remote_start", "on")
+    fake.set("media_player.den_tv", fake.states["media_player.den_tv"]["state"], media_position=42)
+    for ws in (lights, weather, kitchen, media):
+        assert await updates_within(ws, 0.6) == [], "nothing shown changed"
+
+    # A burst is one update
+    for entity in ("light.kitchen_pendants", "light.den_strip", "light.hallway"):
+        fake.set(entity, "off")
+    got = await updates_within(lights, 1.5)
+    assert len(got) == 1 and not any(light_on(got[0], e) for e in ("light.kitchen_pendants", "light.hallway")), got
+
+    # A tap's result arrives as an update once Home Assistant reports it
+    await lights.send(json.dumps({"type": "light", "entity": "light.hallway", "on": True, "brightness": 60}))
+    got = await updates_within(lights, 1.5)
+    assert len(got) == 1 and next(l for r in got[0]["rooms"] for l in r["lights"]
+                                  if l["entity"] == "light.hallway") == {
+        "entity": "light.hallway", "name": "Hallway", "on": True, "brightness": 60}, got
+
+    # Opening something else stops the updates for that screen
+    await lights.send(json.dumps({"type": "open", "sheet": "weather"}))
+    await until_type(lights, "card")
+    fake.set("light.hallway", "off")
+    assert await updates_within(lights, 1) == []
+    for ws in (lights, weather, kitchen, media):
+        await ws.close()
+
+
 def main():
     asyncio.run(after_reply_check())
     fake_ha = FakeHA()
@@ -860,6 +926,7 @@ def main():
     asyncio.run(music_flow(port))
     asyncio.run(alarm_flow(port))
     asyncio.run(home_flow(port, fake_ha))
+    asyncio.run(updates_flow(port, fake_ha))
     assert not errors.records, [r.getMessage() for r in errors.records]
 
     server.should_exit = True

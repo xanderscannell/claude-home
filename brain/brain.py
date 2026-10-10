@@ -296,7 +296,8 @@ class Device:
         self.state = "idle"  # idle | listening | thinking | speaking
         self.after_reply: list = []  # async actions held until the reply has played (music starting, say)
         self.heard = ""  # what was said in the latest turn, for the Home Assistant action log
-        self.showing: dict[WebSocket, dict] = {}  # each screen's last Home page open, which its taps refresh
+        # Each screen's Home page: [the open that asked for it, the card it was last sent], kept fresh by update
+        self.showing: dict[WebSocket, list] = {}
 
     async def show(self, msg: dict):
         """Send to every display of this device; drop displays that have gone away or stopped reading.
@@ -647,7 +648,8 @@ async def lifespan(app: FastAPI):
     app.state.cameras = await ha_cameras()  # ponytail: read once; a camera added in Home Assistant needs a restart
     loops = [asyncio.create_task(ring_timers()), asyncio.create_task(refresh_weather()),
              asyncio.create_task(refresh_agenda())]
-    app.state.ha = home.Connection(os.environ["HA_URL"], os.environ.get("HA_TOKEN", "")) if os.environ.get("HA_URL") else None
+    app.state.ha = (home.Connection(os.environ["HA_URL"], os.environ.get("HA_TOKEN", ""), on_change=home_changed)
+                    if os.environ.get("HA_URL") else None)
     if app.state.ha:
         loops.append(asyncio.create_task(app.state.ha.run()))  # the house for the screen's Home pages
     if os.environ.get("SPOTIFY_CLIENT_ID"):
@@ -763,20 +765,54 @@ async def home_tap(dev: Device, m: dict, ws: WebSocket):
                             "result": f"error: {error}" if error else "ok"}) + "\n")
     if error:
         print(f"[{dev.name}] Home Assistant refused {domain}.{service}: {error}")
-        if (showing := dev.showing.get(ws)) and (card := await sheet_card(dev, showing)):
+        if (showing := dev.showing.get(ws)) and (card := await sheet_card(dev, showing[0])):
+            showing[1] = card
             with contextlib.suppress(*GONE):
                 await ws.send_text(json.dumps({"type": "card", "card": card}))
+
+
+HOME_SETTLE_S = 0.3  # a burst of changes (All off, a scene) goes to the screens as one update
+home_push: asyncio.Task | None = None
+
+
+def home_changed(ids: set | None):
+    """on_change for the Home Assistant connection: something in the house changed (None: anything may have). A change
+    to anything a Home page shows refreshes the screens showing one, shortly."""
+    global home_push
+    ha = app.state.ha
+    if ids is not None and (ha is None or ha.house is None or not any(
+            e.split(".")[0] in home.DOMAINS and home.shown(ha.house, e) for e in ids)):
+        return  # a sensor, an unlabelled switch: no page shows it
+    if home_push is None:
+        home_push = spawn(push_home())
+
+
+async def push_home():
+    """Each screen showing a Home page gets it afresh as an update (which only refreshes a page that's open, never
+    opens one), if it differs from what that screen was last sent. A player's position ticking changes no card, so it
+    sends nothing."""
+    global home_push
+    await asyncio.sleep(HOME_SETTLE_S)
+    home_push = None  # changes from here on start another push, so none are missed while this one sends
+    for dev in list(devices.values()):
+        for ws, showing in list(dev.showing.items()):
+            card = await sheet_card(dev, showing[0])
+            if card is not None and card != showing[1]:
+                showing[1] = card
+                with contextlib.suppress(*GONE, TimeoutError):
+                    await asyncio.wait_for(ws.send_text(json.dumps({"type": "update", "card": card})), 2)
 
 
 async def from_display(dev: Device, m: dict, ws: WebSocket):
     """A touch on the screen."""
     kind = m.get("type")
     if kind == "open":
+        card = await sheet_card(dev, m)
         if m.get("sheet") in home.SHEETS:
-            dev.showing[ws] = m
+            dev.showing[ws] = [m, card]
         else:
             dev.showing.pop(ws, None)
-        if card := await sheet_card(dev, m):
+        if card:
             await ws.send_text(json.dumps({"type": "card", "card": card}))  # just the screen that asked
     elif kind == "fetch" and (card := await sheet_card(dev, m)):
         await ws.send_text(json.dumps({"type": "page", "card": card}))  # to have ready to swipe to, not to open
