@@ -928,7 +928,11 @@ def test_swiping_between_sheets(b):
         swipe(d, 300, frm=700, y=200)
         seen.append(title())
     assert seen == ["Timers", "Alarms", "Shopping list", "Music", "Music", "Music"], seen
-    assert left("#sheet") == 0, "past the end it gives a little and springs back"
+    swipe(d, 300, frm=700, y=200, release=False)
+    assert left("#sheet") == 0 and not d.visible("#sheet-under"), "past the end nothing moves, nothing shows behind"
+    d.page.mouse.up()
+    d.page.clock.run_for(600)
+    assert title() == "Music"
     assert opened() == ["house", "alarms", "shopping"], "only pages the brain serves are asked for, on landing"
     assert fetched()[3:] == ["house", "alarms", "shopping", "alarms", "shopping"], "and the ones either side of each landing"
     assert d.page.locator("#sheet-edge").is_hidden()

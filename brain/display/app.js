@@ -532,25 +532,22 @@ function syncHeader() {
 
 // --- Swiping ----------------------------------------------------------------------------------
 // Along the row, pages sit side by side: the page you're on and the next (or previous) one move together with the
-// finger, like a strip of film; the dashboard joins them drawn as a sheet too (showDash). Back from a subpage is different, a page lifted off the one under it: it slides off
-// to the right over the page it opened over, which drifts a fifth of the way in and brightens as it's uncovered.
-// Either way, let go past a third of the screen (or flick) and the move happens; short of that it springs back. Past
-// the end of the row the page gives a little and springs back.
+// finger, like a strip of film; the dashboard joins them drawn as a sheet too (showDash). Back from a subpage is
+// different, a page lifted off the one under it: it slides off to the right over the page it opened over, which drifts
+// a fifth of the way in and brightens as it's uncovered. Either way, let go past a third of the screen (or flick) and
+// the move happens; short of that it springs back. Past either end of the row nothing moves.
 const SWIPE_AT = 1 / 3;
 const SWIPE_FLICK = 0.5;  // px per ms
 const SWIPE_LOCK_PX = 10;  // this far before it's known whether it's sideways (a swipe) or not (a scroll, a tap)
-const RUBBER = 0.15;  // past the end of the row the page moves this much of the finger's way
 const SETTLE_MS = 220;  // .settling's transition
 let gesture = null;  // a finger that is or may become a swipe: {id, x, y, t, dx, v, row}
-// The swipe under way: {mode: "side" | "over" | "rubber", page (the one you're on), next (the one coming),
+// The swipe under way: {mode: "side" | "over" | "away", page (the one you're on), next (the one coming),
 // ahead (1: the finger moves right to make the move, -1: left), land}
 let slide = null;
 
-function place(q) {  // q: how far the move has gone, 0 to 1; for rubber, px the page has given
+function place(q) {  // q: how far the move has gone, 0 to 1
   const s = slide;
-  if (s.mode === "rubber") {
-    s.page.style.transform = `translateX(${q}px)`;
-  } else if (s.mode === "away") {
+  if (s.mode === "away") {
     s.page.style.transform = `translateX(${q * 100}%)`;  // the dashboard off to the right, the night screen under it
   } else if (s.mode === "side") {
     s.page.style.transform = `translateX(${s.ahead * q * 100}%)`;
@@ -676,9 +673,7 @@ function beginSlide(back) {
   } else if (!back && i < ROW.length) {
     showUnder(rowCard(ROW[i].kind));
     slide = side(els.under, () => landRow(ROW[i].kind));
-  } else if (!back) {  // the last page: nothing further
-    slide = { mode: "rubber", page: els.sheet };
-  } else return false;  // the dashboard: nothing to its left
+  } else return false;  // the dashboard has nothing to its left, the last page nothing to its right
   for (const l of layers()) l.classList.add("dragging");
   place(0);
   return true;
@@ -686,7 +681,7 @@ function beginSlide(back) {
 
 function moveSlide() {
   const s = slide;
-  place(s.mode === "rubber" ? gesture.dx * RUBBER : Math.min(1, Math.max(0, (s.ahead * gesture.dx) / innerWidth)));
+  place(Math.min(1, Math.max(0, (s.ahead * gesture.dx) / innerWidth)));
 }
 
 // dashLands: the swipe ended on the dashboard, so its sheet opens back out into the real one
@@ -712,8 +707,7 @@ function letGo() {
   const swallow = (e) => { e.stopPropagation(); e.preventDefault(); };
   document.addEventListener("click", swallow, true);
   setTimeout(() => document.removeEventListener("click", swallow, true), 0);
-  const go = s.mode !== "rubber" &&
-    ((s.ahead * g.dx) / innerWidth > SWIPE_AT || (s.ahead * g.v > SWIPE_FLICK && s.ahead * g.dx > 40));
+  const go = (s.ahead * g.dx) / innerWidth > SWIPE_AT || (s.ahead * g.v > SWIPE_FLICK && s.ahead * g.dx > 40);
   for (const l of layers()) l.classList.replace("dragging", "settling");
   place(go ? 1 : 0);
   const dashLands = go ? s.next === els.dashboard : s.page === els.dashboard;
