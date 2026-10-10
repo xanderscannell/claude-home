@@ -1162,6 +1162,101 @@ def test_speakers_and_tvs(b):
     d.close()
 
 
+def test_home_updates_and_unavailable(b):
+    """The house changing refreshes the Home page that's open, and only that, never opening one; a device Home
+    Assistant can't reach looks it and takes no taps; an off or missing thermostat reads as such."""
+    d = Display(b)
+    taps = lambda: [m for m in d.sent if m.get("type") in ("light", "lights_off", "media", "climate")]  # noqa: E731
+    level = lambda name: d.page.locator(f'.dev[aria-label="{name}"] .dev-level').first.inner_text()  # noqa: E731
+    lamp = {"entity": "light.lamp", "name": "Reading lamp", "on": True, "brightness": 40}
+    lantern = {"entity": "light.lantern", "name": "Lantern", "on": False, "brightness": 60, "unavailable": True}
+    rooms = [{"name": f"Room {i}", "lights": [{"entity": f"light.r{i}", "name": f"Light {i}", "on": False,
+                                               "brightness": 50}]} for i in range(8)]
+
+    def lights(lamp_now):
+        return {"kind": "lights", "rooms": [{"name": "Living room", "lights": [lamp_now]},
+                                            {"name": "Porch", "lights": [lantern]}, *rooms]}
+
+    # Nothing open: an update opens nothing
+    d.push({"type": "update", "card": lights(lamp)})
+    assert not sheet_open(d)
+
+    # Lights open: an update redraws it in place, where it was scrolled to
+    d.push({"type": "card", "card": lights(lamp)})
+    assert level("Reading lamp") == "40%"
+    assert d.page.locator(".dev.gone").count() == 1 and level("Lantern") == "Unavailable"
+    d.shot("lights-unavailable", settle=400)
+    d.page.eval_on_selector(".dev-groups", "e => { e.scrollLeft = 200 }")
+    d.push({"type": "update", "card": lights({**lamp, "brightness": 90})})
+    assert level("Reading lamp") == "90%"
+    assert d.page.eval_on_selector(".dev-groups", "e => e.scrollLeft") == 200, "the update kept the scroll"
+    d.page.eval_on_selector(".dev-groups", "e => { e.scrollLeft = 0 }")
+
+    # Unavailable: no tap, no drag, nothing sent
+    d.page.tap(".dev.gone", force=True)
+    d.page.eval_on_selector(".dev.gone", """b => {
+        const at = (type, y) => b.dispatchEvent(new PointerEvent(type, {bubbles: true, isPrimary: true, clientX: b.getBoundingClientRect().x + 20, clientY: y}));
+        at("pointerdown", 300); at("pointermove", 200); at("pointerup", 200); }""")
+    d.page.wait_for_timeout(100)
+    assert taps() == [] and level("Lantern") == "Unavailable"
+
+    # A finger on the sheet: the update waits for the lift
+    d.page.dispatch_event("#sheet", "pointerdown")
+    d.push({"type": "update", "card": lights({**lamp, "brightness": 20})})
+    assert level("Reading lamp") == "90%", "applied mid-touch"
+    d.page.evaluate("document.dispatchEvent(new PointerEvent('pointerup'))")
+    d.page.wait_for_timeout(100)
+    assert level("Reading lamp") == "20%"
+    # ...and a tap sent meanwhile drops it: the tap's own update brings everything since
+    d.page.dispatch_event("#sheet", "pointerdown")
+    d.push({"type": "update", "card": lights({**lamp, "brightness": 70})})
+    d.tap('.dev[aria-label="Reading lamp"]')
+    d.page.wait_for_timeout(100)
+    assert taps()[-1] == {"type": "light", "entity": "light.lamp", "on": False} and level("Reading lamp") == "Off"
+
+    # A room: an update for another room is ignored, its own applied; an unavailable player is a dark window too
+    speaker = {"entity": "media_player.speaker", "name": "Speaker", "state": "unavailable", "title": None,
+               "artist": None, "app": None, "volume": None, "unavailable": True}
+    bedroom = {"kind": "room", "name": "Bedroom", "lights": [lamp], "media": [speaker], "climate": [], "switches": []}
+    d.push({"type": "card", "card": bedroom})
+    d.push({"type": "update", "card": {**bedroom, "name": "Kitchen", "lights": [{**lamp, "on": False}]}})
+    assert d.text("#sheet-title") == "Bedroom" and level("Reading lamp") == "40%"
+    d.push({"type": "update", "card": {**bedroom, "lights": [{**lamp, "on": False}]}})
+    assert level("Reading lamp") == "Off" and level("Speaker") == "Unavailable"
+    d.shot("room-unavailable", settle=400)
+
+    # Speakers & TVs: the unavailable one says so, with no buttons
+    d.push({"type": "card", "card": {"kind": "media", "players": [{**speaker, "room": "Bedroom"}]}})
+    gone = d.page.locator(".player.gone")
+    assert gone.count() == 1 and gone.locator(".pl-state").inner_text() == "Unavailable"
+    assert not gone.locator(".pl-btn").first.is_visible()
+    d.shot("media-unavailable", settle=400)
+
+    # Climate: off hides − and +; unavailable hides everything but the word
+    off = thermostat("climate.house", "Thermostat", 71, 71, "off", "off", modes=("off", "cool", "heat"), humidity=44)
+    gone_t = {**thermostat("climate.ac", "Window AC", None, None, "unavailable", "off", modes=()), "unavailable": True}
+    d.push({"type": "card", "card": {"kind": "climate", "thermostats": [off, gone_t]}})
+    page = lambda i: d.page.locator(".thermo").nth(i)  # noqa: E731
+    assert page(0).locator(".th-target").inner_text() == "Off"
+    assert not page(0).locator('[aria-label^="Raise"]').is_visible() and page(0).locator(".pill").first.is_visible()
+    d.shot("climate-off", settle=400)
+    assert page(1).locator(".th-target").inner_text() == "Unavailable"
+    assert not page(1).locator('[aria-label^="Raise"]').is_visible() and not page(1).locator(".th-track").is_visible()
+    d.page.eval_on_selector(".thermostats", "e => { e.scrollLeft = e.scrollWidth }")
+    d.shot("climate-unavailable", settle=400)
+
+    # Home: an off thermostat reads Off; none at all reads None
+    d.push({"type": "card", "card": {**HOUSE, "climate": {"temp": 71, "target": 71, "action": "off"}}})
+    assert d.page.locator(".tile-num").all_inner_texts()[1] == "71°"
+    assert d.page.locator(".tile-detail").all_inner_texts()[1] == "Off"
+    d.shot("house-climate-off", settle=400)
+    d.push({"type": "update", "card": {**HOUSE, "climate": None}})
+    assert d.page.locator(".tile-num").all_inner_texts()[1] == "None"
+    assert d.page.locator(".tile-detail").all_inner_texts()[1] == "No thermostats"
+    d.shot("house-no-climate", settle=400)
+    d.close()
+
+
 def test_automations(b):
     d = Display(b)
     yesterday_2302 = dt.datetime(2026, 10, 6, 23, 2).timestamp()

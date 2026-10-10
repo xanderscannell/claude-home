@@ -51,8 +51,11 @@ function connect() {
   };
 }
 
+const HOME_TAPS = ["light", "lights_off", "climate", "media", "automation_run", "automation_toggle"];
+
 function send(msg) {
   if (msg.type === "open") lastOpen = msg;
+  if (HOME_TAPS.includes(msg.type)) heldUpdate = null;  // its own update brings everything since
   if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(msg));
 }
 
@@ -82,6 +85,7 @@ const handlers = {
   },
   card: (m) => (m.card.kind === "volume" ? openVolume(m.card.level) : openSheet(m.card)),  // Claude set the volume
   page: (m) => keepRowCard(m.card),
+  update: (m) => homeUpdate(m.card),
   ringing: (m) => showRinging(m.ringing),
   volume: (m) => showVolume(m.level),
   now_playing: (m) => showNowPlaying(m.track),
@@ -496,6 +500,48 @@ function keepRowCard(card) {
   if (sheetCard && sheetCard.kind === card.kind && sheetCard.placeholder) openSheet(card);
 }
 
+// A Home page afresh because the house changed (a wall switch, an automation, a tap here coming back). It only ever
+// refreshes: the page open now if it's that page (a room, that room), and Home kept for swiping to; never opens one.
+// While a finger is on the sheet it waits for the lift (a redraw mid-drag would drop a dimmer), and a tap sent
+// meanwhile drops it: that tap's own update brings everything since.
+let fingerOnSheet = false;
+let heldUpdate = null;
+
+function homeUpdate(card) {
+  if (fingerOnSheet) {
+    heldUpdate = card;
+    return;
+  }
+  const open = sheetCard && !sheetCard.placeholder && sheetCard.kind === card.kind
+    && (card.kind !== "room" || sheetCard.name === card.name);
+  keepRowCard(card);
+  if (!open || sheetCard === card) return;  // not showing, or keepRowCard just drew it in place of its title
+  // As openSheet's refresh does, minus what a touch does (the idle timer) and keeping where its rows are scrolled
+  if (!card.request) card.request = sheetCard.request;
+  const scrolled = [...els.sheetBody.querySelectorAll(".dev-groups, .rooms")].map((e) => [e.className, e.scrollLeft]);
+  const top = els.sheetBody.scrollTop;
+  sheetCard = card;
+  renderSheet();
+  for (const [cls, left] of scrolled) {
+    const row = els.sheetBody.querySelector(`.${cls}`);
+    if (row) row.scrollLeft = left;
+  }
+  els.sheetBody.scrollTop = top;
+}
+
+els.sheet.addEventListener("pointerdown", () => { fingerOnSheet = true; });
+for (const type of ["pointerup", "pointercancel"]) {
+  document.addEventListener(type, () => {
+    fingerOnSheet = false;
+    // After the click this lift makes (a tap's own send drops the held one), so the tap lands on what it touched
+    setTimeout(() => {
+      const card = heldUpdate;
+      heldUpdate = null;
+      if (card && !fingerOnSheet) homeUpdate(card);
+    });
+  });
+}
+
 // Where the screen is in the row: 0 the dashboard, 1 Home, and so on; null where the row doesn't apply (a subpage,
 // a card Claude put up, the conversation, a ringing alarm, the camera, night)
 function rowIndex() {
@@ -858,8 +904,10 @@ const renderers = {
     grid.append(
       tile("lights", "Lights", ICONS.bulb, lights.on ? String(lights.on) : "Off", lights.on ? "on" : "",
            lights.on ? lights.rooms.join(", ") : `All ${lights.total} lights`, lights.on > 0),
-      tile("climate", "Climate", ICONS.thermometer, `${climate.temp}°`, "",
-           climate.action === "idle" ? `Set to ${climate.target}°` : `${sentence(climate.action)} to ${climate.target}°`),
+      climate ? tile("climate", "Climate", ICONS.thermometer, climate.temp === null ? "–" : `${climate.temp}°`, "",
+                     climate.action === "off" ? "Off" : climate.action === "idle" ? `Set to ${climate.target}°`
+                       : `${sentence(climate.action)} to ${climate.target}°`)
+        : tile("climate", "Climate", ICONS.thermometer, "None", "", "No thermostats"),
       tile("media", "Speakers & TVs", ICONS.tv, media.playing.length ? String(media.playing.length) : "Off",
            media.playing.length ? "playing" : "", media.playing.length ? media.playing.join(", ") : "Nothing playing"),
       tile("rooms", "Rooms", ICONS.house, String(rooms.length), "", rooms.join(", ")),
@@ -1167,9 +1215,18 @@ function deviceTile(name) {
   return [b, paint];
 }
 
+// A device Home Assistant can't reach: a dark window, its edge dashed, and nothing to tap
+function goneTile(b, paint) {
+  paint("Unavailable", 0, true);
+  b.classList.add("gone");
+  b.disabled = true;
+  return b;
+}
+
 // Speakers, TVs, and thermostats: their state, opening their own page. fill: lit (playing, say); off: in mist.
 function openingTile(d, sheet, state, fill, off) {
   const [b, paint] = deviceTile(d.name);
+  if (d.unavailable) return goneTile(b, paint);
   paint(state, fill ? 100 : 0, off);
   b.addEventListener("click", () => send({ type: "open", sheet, entity: d.entity }));
   return b;
@@ -1232,10 +1289,13 @@ function playerPanel(p) {
   panel.append(head, what, vol, buttons);
 
   const paint = () => {
-    const on = PLAYER_ON.includes(p.state), playing = p.state === "playing";
+    const on = !p.unavailable && PLAYER_ON.includes(p.state), playing = on && p.state === "playing";
     panel.classList.toggle("lit", playing);
     panel.classList.toggle("off", !on);
-    if (!on) what.replaceChildren(el("p", "pl-state", "Off"));
+    panel.classList.toggle("gone", Boolean(p.unavailable));
+    buttons.hidden = Boolean(p.unavailable);  // nothing to turn on: Home Assistant can't reach it
+    if (p.unavailable) what.replaceChildren(el("p", "pl-state", "Unavailable"));
+    else if (!on) what.replaceChildren(el("p", "pl-state", "Off"));
     else if (p.title) what.replaceChildren(el("p", "pl-title", p.title), el("p", "pl-by", p.artist || p.app || ""));
     else what.replaceChildren(el("p", "pl-state", p.state === "idle" ? "Nothing on" : sentence(p.state)));
     if (p.title && p.state === "paused") what.append(el("p", "pl-by", "Paused"));
@@ -1348,11 +1408,11 @@ function thermostatPage(t) {
     lo.textContent = `${from}°`;
     hi.textContent = `${from + SCALE_SPAN}°`;
     const off = t.mode === "off";
-    page.className = `thermo ${off ? "off" : t.action}`;
-    target.textContent = off ? "Off" : `${t.target}°`;
+    page.className = `thermo ${t.unavailable ? "gone" : off ? "off" : t.action}`;
+    target.textContent = t.unavailable ? "Unavailable" : off ? "Off" : `${t.target}°`;
     const here = `${t.temp}° now${t.humidity !== null && t.humidity !== undefined ? `, ${t.humidity}% humidity` : ""}`;
     const doing = { heating: "Heating", cooling: "Cooling", fan: "Fan running", drying: "Drying" }[t.action];
-    status.textContent = doing ? `${doing}, ${here}` : sentence(here);
+    status.textContent = t.unavailable ? "Home Assistant can't reach it." : doing ? `${doing}, ${here}` : sentence(here);
     now.style.left = at(t.temp);
     set.style.left = at(t.target);
     fill.style.left = at(Math.min(t.temp, t.target));
@@ -1370,6 +1430,7 @@ const DRAG_START_PX = 8;
 function lightTile(l) {
   const dims = l.brightness !== null && l.brightness !== undefined;
   const [b, fill] = deviceTile(l.name);
+  if (l.unavailable) return goneTile(b, fill);
   b.setAttribute("role", "switch");
   const paint = () => {
     fill(l.on ? (dims ? `${l.brightness}%` : "On") : "Off", l.on ? (dims ? l.brightness : 100) : 0);

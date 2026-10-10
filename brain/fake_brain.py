@@ -101,15 +101,17 @@ def talk(heard, *reply):
             *[{"type": "reply", "text": r} for r in reply]]
 
 
-def light(entity, name, on, brightness, domain="light"):
-    """brightness None: a switch, not a dimmer (switch.* entities are always that: fans, plugs)."""
-    return {"entity": f"{domain}.{entity}", "name": name, "on": on, "brightness": brightness}
+def light(entity, name, on, brightness, domain="light", unavailable=False):
+    """brightness None: a switch, not a dimmer (switch.* entities are always that: fans, plugs).
+    unavailable: Home Assistant can't reach it (it reads as off)."""
+    return {"entity": f"{domain}.{entity}", "name": name, "on": on, "brightness": brightness,
+            **({"unavailable": True} if unavailable else {})}
 
 
 def player(entity, name, state, title=None, artist=None, app=None, volume=30):
     """A Home Assistant media player: a TV, a Sonos. volume 0-100, None if it can't be set from here."""
     return {"entity": f"media_player.{entity}", "name": name, "state": state, "title": title, "artist": artist,
-            "app": app, "volume": volume}
+            "app": app, "volume": volume, **({"unavailable": True} if state == "unavailable" else {})}
 
 
 def automation(entity, name, on, ran=None):
@@ -163,12 +165,14 @@ HOUSE = [
      "switches": []},
     {"id": "bedroom", "name": "Bedroom",
      "lights": [light("bedroom_ceiling", "Ceiling", False, 50), light("bedroom_bedside", "Bedside", False, 20)],
-     "media": [player("bedroom_tv", "TV", "off")], "climate": [BEDROOM_AC], "switches": [switch("bedroom_fan", "Ceiling fan", True)]},
+     "media": [player("bedroom_tv", "TV", "off"), player("bedroom_speaker", "Speaker", "unavailable", volume=None)],
+     "climate": [BEDROOM_AC], "switches": [switch("bedroom_fan", "Ceiling fan", True)]},
     {"id": "office", "name": "Office", "lights": [light("office_desk", "Desk lamp", False, 90)],
      "media": [], "climate": [], "switches": [switch("office_heater", "Space heater", False)]},
     {"id": "kids_room", "name": "Kids' room", "lights": [light("kids_night", "Night light", False, 10)],
      "media": [], "climate": [], "switches": [switch("kids_humidifier", "Humidifier", True)]},
-    {"id": "porch", "name": "Porch", "lights": [light("porch", "Porch light", False, None)],
+    {"id": "porch", "name": "Porch", "lights": [light("porch", "Porch light", False, None),
+                                                light("porch_lantern", "Lantern", False, 60, unavailable=True)],
      "media": [], "climate": [], "switches": []},
 ]
 
@@ -241,6 +245,8 @@ SCENES = {
                                media={"playing": [], "total": 4}, rooms=[r["name"] for r in HOUSE],
                                automations={"on": 14, "total": 14})],
     "room": lambda: [room("living_room")],
+    "house-no-climate": lambda: [{**house(), "card": {**house()["card"], "climate": None}}],
+    "wall-switch": lambda: wall_switch(),
     "text": lambda: [card("text", title="Pancakes", lines=PANCAKES["ingredients"])],
     "briefing": lambda: [card("briefing", greeting="Good morning", weather=WEATHER, events=events()[:4],
                               next_alarm=alarms()[0], timers=timers()[:1], shopping=7)],
@@ -254,6 +260,14 @@ SCENES = {
     "night": lambda: [hello("00:00", "23:59")],
     "day": lambda: [hello("23:59", "23:59")],
 }
+
+
+def wall_switch():
+    """The kitchen ceiling light switched at the wall: whichever Home page is open follows, nothing opens"""
+    ceiling = next(l for l in all_lights() if l["entity"] == "light.kitchen_ceiling")
+    ceiling["on"] = not ceiling["on"]
+    return [{"type": "update", "card": opened(m)["card"]}
+            for m in ({"sheet": "lights"}, {"sheet": "house"}, {"sheet": "rooms"}, {"sheet": "room", "room": "kitchen"})]
 
 
 def hello(start="22:00", end="07:00"):
@@ -296,7 +310,7 @@ async def display(ws: WebSocket):
                     else:  # play, pause, turn_on, turn_off
                         p["state"] = {"play": "playing", "pause": "paused", "turn_on": "idle", "turn_off": "off"}[m["action"]]
                 if answer := opened(showing):
-                    await push(answer, to=ws)
+                    await push({"type": "update", "card": answer["card"]}, to=ws)
             elif m.get("type") in ("automation_toggle", "automation_run"):
                 for a in (a for a in AUTOMATIONS if a["entity"] == m.get("entity")):
                     if m["type"] == "automation_toggle":
@@ -304,13 +318,13 @@ async def display(ws: WebSocket):
                     else:
                         a["last_ran"] = time.time()
                 if answer := opened(showing):
-                    await push(answer, to=ws)
+                    await push({"type": "update", "card": answer["card"]}, to=ws)
             elif m.get("type") == "climate":
                 for t in (t for r in HOUSE for t in r["climate"] if t["entity"] == m.get("entity")):
                     t.update({k: m[k] for k in ("target", "mode") if k in m})
                     settle(t)
                 if answer := opened(showing):
-                    await push(answer, to=ws)
+                    await push({"type": "update", "card": answer["card"]}, to=ws)
             elif m.get("type") in ("light", "lights_off"):
                 for l in all_lights() + [s for r in HOUSE for s in r["switches"]]:
                     if m["type"] == "lights_off" and l["entity"].startswith("light."):
@@ -318,7 +332,7 @@ async def display(ws: WebSocket):
                     elif l["entity"] == m.get("entity"):
                         l.update({k: m[k] for k in ("on", "brightness") if k in m})
                 if answer := opened(showing):
-                    await push(answer, to=ws)
+                    await push({"type": "update", "card": answer["card"]}, to=ws)
     except WebSocketDisconnect:
         pass
     finally:

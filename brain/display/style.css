@@ -472,6 +472,12 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 }
 .dev.off .dev-level { color: var(--mist); }
 .dev.wordy .dev-level { font-size: 30px; letter-spacing: 0; }
+/* Unavailable (Home Assistant can't reach it): a dark window. No fill, only a dashed edge, the name and the word in
+   mist. It takes no taps. */
+.dev.gone, .player.gone { background: none; outline: 1.5px dashed rgba(169, 184, 198, .45); outline-offset: -1.5px; }
+.dev.gone .dev-name { color: var(--mist); }
+.dev.gone .dev-level { font: 500 18px/1.2 var(--near); letter-spacing: 0; color: var(--mist); }
+.player.gone .pl-name { color: var(--mist); }
 /* Rooms: the home tiles' look, the room's name in the far-read type, what's on in it at the bottom; lit while a
    light is on. Two rows, more rooms scrolling sideways like the lights. */
 .rooms {
@@ -515,6 +521,8 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 .th-modes .pill[aria-pressed="true"] { background: var(--accent); color: var(--night); }
 .thermo.off .th-target { color: var(--mist); }
 .thermo.off .th-steps, .thermo.off .th-set { visibility: hidden; }
+.thermo.gone .th-target { font-size: 72px; letter-spacing: -1px; color: var(--mist); }
+.thermo.gone .th-steps, .thermo.gone .th-track, .thermo.gone .th-scale, .thermo.gone .th-modes { visibility: hidden; }
 
 /* Speakers & TVs: a panel per player, three across, scrolling sideways. What's on fills the middle; volume and the
    buttons sit at the bottom where a thumb reaches. Playing, the panel is lit like the home tiles. */
