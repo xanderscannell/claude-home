@@ -4,8 +4,8 @@
 # Logs:     journalctl -u claude-home-satellite -f
 #
 # BRAIN_URL uses the brain PC's IP; reserve that address in the router so it doesn't change.
-# Audio goes through ALSA "default": /etc/asound.conf (from asound.conf here) plays on the 3.5 mm jack and
-# listens on the USB headset's mic.
+# Audio goes through ALSA "default": /etc/asound.conf (from asound.conf here) plays on the Bluetooth speaker
+# (through the loopback card and bt-speaker.service) and listens on the USB headset's mic.
 
 [Unit]
 Description=Claude Home satellite

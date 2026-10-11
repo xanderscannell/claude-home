@@ -1,0 +1,21 @@
+# Plays everything the Pi sends to ALSA "default" on the Bluetooth speaker (see bt-speaker.sh).
+# Needs bluez-alsa (bluez-alsa-utils), the loopback card, and claude-pi in the bluetooth and audio groups:
+#   echo snd-aloop | sudo tee /etc/modules-load.d/snd-aloop.conf
+#   echo "options snd-aloop id=Loopback pcm_substreams=1" | sudo tee /etc/modprobe.d/snd-aloop.conf
+#   sudo modprobe snd-aloop
+# Set the speaker's address below, then:
+#   sudo cp bt-speaker.service /etc/systemd/system/ && sudo systemctl enable --now bt-speaker
+[Unit]
+Description=Claude Home: play the Pi's sound on the Bluetooth speaker
+After=bluetooth.service bluealsa.service
+Wants=bluealsa.service
+
+[Service]
+User=claude-pi
+Environment=BT_SPEAKER=2C:FD:B4:46:32:10
+ExecStart=/home/claude-pi/claude-home/satellite/bt-speaker.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -7,8 +7,8 @@ collects what the unit files' headers and the scripts say, in one place and in o
 
 - Raspberry Pi 3 B+, Raspberry Pi OS (Debian 13 Trixie, arm64), about 900 MB of RAM. With Chromium
   and the satellite running, about 330 MB is left.
-- 5" 800x480 HDMI touchscreen (USB touch), powered speakers on the 3.5 mm jack (ALSA card 0), and a USB headset as
-  ALSA card 2 for its mic.
+- 5" 800x480 HDMI touchscreen (USB touch), a JBL Charge 5 over Bluetooth for sound, and a USB headset
+  (ALSA card `Pro`) for its mic. Wi-Fi is on 5 GHz: on 2.4 GHz it shares the radio with Bluetooth.
 - User `claude-pi`, at `192.168.0.178`. The brain PC is `192.168.0.172`; both addresses are in the
   unit files, so reserve them in the router.
 - SSH by key only: `ssh -i ~/.ssh/claude_home_pi claude-pi@192.168.0.178`.
@@ -30,7 +30,7 @@ bare pattern also matches the SSH shell running it.
 
 ## Looking at it
 
-- Logs: `journalctl -u claude-home-satellite -f` (likewise `claude-home-display`, `raspotify`,
+- Logs: `journalctl -u claude-home-satellite -f` (likewise `claude-home-display`, `raspotify`, `bt-speaker`,
   `raspotify-watchdog`).
 - Screenshot, as `claude-pi`: `XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 grim shot.png`.
 - Spotify: `uv run --env-file ../.env python spotify_lab.py check` from `brain/` on the PC (more modes
@@ -43,9 +43,11 @@ bare pattern also matches the SSH shell running it.
 2. **Files.** Copy `satellite/` to `~/claude-home/satellite/`.
 3. **uv** in `~/.local/bin/uv`. The satellite needs Python 3.11 (openWakeWord's `tflite-runtime` has
    no newer builds), and uv installs it on first run.
-4. **Audio.** `sudo cp asound.conf /etc/asound.conf`. It assumes the jack is card 0 and the headset
-   card 2; check with `aplay -l`, and if not, change `hw:0,0`, the other card numbers in it, and the
-   satellite's `MIXER_CARD`. The `Master` and `Music` controls appear the first time something plays.
+4. **Audio.** `sudo apt install bluez-alsa-utils libasound2-plugin-bluez rfkill`, `sudo rfkill unblock
+   bluetooth`, and add `claude-pi` to the `bluetooth` group. Pair the speaker as `bt-speaker.sh`'s header
+   says, then set up the loopback card and `bt-speaker.service` as its header says. Then
+   `sudo cp asound.conf /etc/asound.conf`. It names the headset's card `Pro`; check with `arecord -l`
+   and change it if yours differs. The `Master` and `Music` controls appear the first time something plays.
 5. **Satellite.** Install `claude-home-satellite.service` as its header says. It needs the brain
    reachable on TCP 8765.
 6. **Kiosk.** Install `cage`, `chromium`, and `grim`. Run `python3 blank_cursor.py` as `claude-pi`,
