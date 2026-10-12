@@ -47,6 +47,7 @@ Connect speaker; the brain controls it through the Spotify Web API. Open
 | `SPOTIFY_TOKEN` | Where the Spotify sign-in is kept (default `brain/spotify_token.json`) |
 | `TODOIST_TOKEN`, `TODOIST_SHOPPING_PROJECT` | A Todoist API token (Settings > Integrations > Developer), and the project that is the shopping list (default `Shopping List`) |
 | `HA_URL`, `HA_TOKEN` | Home Assistant's address (e.g. `http://homeassistant.local:8123`, with the Model Context Protocol Server integration added) and a long-lived access token. Claude sees the entities exposed to Assist; the screen's Home pages are served from the same Home Assistant. |
+| `PERSONA` | Which voice in `brain/personas/` Claude speaks in (default `jarvis`); set it empty for the plain assistant |
 | `CLAUDE_HOME_DB` | Where the SQLite file lives (default `brain/home.db`) |
 | `CLAUDE_HOME_LOG` | Where the turn log goes (default `brain/turns.jsonl`); `ha_actions.jsonl` is written beside it |
 

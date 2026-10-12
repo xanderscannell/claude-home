@@ -11,7 +11,7 @@ Optional env: BRAIN_HOST (default localhost; set 0.0.0.0 to accept satellites fr
               CALENDAR_<LABEL> (one secret iCal address per calendar, e.g. CALENDAR_WORK), PHOTOS_DIR,
               SPOTIFY_CLIENT_ID / SPOTIFY_DEVICE (see spotify.py),
               HA_URL / HA_TOKEN (Home Assistant's MCP Server and a long-lived access token; also the screen's Home
-              pages, through home.py's own connection).
+              pages, through home.py's own connection), PERSONA (a voice in personas/, default jarvis; empty for none).
 
 Displays connect to /display?device=<name> and follow that device's conversation (see docs/architecture.md).
 
@@ -58,7 +58,7 @@ VOICE = HERE / "voices" / "en_GB-northern_english_male-medium.onnx"
 LOG = Path(os.environ.get("CLAUDE_HOME_LOG", HERE / "turns.jsonl"))
 HA_LOG = LOG.with_name("ha_actions.jsonl")
 
-SYSTEM_PROMPT = """You are Claude Home, a voice assistant on a smart speaker. Everything you write is spoken aloud.
+SYSTEM_PROMPT = """You are a voice assistant on a smart speaker. Everything you write is spoken aloud.
 - Answer in one to three short sentences unless asked for more.
 - Start with a short sentence that answers directly, then add detail. The first sentence is spoken while you write the rest.
 - No markdown, lists, emoji, or URLs. Say numbers, times, and units the way a person would speak them.
@@ -69,6 +69,13 @@ SYSTEM_PROMPT = """You are Claude Home, a voice assistant on a smart speaker. Ev
 - Use your tools for timers, alarms, the shopping list, weather, the calendar, a morning briefing, recipes, music, the speaker's volume, and remembering things. Confirm what you did in a few words.
 - Home Assistant controls the house's lights, switches, climate, TVs, and other speakers. Music requests use your own music tools unless a TV or other speaker is named.
 - When you end with a question, the speaker listens for the answer without the wake word, so only ask when you need to."""
+
+# Voice only, after the operating rules; its card rides on every message, since long sessions drift back to the default voice.
+PERSONA = os.environ.get("PERSONA", "jarvis")
+PERSONA_PROMPT, VOICE_CHECK = "", ""
+if PERSONA:
+    PERSONA_PROMPT = f"\n\n<persona>\n{(HERE / 'personas' / f'{PERSONA}.md').read_text(encoding='utf-8')}</persona>"
+    VOICE_CHECK = f"[{(HERE / 'personas' / f'{PERSONA}.card.txt').read_text(encoding='utf-8').strip()}] "
 
 OPTIONS = ClaudeAgentOptions(
     system_prompt=SYSTEM_PROMPT,
@@ -137,7 +144,7 @@ def transcribe(groq: httpx.Client, pcm: bytes) -> str:
 async def ask(client: ClaudeSDKClient, text: str):
     """Yield the reply one sentence at a time as Claude streams it. If the turn fails (a usage limit, an overload),
     say so: the failure arrives only in the result, and without this the speaker went silent (2026-10-08 15:40)."""
-    await client.query(f"[{datetime.now():%A %B %d, %I:%M %p}] {text}")
+    await client.query(f"[{datetime.now():%A %B %d, %I:%M %p}] {VOICE_CHECK}{text}")
     buf, muted, spoke = "", False, False
     async for msg in client.receive_response():
         if isinstance(msg, ResultMessage) and msg.is_error:
@@ -200,7 +207,7 @@ def options(device: str, categories: list[str] = ()) -> ClaudeAgentOptions:
         servers["ha"] = {"type": "http", "url": os.environ["HA_URL"].rstrip("/") + "/api/mcp",
                          "headers": {"Authorization": f"Bearer {os.environ.get('HA_TOKEN', '')}"}}
     logged = [HookMatcher(matcher="mcp__ha__.*", hooks=[log_ha(device)])]
-    return replace(OPTIONS, system_prompt=SYSTEM_PROMPT + memory, mcp_servers=servers,
+    return replace(OPTIONS, system_prompt=SYSTEM_PROMPT + memory + PERSONA_PROMPT, mcp_servers=servers,
                    hooks={"PostToolUse": logged, "PostToolUseFailure": logged})
 
 
