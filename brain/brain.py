@@ -11,7 +11,8 @@ Optional env: BRAIN_HOST (default localhost; set 0.0.0.0 to accept satellites fr
               CALENDAR_<LABEL> (one secret iCal address per calendar, e.g. CALENDAR_WORK), PHOTOS_DIR,
               SPOTIFY_CLIENT_ID / SPOTIFY_DEVICE (see spotify.py),
               HA_URL / HA_TOKEN (Home Assistant's MCP Server and a long-lived access token; also the screen's Home
-              pages, through home.py's own connection), PERSONA (a voice in personas/, default jarvis; empty for none).
+              pages, through home.py's own connection), PERSONA (a persona in personas/, default jarvis; empty for none),
+              PIPER_VOICE (a Piper voice in voices/, default en_GB-northern_english_male-medium).
 
 Displays connect to /display?device=<name> and follow that device's conversation (see docs/architecture.md).
 
@@ -54,7 +55,7 @@ import tools
 
 RATE = 16000
 HERE = Path(__file__).parent
-VOICE = HERE / "voices" / "en_GB-northern_english_male-medium.onnx"
+VOICE = HERE / "voices" / f"{os.environ.get('PIPER_VOICE', 'en_GB-northern_english_male-medium')}.onnx"
 LOG = Path(os.environ.get("CLAUDE_HOME_LOG", HERE / "turns.jsonl"))
 HA_LOG = LOG.with_name("ha_actions.jsonl")
 
