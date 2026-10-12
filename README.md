@@ -60,7 +60,8 @@ Home pages (`"source": "screen"`).
 
 **Tests** (from `brain/`): `uv run python test_brain.py`, `test_server.py`, and `test_display.py`
 (Playwright, 800x480 with touch); from `satellite/`: `uv run python test_satellite.py`. They use canned
-Claude replies (`CLAUDE_HOME_FAKE_LLM=1`) and a temporary database.
+Claude replies (`CLAUDE_HOME_FAKE_LLM=1`) and a temporary database. `persona_eval.py` is not a test: it runs real
+Claude on the home tools with fake backends and prints each reply, to judge a persona change by (see its header).
 
 **Display work without the Pi or Claude** (from `brain/`): `uv run python fake_brain.py`, then open
 http://localhost:8001/ at 800x480. It serves the real `display/` files with canned data and shows the mouse
