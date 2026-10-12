@@ -1,4 +1,5 @@
 # Plays everything the Pi sends to ALSA "default" on the Bluetooth speaker (see bt-speaker.sh).
+# Disabled while asound.conf plays on the mic array; to use it, point asound.conf's dmix at the loopback.
 # Needs bluez-alsa (bluez-alsa-utils), the loopback card, and claude-pi in the bluetooth and audio groups:
 #   echo snd-aloop | sudo tee /etc/modules-load.d/snd-aloop.conf
 #   echo "options snd-aloop id=Loopback pcm_substreams=1" | sudo tee /etc/modprobe.d/snd-aloop.conf

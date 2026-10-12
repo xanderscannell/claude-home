@@ -7,8 +7,9 @@ collects what the unit files' headers and the scripts say, in one place and in o
 
 - Raspberry Pi 3 B+, Raspberry Pi OS (Debian 13 Trixie, arm64), about 900 MB of RAM. With Chromium
   and the satellite running, about 330 MB is left.
-- 5" 800x480 HDMI touchscreen (USB touch), a JBL Charge 5 over Bluetooth for sound, and a ReSpeaker
-  XVF3800 4-mic array over USB (ALSA card `Array`) for the mic. Wi-Fi is on 5 GHz: on 2.4 GHz it shares the radio with Bluetooth.
+- 5" 800x480 HDMI touchscreen (USB touch), and a ReSpeaker XVF3800 4-mic
+  array over USB (ALSA card `Array`) for the mic and, through its 3.5 mm jack, the sound. Wi-Fi is on 5 GHz:
+  on 2.4 GHz it shares the radio with Bluetooth.
 - User `claude-pi`, at `192.168.0.178`. The brain PC is `192.168.0.172`; both addresses are in the
   unit files, so reserve them in the router.
 - SSH by key only: `ssh -i ~/.ssh/claude_home_pi claude-pi@192.168.0.178`.
@@ -43,11 +44,12 @@ bare pattern also matches the SSH shell running it.
 2. **Files.** Copy `satellite/` to `~/claude-home/satellite/`.
 3. **uv** in `~/.local/bin/uv`. The satellite needs Python 3.11 (openWakeWord's `tflite-runtime` has
    no newer builds), and uv installs it on first run.
-4. **Audio.** `sudo apt install bluez-alsa-utils libasound2-plugin-bluez rfkill`, `sudo rfkill unblock
-   bluetooth`, and add `claude-pi` to the `bluetooth` group. Pair the speaker as `bt-speaker.sh`'s header
-   says, then set up the loopback card and `bt-speaker.service` as its header says. Then
-   `sudo cp asound.conf /etc/asound.conf`. It names the mic array's card `Array`; check with `arecord -l`
-   and change it if yours differs. The `Master` and `Music` controls appear the first time something plays.
+4. **Audio.** Load the loopback card (it holds the volume controls) as `bt-speaker.service`'s header says,
+   then `sudo cp asound.conf /etc/asound.conf`. It names the mic array's card `Array`; check with
+   `arecord -l` and change it if yours differs. Raise the array's own volume, which is too quiet to hear
+   at its default: `amixer -c Array sset PCM,0 100%`, `amixer -c Array sset PCM,1 100%`, then
+   `sudo alsactl store`. The `Master` and `Music` controls appear the first time something plays. (For a
+   Bluetooth speaker instead, see `bt-speaker.sh`, `bt-speaker.service`, and asound.conf's header.)
 5. **Satellite.** Install `claude-home-satellite.service` as its header says. It needs the brain
    reachable on TCP 8765.
 6. **Kiosk.** Install `cage`, `chromium`, and `grim`. Run `python3 blank_cursor.py` as `claude-pi`,
