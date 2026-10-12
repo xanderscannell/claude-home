@@ -291,8 +291,9 @@ registered, plus an `mcp` client for Home Assistant.
 ### Prompt and caching
 
 - **System prompt:** written for speech. Short answers, no markdown, lists, or URLs; numbers and times said the way a person would say them; at most one clarifying question.
+- **Persona:** `PERSONA` (default `jarvis`) adds a voice-only file from `brain/personas/` after the operating rules and memory, in `<persona>` tags. It changes wording only, and says the operating rules win. Its one-line card (`<name>.card.txt`) rides on every message after the time, because a session lasts as long as its satellite stays connected and long sessions drift back to the default voice. Routine commands get a bare confirmation; the humor is for conversation. `brain/persona_eval.py` measures a change on both (fifteen routine commands, eight conversational prompts) with real Claude and fake backends.
 - **Caching** is handled by the Agent SDK.
-- **Dynamic context:** the current time is prefixed to each user message rather than baked into the system prompt, so the cached prefix stays stable. Saved memory facts are added to the system prompt when the device's session starts.
+- **Dynamic context:** the current time (and the persona's card) is prefixed to each user message rather than baked into the system prompt, so the cached prefix stays stable. Saved memory facts are added to the system prompt when the device's session starts.
 
 ### Tools
 
@@ -419,7 +420,9 @@ minimum per request (checked 2026-10-06).
 
 **Assumptions per turn:** about 3.5k input tokens (system prompt, tools, short history) and
 about 100 output tokens. A tool call roughly doubles input, because the tool loop sends a
-second request.
+second request. The Jarvis persona adds about 1.4k input tokens to every request (its file in the
+system prompt, its card on the message), roughly $0.00015 per request on Haiku 5.5 and not
+counted below.
 
 **Prompt caching saves less than it looks.** The cache lasts 5 minutes and home use is
 sparse, so most turns pay the 1.25x cache write rather than the 0.1x read. Caching still
