@@ -39,6 +39,26 @@ bare pattern also matches the SSH shell running it.
 - Spotify: `uv run --env-file ../.env python spotify_lab.py check` from `brain/` on the PC (more modes
   in its header). It SSHes in with the same key; set `PI_HOST` if the address changes.
 
+## Open issue: a cropped page after a cold boot
+
+Seen once (2026-10-29): after a reboot, Chromium laid the page out at about 1360x760 on the 1280x720 screen, so
+the left and bottom were cut off (the clock, the menu button, the mic button). Restarting the kiosk fixed it, and
+the next reboot came up fine. The cause is unknown; the screen had already been rotated about 17 s before
+Chromium opened its window on a good boot, so it isn't a race with `wlr-randr`.
+
+**`claude-home-display.service` has temporary boot logging for this** (marked `shortcut:` in the unit): cage runs
+with `-D`, `kiosk:` lines mark the output before and after rotating and when Chromium starts, and
+`/tmp/kiosk-boot.png` is a screenshot 20 s in (usually still white; Chromium takes that long to draw). When it
+happens again, before restarting anything:
+
+1. Screenshot it (`grim`, above).
+2. Read the boot's markers and cage's log: `journalctl -b -o short-precise | grep "kiosk:"` and
+   `journalctl -b -o short-precise _COMM=cage`. They're logged under the login session, so
+   `-u claude-home-display` doesn't show them.
+3. Compare the timings with a good boot, then restart the kiosk: `pkill -f "[/]usr/bin/chromium --kiosk"`.
+
+Once the cause is found and fixed, take the logging out of the unit and delete this section.
+
 ## Rebuilding it from scratch
 
 1. **OS and user.** Raspberry Pi OS Trixie (64-bit), user `claude-pi`, SSH key from the PC in
