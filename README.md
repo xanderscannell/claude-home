@@ -176,7 +176,7 @@ than the Pi 5 build, with the brain on the PC:
 - **Cameras:** a full-screen live view of a Home Assistant camera, asked for by voice ("show me the front
   yard") or opened by an automation through `POST /show` (the doorbell popup).
 
-Not done yet: the Pi 5 hardware with the mic array, and hearing the wake word over loud music.
+Not done yet: the Pi 5 (the mic array already runs on the Pi 3), and hearing the wake word over loud music.
 
 ### Later (not committed)
 
