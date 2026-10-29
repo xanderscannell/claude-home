@@ -1,0 +1,6 @@
+# udev rule: turns the Touch Display 2's touch input 90 degrees counter-clockwise, to match the screen
+# rotation in claude-home-display.service (cage rotates the picture but not touch).
+# Install:  sudo cp touch-rotate.rules /etc/udev/rules.d/99-touch-rotate.rules && sudo udevadm trigger
+#           then restart claude-home-display. If the screen's transform changes, this matrix must too
+#           (transform 270 pairs with "0 1 0 -1 0 1").
+ENV{ID_INPUT_TOUCHSCREEN}=="1", ENV{LIBINPUT_CALIBRATION_MATRIX}="0 -1 1 1 0 0"

@@ -1,6 +1,8 @@
 # systemd unit for the display on a Raspberry Pi: Chromium in kiosk mode under the cage compositor, on tty1.
 # Install:  copy kiosk.html and blank_cursor.py to ~/claude-home/satellite/, then
 #           python3 ~/claude-home/satellite/blank_cursor.py   (as claude-pi: hides cage's cursor)
+#           sudo apt install wlr-randr
+#           sudo cp touch-rotate.rules /etc/udev/rules.d/99-touch-rotate.rules && sudo udevadm trigger
 #           sudo cp claude-home-display.service /etc/systemd/system/
 #           sudo systemctl disable --now getty@tty1
 #           sudo systemctl enable --now claude-home-display
@@ -26,10 +28,13 @@ UtmpIdentifier=tty1
 UtmpMode=user
 # Clock and date format: Raspberry Pi OS defaults to en-GB (24-hour, day before month).
 Environment=LANG=en_US.UTF-8 LANGUAGE=en_US
-ExecStart=/usr/bin/cage -- /usr/bin/chromium --kiosk --noerrdialogs --no-first-run --disable-infobars \
+# The Touch Display 2 is a portrait panel mounted landscape: cage has no rotate option, so wlr-randr turns
+# it 90 degrees counter-clockwise first. Touch is turned to match by touch-rotate.rules.
+ExecStart=/usr/bin/cage -- /bin/sh -c 'wlr-randr --output DSI-1 --transform 90; \
+    exec /usr/bin/chromium --kiosk --noerrdialogs --no-first-run --disable-infobars \
     --ozone-platform=wayland --password-store=basic --disable-features=Translate \
     --check-for-update-interval=31536000 \
-    "file:///home/claude-pi/claude-home/satellite/kiosk.html#http://192.168.0.172:8765/display/?device=claude-pi"
+    "file:///home/claude-pi/claude-home/satellite/kiosk.html#http://192.168.0.172:8765/display/?device=claude-pi"'
 Restart=always
 RestartSec=5
 

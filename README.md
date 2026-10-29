@@ -4,7 +4,7 @@ A self-hosted smart speaker, and later a smart display, built on the Claude API 
 Home Assistant. It replaces a Google Home / Nest Hub.
 
 **Status:** Phase 1 works on a Raspberry Pi 3 with a USB headset, talking to a brain on a
-Windows PC. Most of Phase 3's display runs on the same Pi's 5" touchscreen (see
+Windows PC. Most of Phase 3's display runs on the same Pi's 7" Touch Display 2 (see
 [Phase 3 progress](#phase-3-progress)). Phase 2 has started: Claude controls Home Assistant through its MCP Server
 (see [Phase 2 progress](#phase-2-progress)). See [docs/architecture.md](docs/architecture.md) for the system design
 and [docs/pi.md](docs/pi.md) for working on the Pi.

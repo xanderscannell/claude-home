@@ -7,7 +7,8 @@ collects what the unit files' headers and the scripts say, in one place and in o
 
 - Raspberry Pi 3 B+, Raspberry Pi OS (Debian 13 Trixie, arm64), about 900 MB of RAM. With Chromium
   and the satellite running, about 330 MB is left.
-- 5" 800x480 HDMI touchscreen (USB touch), and a ReSpeaker XVF3800 4-mic
+- Raspberry Pi Touch Display 2 (7", 720x1280 portrait panel over DSI, Goodix touch), mounted landscape
+  and rotated in software (see step 6), and a ReSpeaker XVF3800 4-mic
   array over USB (ALSA card `Array`) for the mic and, through its 3.5 mm jack, the sound. Wi-Fi is on 5 GHz:
   on 2.4 GHz it shares the radio with Bluetooth.
 - User `claude-pi`, at `192.168.0.178`. The brain PC is `192.168.0.172`; both addresses are in the
@@ -25,6 +26,7 @@ collects what the unit files' headers and the scripts say, in one place and in o
 | `satellite/pyproject.toml` or `uv.lock` | Copy both; the unit runs `uv run --frozen`, which syncs on start |
 | `kiosk.html` or `claude-home-display.service` | Copy, `sudo systemctl daemon-reload` if the unit changed, then `sudo systemctl restart claude-home-display` |
 | `asound.conf` | Copy to `/etc/asound.conf`, then restart the satellite and raspotify |
+| `touch-rotate.rules` | Copy to `/etc/udev/rules.d/99-touch-rotate.rules`, `sudo udevadm trigger`, then restart `claude-home-display` |
 
 When killing a process over SSH, bracket the first letter (`pkill -f "[p]ython satellite.py"`); a
 bare pattern also matches the SSH shell running it.
@@ -52,8 +54,10 @@ bare pattern also matches the SSH shell running it.
    Bluetooth speaker instead, see `bt-speaker.sh`, `bt-speaker.service`, and asound.conf's header.)
 5. **Satellite.** Install `claude-home-satellite.service` as its header says. It needs the brain
    reachable on TCP 8765.
-6. **Kiosk.** Install `cage`, `chromium`, and `grim`. Run `python3 blank_cursor.py` as `claude-pi`,
-   then install `claude-home-display.service` as its header says (this disables `getty@tty1`).
+6. **Kiosk.** Install `cage`, `chromium`, `grim`, and `wlr-randr`. Run `python3 blank_cursor.py` as `claude-pi`,
+   then install `touch-rotate.rules` and `claude-home-display.service` as the service's header says (this
+   disables `getty@tty1`). The display auto-detects (`display_auto_detect=1`); the unit turns the screen
+   to landscape and the udev rule turns touch to match.
 7. **raspotify.** Install it from [its README](https://github.com/dtcooper/raspotify), then
    append to `/etc/raspotify/conf` (keep the original as `conf.orig`):
 
