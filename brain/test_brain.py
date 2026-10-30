@@ -297,14 +297,18 @@ assert sorted(photos.names(pics)) == ["land.jpg", "phone.jpg", "tall.png"]
 assert photos.find("land.jpg", pics) and photos.find("../land.jpg", pics) is None
 assert photos.find("notes.txt", pics) is None and photos.find("missing.jpg", pics) is None
 for name in ("land.jpg", "tall.png", "phone.jpg"):
-    assert Image.open(io.BytesIO(photos.render(pics / name))).size == (800, 480), name
+    assert Image.open(io.BytesIO(photos.render(pics / name))).size == (1280, 720), name
 upright = Image.open(io.BytesIO(photos.render(pics / "phone.jpg")))
-top, bottom = upright.getpixel((400, 20)), upright.getpixel((400, 460))
+top, bottom = upright.getpixel((640, 30)), upright.getpixel((640, 690))
 assert top[0] > 200 and top[2] < 60 and bottom[2] > 200 and bottom[0] < 60, (top, bottom)  # red over blue
 cache = pathlib.Path(tempfile.mkdtemp())
 first = photos.cached(pics / "land.jpg", cache)
 stamp = first.stat().st_mtime_ns
 assert photos.cached(pics / "land.jpg", cache) == first and first.stat().st_mtime_ns == stamp  # not re-rendered
+photos.SIZE = (800, 480)  # a copy cached for the old 5" screen...
+old = photos.cached(pics / "land.jpg", cache)
+photos.SIZE = (1280, 720)
+assert Image.open(old).size == (800, 480) and photos.cached(pics / "land.jpg", cache) == first  # ...isn't served
 
 # Calendar: feeds from CALENDAR_* variables, recurrence, cancellations, all-day, another time zone
 import agenda  # noqa: E402

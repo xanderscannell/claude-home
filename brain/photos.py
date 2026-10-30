@@ -1,4 +1,4 @@
-"""Slideshow photos: a folder on this PC, resized for the 800x480 screen and cached.
+"""Slideshow photos: a folder on this PC, resized for the 1280x720 screen and cached.
 
 PHOTOS_DIR overrides the folder (default: Pictures/Claude Home in your home folder). Drop photos in to add
 them; HEIC isn't supported (Pillow can't read it without another library), so export those as JPEG.
@@ -12,7 +12,7 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
-SIZE = (800, 480)
+SIZE = (1280, 720)
 EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 CACHE = Path(__file__).parent / ".cache" / "photos"
 
@@ -48,9 +48,9 @@ def render(src: Path) -> bytes:
 
 
 def cached(src: Path, cache: Path = CACHE) -> Path:
-    """The screen-sized copy of src, rendered once per version of the file."""
+    """The screen-sized copy of src, rendered once per version of the file and screen size."""
     stat = src.stat()
-    key = hashlib.sha1(f"{src}|{stat.st_mtime_ns}|{stat.st_size}".encode()).hexdigest()[:20]
+    key = hashlib.sha1(f"{src}|{stat.st_mtime_ns}|{stat.st_size}|{SIZE}".encode()).hexdigest()[:20]
     out = cache / f"{key}.jpg"
     if not out.exists():
         cache.mkdir(parents=True, exist_ok=True)

@@ -900,7 +900,7 @@ def main():
     assert httpx.get(f"{base}/photos").json() == ["beach day.jpg"]
     r = httpx.get(f"{base}/photos/beach%20day.jpg")
     assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg", r.status_code
-    assert Image.open(io.BytesIO(r.content)).size == (800, 480)
+    assert Image.open(io.BytesIO(r.content)).size == (1280, 720)
     for bad in ("..%2Fsecret.jpg", "missing.jpg", "%2E%2E%2Fsecret.jpg"):
         assert httpx.get(f"{base}/photos/{bad}").status_code == 404, bad
 
