@@ -31,7 +31,8 @@ Environment=LANG=en_US.UTF-8 LANGUAGE=en_US
 # The Touch Display 2 is a portrait panel mounted landscape: cage has no rotate option, so wlr-randr turns
 # it 90 degrees counter-clockwise first. Touch is turned to match by touch-rotate.rules.
 # shortcut: temporary boot logging (cage -D, the output before and after rotating, a screenshot 20 s in at
-# /tmp/kiosk-boot.png) to find why a cold boot lays the page out too big; remove once that's fixed.
+# /tmp/kiosk-boot.png) to find why a cold boot lays the page out too big (docs/issues.md); remove once
+# that's fixed.
 ExecStart=/usr/bin/cage -D -- /bin/sh -c 'echo "kiosk: output before rotating"; wlr-randr; \
     wlr-randr --output DSI-1 --transform 90; echo "kiosk: rotate exited $$?"; wlr-randr; \
     (sleep 20; grim /tmp/kiosk-boot.png; echo "kiosk: output 20 s after starting Chromium"; wlr-randr) & \
