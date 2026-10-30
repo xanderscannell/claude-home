@@ -106,8 +106,8 @@ sequenceDiagram
 
 | Layer | Choice | Why | Swap to if... |
 |---|---|---|---|
-| Satellite hardware, P1-2 | **Testing:** the Pi 3 and USB headset on hand. **Room use:** Raspberry Pi 5 (4 GB+) and a USB conference speakerphone (Jabra Speak / Anker PowerConf class) | A Pi 3 runs openWakeWord and Silero comfortably, and a headset needs no echo cancellation. For an actual room, a speakerphone gives a mic array, hardware echo cancellation, and a speaker in one USB device. | Run the brain on a desktop PC during development if the Pi 3 is slow at Piper TTS |
-| Satellite hardware, P3 | Pi 5, Raspberry Pi Touch Display 2 (or any DSI/HDMI touchscreen), ReSpeaker XVF3800 mic array, amp and speakers | XVF3800 does echo cancellation and beamforming on-chip. Playback must be routed through it so it has the echo reference. | A repurposed Android tablet showing the display UI: cheap, but weaker mics and no control over echo cancellation |
+| Satellite hardware, P1-2 | The P3 hardware below: the Pi 3 B+ now, a Raspberry Pi 5 (4 GB+) later. (It started on a USB headset; the ReSpeaker array took the place of the USB conference speakerphone first planned for room use.) | A Pi 3 runs openWakeWord and Silero comfortably. The array gives the mic, hardware echo cancellation, and the speaker output in one USB device. | Run the brain on a desktop PC during development if the Pi 3 is slow at Piper TTS |
+| Satellite hardware, P3 | Pi 5 (the Pi 3 B+ until then), Raspberry Pi Touch Display 2 (or any DSI/HDMI touchscreen), ReSpeaker XVF3800 mic array, the sound out of the array's 3.5 mm jack | XVF3800 does echo cancellation and beamforming on-chip. Playback must be routed through it so it has the echo reference. | A repurposed Android tablet showing the display UI: cheap, but weaker mics and no control over echo cancellation |
 | Wake word | openWakeWord | Open source, runs on the Pi CPU, custom words trainable from synthetic speech, so "Hey Claude" is possible. Use a stock model ("hey jarvis") during development. | Porcupine (commercial) if false triggers are bad; microWakeWord if moving to ESP32 |
 | End-of-speech detection | Silero VAD | Small, accurate, CPU-only | |
 | Audio I/O | `sounddevice` (PortAudio) on plain ALSA, configured by `satellite/asound.conf` | Simple Python API. ALSA's dmix lets the voice and music play at once on the mic array's output. Two `softvol` controls: `Master` on the default output is the speaker's volume for everything, and `music` (control `Music`) gives music its own level on top, so the satellite can duck it with `amixer`. Software controls behave the same whatever speaker is plugged in. | PipeWire, if per-stream routing gets more complicated (heavy for a Pi 3) |
@@ -154,7 +154,7 @@ Brain -> satellite:
 | `listen` | Start listening as if the wake word fired (tap-to-talk on a screen) |
 | `ringing {on}` | An alarm or timer started or stopped ringing here. While on, the satellite also sends any speech it hears (`ring_speech`), so "stop" works without the wake word. |
 | `stop` | Drop all queued audio now (Stop on a screen, a stopped reply, a silenced alarm) |
-| `volume {level}` | Set the speaker's volume: the `Master` software control from `asound.conf` (`amixer -c 2 sset Master`), not the USB device's own control, which some devices ignore |
+| `volume {level}` | Set the speaker's volume: the `Master` software control from `asound.conf` (`amixer -c Loopback sset Master`), not the USB device's own control, which some devices ignore |
 
 **Ducking is the satellite's job:** on wake or `listen` it sets the ALSA `Music` control to 20%,
 and back to 100% once the reply has played or the request was cancelled. Music players

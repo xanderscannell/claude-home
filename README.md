@@ -3,9 +3,9 @@
 A self-hosted smart speaker, and later a smart display, built on the Claude API and
 Home Assistant. It replaces a Google Home / Nest Hub.
 
-**Status:** Phase 1 works on a Raspberry Pi 3 with a USB headset, talking to a brain on a
-Windows PC. Most of Phase 3's display runs on the same Pi's 7" Touch Display 2 (see
-[Phase 3 progress](#phase-3-progress)). Phase 2 has started: Claude controls Home Assistant through its MCP Server
+**Status:** Phase 1 works on a Raspberry Pi 3 B+ with a ReSpeaker XVF3800 mic array (the sound comes out of
+the array's 3.5 mm jack), talking to a brain on a Windows PC. Most of Phase 3's display runs on the same Pi's
+7" Touch Display 2 (see [Phase 3 progress](#phase-3-progress)). Phase 2 has started: Claude controls Home Assistant through its MCP Server
 (see [Phase 2 progress](#phase-2-progress)). See [docs/architecture.md](docs/architecture.md) for the system design
 and [docs/pi.md](docs/pi.md) for working on the Pi.
 
@@ -83,7 +83,7 @@ Build order:
 1. **Laptop prototype.** Press Enter to talk: mic -> STT -> Claude -> TTS -> speaker, with Claude running on your subscription through the Agent SDK. Proves the turn loop before any hardware or wake word work.
 2. **Sentence streaming.** Speak each sentence as Claude produces it. Add per-stage latency logging.
 3. **Wake word + VAD.** Split into satellite and brain processes talking over a WebSocket.
-4. **Move to the Pi** with a USB speakerphone. Run under systemd.
+4. **Move to the Pi.** Run under systemd.
 5. **Tools:** timers, memory ("remember that..."), weather, web search. Follow-up questions without repeating the wake word.
 6. **Switch from the Claude subscription to an API key** (one environment variable) before it runs 24/7.
 
@@ -136,7 +136,7 @@ The Nest Hub equivalent: a screen, better speakers, and a mic array that can hea
 
 Build order:
 
-1. **Hardware build:** Pi 5, touchscreen, ReSpeaker XVF3800, amp and speakers. Verify echo cancellation first, because everything else depends on it.
+1. **Hardware build:** Pi 5, touchscreen, ReSpeaker XVF3800, with the sound out of the array's 3.5 mm jack. Verify echo cancellation first, because everything else depends on it.
 2. **Display shell:** kiosk browser, listening/thinking/speaking states, ambient clock and weather.
 3. **Visual answers:** Claude renders cards on screen while giving a short spoken answer.
 4. Timers, now playing, and touch tiles for Home Assistant devices.
@@ -146,8 +146,8 @@ Done when it does everything above and can hear the wake word over its own music
 
 #### Phase 3 progress
 
-Built on the hardware at hand (the Pi 3, a 7" Touch Display 2 at 1280x720, a USB headset) rather
-than the Pi 5 build, with the brain on the PC:
+Built on the hardware at hand (the Pi 3 B+, a 7" Touch Display 2 at 1280x720, the ReSpeaker XVF3800 array
+with the sound out of its 3.5 mm jack) rather than the Pi 5 build, with the brain on the PC:
 
 - **Home screen:** a large clock over a slideshow of the household's photos (the accent color
   follows each photo), weather, and a strip of what's next: timers, the next alarm, the next

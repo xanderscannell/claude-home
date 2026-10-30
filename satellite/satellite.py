@@ -141,7 +141,7 @@ class Player:
         """Block until everything queued has played."""
         while self.buf:
             if not self.stream.active:
-                raise SystemExit("audio output stopped (headset unplugged?); exiting so the service restarts")
+                raise SystemExit("audio output stopped (array unplugged?); exiting so the service restarts")
             time.sleep(0.02)
         time.sleep(self.stream.latency)
 
