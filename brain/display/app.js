@@ -597,7 +597,7 @@ function syncHeader() {
 // the move happens; short of that it springs back. Past either end of the row nothing moves.
 const SWIPE_AT = 1 / 3;
 const SWIPE_FLICK = 0.5;  // px per ms
-const SWIPE_LOCK_PX = 10;  // this far before it's known whether it's sideways (a swipe) or not (a scroll, a tap)
+const SWIPE_LOCK_PX = 15;  // this far before it's known whether it's sideways (a swipe) or not (a scroll, a tap)
 const SETTLE_MS = 220;  // .settling's transition
 let gesture = null;  // a finger that is or may become a swipe: {id, x, y, t, dx, v, row}
 // The swipe under way: {mode: "side" | "over" | "away", page (the one you're on), next (the one coming),
@@ -767,7 +767,7 @@ function letGo() {
   const swallow = (e) => { e.stopPropagation(); e.preventDefault(); };
   document.addEventListener("click", swallow, true);
   setTimeout(() => document.removeEventListener("click", swallow, true), 0);
-  const go = (s.ahead * g.dx) / innerWidth > SWIPE_AT || (s.ahead * g.v > SWIPE_FLICK && s.ahead * g.dx > 40);
+  const go = (s.ahead * g.dx) / innerWidth > SWIPE_AT || (s.ahead * g.v > SWIPE_FLICK && s.ahead * g.dx > 60);
   for (const l of layers()) l.classList.replace("dragging", "settling");
   place(go ? 1 : 0);
   const dashLands = go ? s.next === els.dashboard : s.page === els.dashboard;
@@ -1750,7 +1750,7 @@ function paintVolume() {
   els.volSlider.style.setProperty("--fill", `${els.volSlider.value}%`);
 }
 
-const volBelow = () => els.volBar.offsetHeight + 26;  // far enough down to be off the screen
+const volBelow = () => els.volBar.offsetHeight + 39;  // far enough down to be off the screen
 
 function placeVolume(y, settle) {  // y: px below its place
   els.volBar.classList.toggle("dragging", !settle);
@@ -1806,7 +1806,7 @@ for (const type of ["pointerup", "pointercancel"]) {
     if (!volDrag || e.pointerId !== volDrag.id) return;
     const { dy, v } = volDrag;
     volDrag = null;
-    if (dy > volBelow() * SWIPE_AT || (v > SWIPE_FLICK && dy > 20)) openVolume();
+    if (dy > volBelow() * SWIPE_AT || (v > SWIPE_FLICK && dy > 30)) openVolume();
     else closeVolume();
   });
 }
@@ -1839,7 +1839,7 @@ function renderSheet() {
   els.sheetBody.replaceChildren(...nodes);
   if (sheetCard.kind === "timers" && !ticker && ambient.timers.length) ticker = setInterval(tick, 1000);
   const step = els.sheetBody.querySelector(".step-text");
-  if (step) shrinkToFit(step, 24);
+  if (step) shrinkToFit(step, 36);
   paintMusic();
 }
 
@@ -1882,18 +1882,18 @@ function addReply(text) {
   fitReply();
 }
 
-// Long text shrinks 2px at a time to fit its box, down to a floor
+// Long text shrinks 3px at a time to fit its box, down to a floor
 function shrinkToFit(node, min) {
   let size = parseFloat(getComputedStyle(node).fontSize);
   while (node.scrollHeight > node.clientHeight && size > min) {
-    size -= 2;
+    size -= 3;
     node.style.fontSize = `${size}px`;
   }
 }
 
-// Long replies shrink to fit instead of scrolling: 36px down to 24px, then the oldest words scroll off.
+// Long replies shrink to fit instead of scrolling: 54px down to 36px, then the oldest words scroll off.
 function fitReply() {
-  shrinkToFit(els.reply, 24);
+  shrinkToFit(els.reply, 36);
   els.reply.scrollTop = els.reply.scrollHeight;
 }
 

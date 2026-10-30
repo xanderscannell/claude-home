@@ -23,7 +23,7 @@ START = dt.datetime(2026, 10, 7, 9, 41, 0)  # a Wednesday morning, local time
 W, H = 1280, 720  # the Touch Display 2, landscape
 
 
-def big(box, w=64, h=64) -> bool:
+def big(box, w=96, h=96) -> bool:
     """A touch target at least w x h px. Rounded: boxes measured mid-slide come out a hair under (63.99997)."""
     return bool(box) and round(box["width"]) >= w and round(box["height"]) >= h
 
@@ -135,7 +135,7 @@ def test_clock_comes_down_when_the_strip_is_empty(b):
     middle = lambda sel: (lambda r: r["y"] + r["height"] / 2)(d.page.locator(sel).bounding_box())  # noqa: E731
     d.push(ambient([], weather=None))
     d.page.wait_for_timeout(500)  # (its move is real time)
-    assert shift(".clock") == 62
+    assert shift(".clock") == 93
     down = middle("#date")
 
     pasta = {"id": 1, "label": "pasta", "ends_at": START.timestamp() + 300, "duration": 600, "paused_left": None}
@@ -147,14 +147,14 @@ def test_clock_comes_down_when_the_strip_is_empty(b):
 
     d.push(ambient([], weather=None))
     d.page.wait_for_timeout(500)
-    assert shift(".clock") == 62, "and down again when the strip empties"
+    assert shift(".clock") == 93, "and down again when the strip empties"
     d.close()
 
     # At night (the night clock is only drawn then), it comes down and goes up the same way
     d = Display(b, start=dt.datetime(2026, 10, 7, 23, 0, 0))
     d.push(hello(), ambient([], weather=None))
     d.page.wait_for_timeout(500)
-    assert is_night(d) and shift(".night-time") == 62
+    assert is_night(d) and shift(".night-time") == 93
     d.push(ambient([dict(pasta, ends_at=dt.datetime(2026, 10, 7, 23, 5).timestamp())], weather=None))
     d.page.wait_for_timeout(500)
     assert shift(".night-time") == 0
@@ -198,7 +198,7 @@ def test_long_reply_fits(b):
            {"type": "state", "state": "speaking"}, {"type": "reply", "text": LONG})
     fits = d.page.evaluate("""() => { const r = document.getElementById('reply');
         return { fits: r.scrollHeight <= r.clientHeight + 1, size: parseFloat(getComputedStyle(r).fontSize) }; }""")
-    assert fits["fits"] and fits["size"] >= 24, fits
+    assert fits["fits"] and fits["size"] >= 36, fits
     d.shot("long-reply")
     d.close()
 
@@ -382,14 +382,14 @@ def test_night_mode(b):
 
     # Ringing still shows at night, on top; afterwards it's the night clock again
     d.push({"type": "ringing", "ringing": {"kind": "alarm", "id": 1, "label": "", "time": "06:30"}})
-    assert d.page.evaluate("document.elementFromPoint(400, 240).closest('section').id") == "ringing"
+    assert d.page.evaluate("document.elementFromPoint(640, 360).closest('section').id") == "ringing"
     d.shot("night-ringing", settle=200)
     d.push({"type": "ringing", "ringing": None})
     assert d.visible("#night") and not d.visible("#ringing")
 
     # A conversation comes up over the night clock and leaves it behind
     d.push({"type": "state", "state": "listening"})
-    assert d.page.evaluate("document.elementFromPoint(400, 240).closest('section').id") == "overlay"
+    assert d.page.evaluate("document.elementFromPoint(640, 360).closest('section').id") == "overlay"
     d.push({"type": "state", "state": "idle"})
     d.page.clock.run_for(4100)
     assert not d.visible("#overlay") and d.visible("#night")
@@ -495,7 +495,7 @@ def test_sheets(b):
     offset = lambda: float(d.page.eval_on_selector(".dial-arc", "a => a.style.strokeDashoffset"))  # noqa: E731
     assert abs(offset() - 0.5) < 0.01, offset()
     dial, pause = d.page.locator(".dial").bounding_box(), d.page.locator(".tmr-btn.tmr-main").bounding_box()
-    assert pause["x"] > dial["x"] + dial["width"] and big(pause, w=240, h=96), (dial, pause)
+    assert pause["x"] > dial["x"] + dial["width"] and big(pause, w=360, h=144), (dial, pause)
     d.shot("sheet-timer", settle=400)
     d.page.clock.run_for(2000)
     assert d.text(".dial-time") == "4:10", "the dial isn't ticking"
@@ -534,7 +534,7 @@ def test_sheets(b):
     assert first["y"] == second["y"] and second["x"] > first["x"] + first["width"], (first, second)
     under = d.page.locator(".tmr").nth(0).locator(".tmr-btn")
     assert under.count() == 2 and under.first.bounding_box()["y"] > first["y"] + first["height"]
-    assert under.all_inner_texts() == ["", ""] and big(under.first.bounding_box(), w=72, h=72)
+    assert under.all_inner_texts() == ["", ""] and big(under.first.bounding_box(), w=108, h=108)
     d.shot("sheet-timers-two", settle=400)
 
     # Three: smaller still, all on screen
@@ -671,11 +671,11 @@ def test_volume(b):
     d = Display(b)
     volumes = lambda: [m["level"] for m in d.sent if m.get("type") == "volume"]  # noqa: E731
     bar_up = lambda: d.visible("#vol-bar") and d.page.eval_on_selector(  # noqa: E731
-        "#vol-bar", "b => Math.round(b.getBoundingClientRect().bottom)") == H - 24
+        "#vol-bar", "b => Math.round(b.getBoundingClientRect().bottom)") == H - 36
 
     # Before the speaker has reported a level: say so
     edge = d.page.locator("#vol-edge").bounding_box()
-    assert edge["y"] + edge["height"] == H and edge["width"] == W and edge["height"] <= 20, edge
+    assert edge["y"] + edge["height"] == H and edge["width"] == W and edge["height"] <= 30, edge
     top = lambda: d.page.eval_on_selector("#vol-bar", "b => b.getBoundingClientRect().top")  # noqa: E731
     volume_up(d, release=False)
     held = top()
@@ -693,14 +693,14 @@ def test_volume(b):
     assert d.text("#vol-level") == "40" and d.page.input_value("#vol-slider") == "40" and not d.visible("#vol-none")
     bar = d.page.locator("#vol-bar").bounding_box()
     icon, slider, level = (d.page.locator(sel).bounding_box() for sel in (".vol-icon", "#vol-slider", "#vol-level"))
-    assert round(bar["x"]) == 36 and round(bar["width"]) == W - 2 * 36, bar
+    assert round(bar["x"]) == 54 and round(bar["width"]) == W - 2 * 54, bar
     assert icon["x"] < slider["x"] < slider["x"] + slider["width"] < level["x"], (icon, slider, level)
-    assert big(slider, w=480, h=64), slider
+    assert big(slider, w=720, h=96), slider
     d.shot("volume")
 
     # Drag from 40 to 80: the number follows the finger; one message, sent when the finger lifts
     y = slider["y"] + slider["height"] / 2
-    at = lambda v: slider["x"] + 24 + v / 100 * (slider["width"] - 48)  # noqa: E731  (thumb centre for a value)
+    at = lambda v: slider["x"] + 36 + v / 100 * (slider["width"] - 72)  # noqa: E731  (thumb centre for a value)
     d.page.mouse.move(at(40), y)
     d.page.mouse.down()
     d.page.mouse.move(at(80), y, steps=12)
@@ -782,7 +782,7 @@ def test_home_control(b):
         "Kitchen, Living room", "Heating to 70°", "Living room TV", "Kitchen, Living room, Porch", "2 off"]
     assert d.page.locator(".tile.lit").count() == 1 and d.page.locator(".tile-lights.lit").count() == 1
     for tile in d.page.locator(".tile").all():
-        assert big(tile.bounding_box(), w=200, h=160), tile.bounding_box()
+        assert big(tile.bounding_box(), w=300, h=240), tile.bounding_box()
     d.shot("house", settle=400)
     d.tap(".tile-lights")
     d.tap(".tile-rooms")
@@ -808,7 +808,7 @@ def test_home_control(b):
     assert (level("Reading lamp"), fill("Reading lamp")) == ("40%", "40%")
     assert (level("Floor lamp"), fill("Floor lamp")) == ("Off", "0%")
     for name in ("Reading lamp", "Floor lamp", "Porch light"):
-        assert big(tile(name).bounding_box(), w=140, h=140), name
+        assert big(tile(name).bounding_box(), w=210, h=210), name
     porch_box, floor_box = tile("Porch light").bounding_box(), tile("Floor lamp").bounding_box()
     assert porch_box["height"] > 2 * floor_box["height"], "a room's only light should be one tall tile"
     d.shot("lights", settle=400)
@@ -821,7 +821,7 @@ def test_home_control(b):
                              {"type": "light", "entity": "light.porch", "on": True}]
 
     box = tile("Reading lamp").bounding_box()
-    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] - 20
+    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] - 30
     d.page.mouse.move(x, y)
     d.page.mouse.down()
     d.page.mouse.move(x, y - box["height"] * .3, steps=5)  # up 30% of the tile
@@ -915,7 +915,7 @@ def test_rooms_and_back(b):
     # page again, fresh.
     d.push({"type": "card", "card": dict(room, switches=[])})
     edge = d.page.locator("#sheet-edge").bounding_box()
-    assert edge["x"] == 0 and edge["width"] <= 36, "the edge stays inside the sheet's padding, covering nothing"
+    assert edge["x"] == 0 and edge["width"] <= 54, "the edge stays inside the sheet's padding, covering nothing"
     swipe(d, 512, release=False)
     assert d.visible("#sheet-under") and d.text("#under-title") == "Rooms"
     assert d.page.locator("#under-body .room-name").all_inner_texts() == ["Living room", "Bedroom", "Garage"]
@@ -977,7 +977,7 @@ def test_swiping_between_sheets(b):
         "solid from the start: the shrinking photo uncovers it, never the real photo fading out behind"
     d.page.wait_for_timeout(350)  # the photo shrinking into its frame (real time)
     photo = d.page.locator("#dash-photo").bounding_box()
-    assert round(photo["x"] - left("#sheet-dash")) == 36 and round(photo["width"]) == W - 2 * 36, photo
+    assert round(photo["x"] - left("#sheet-dash")) == 54 and round(photo["width"]) == W - 2 * 54, photo
     assert d.page.eval_on_selector("#home", "h => getComputedStyle(h).opacity") == "0"
     home = d.page.locator("#home").bounding_box()
     assert home["x"] >= photo["x"] - 1 and home["x"] + home["width"] <= photo["x"] + photo["width"] + 1 and \
@@ -1107,9 +1107,9 @@ def test_climate(b):
     assert page(0).locator(".th-scale").inner_text().split() == ["60°", "80°"]
     fill = page(0).locator(".th-fill").bounding_box()
     dot, mark = page(0).locator(".th-now").bounding_box(), page(0).locator(".th-set").bounding_box()
-    assert abs(fill["x"] - (dot["x"] + dot["width"] / 2)) < 1 and abs(fill["x"] + fill["width"] - (mark["x"] + 2)) < 1
+    assert abs(fill["x"] - (dot["x"] + dot["width"] / 2)) < 1 and abs(fill["x"] + fill["width"] - (mark["x"] + 3)) < 1
     for sel in ('[aria-label^="Lower"]', '[aria-label^="Raise"]'):
-        assert big(page(0).locator(sel).bounding_box(), w=80, h=80)
+        assert big(page(0).locator(sel).bounding_box(), w=120, h=120)
     d.shot("climate", settle=400)
 
     # + three times is one change, sent once the taps stop
@@ -1352,7 +1352,7 @@ def test_automations(b):
         "Ran yesterday at 11:02pm", "Ran today at 6:30am", "Ran Monday", "Ran January 2", "Hasn't run yet"]
     assert d.page.locator(".auto-row.off .auto-name").all_inner_texts() == ["Holiday lights", "Vacation lights"]
     for row in d.page.locator(".auto-row").all()[:3]:
-        assert big(row.locator(".pill").bounding_box()) and big(row.locator(".switch").bounding_box(), w=64, h=64)
+        assert big(row.locator(".pill").bounding_box()) and big(row.locator(".switch").bounding_box(), w=96, h=96)
     d.shot("automations", settle=400)
 
     d.page.locator('[aria-label="Run AC off when everyone leaves"]').tap()
@@ -1383,7 +1383,7 @@ def test_header(b):
     assert opacity("#header-home") == "1" and d.text("#header-time") == "9:41"
     assert d.page.locator(".tab").all_inner_texts() == [
         "Dashboard", "Home", "Timers", "Alarms", "Shopping list", "Music"]
-    assert round(tab(1)["x"]) == 36 and round(line()["x"]) == 36 and abs(line()["width"] - tab(1)["width"]) < 1
+    assert round(tab(1)["x"]) == 54 and round(line()["x"]) == 54 and abs(line()["width"] - tab(1)["width"]) < 1
     assert d.page.eval_on_selector("#sheet-title", "t => getComputedStyle(t).color") == "rgba(0, 0, 0, 0)", \
         "a row page's own title gives way to the header's"
     d.page.clock.run_for(60_000)  # (the sheet goes home after 45 s of it: open it again)
@@ -1393,13 +1393,13 @@ def test_header(b):
     # Halfway through a swipe the titles are halfway along, and the underline halfway between the two widths
     home_w, timers_x, timers_w = tab(1)["width"], tab(2)["x"], tab(2)["width"]
     swipe(d, 480, frm=1120, y=300, release=False)
-    assert abs(tab(2)["x"] - (timers_x - (timers_x - 36) / 2)) < 2, tab(2)
-    assert abs(line()["width"] - (home_w + timers_w) / 2) < 2 and round(line()["x"]) == 36
+    assert abs(tab(2)["x"] - (timers_x - (timers_x - 54) / 2)) < 2, tab(2)
+    assert abs(line()["width"] - (home_w + timers_w) / 2) < 2 and round(line()["x"]) == 54
     d.shot("header-swipe", settle=0)
     d.page.mouse.up()
     d.page.clock.run_for(600)
     d.page.wait_for_timeout(300)
-    assert d.text("#sheet-title") == "Timers" and round(tab(2)["x"]) == 36 and abs(line()["width"] - timers_w) < 1
+    assert d.text("#sheet-title") == "Timers" and round(tab(2)["x"]) == 54 and abs(line()["width"] - timers_w) < 1
     assert opacity(".tab:nth-child(3)") == "1" and float(opacity(".tab:nth-child(2)")) < 1
 
     # A subpage, or a card: its own title, no row titles, the time still there
@@ -1410,7 +1410,7 @@ def test_header(b):
     # Back from the edge: the page sliding off takes its own copy of the time; the header's is under it with Timers
     swipe(d, 480, release=False)
     sheet_time = d.page.locator("#sheet-time").bounding_box()
-    assert d.text("#sheet-time") == "9:42" and round(sheet_time["x"] + sheet_time["width"]) == (480 - 8) + W - 36, sheet_time
+    assert d.text("#sheet-time") == "9:42" and round(sheet_time["x"] + sheet_time["width"]) == (480 - 8) + W - 54, sheet_time
     assert d.page.eval_on_selector("#header-home", "h => getComputedStyle(h).zIndex") == "2"
     d.page.mouse.up()
     d.page.clock.run_for(600)
@@ -1422,7 +1422,7 @@ def test_header(b):
     swipe(d, 480, frm=1120, y=300)
     swipe(d, 480, frm=1120, y=300)
     assert d.text("#sheet-title") == "Shopping list"
-    assert big(d.page.locator("#header-home").bounding_box(), w=64, h=64)
+    assert big(d.page.locator("#header-home").bounding_box(), w=96, h=96)
     d.tap("#header-home")
     assert not d.visible("#sheet")
 
@@ -1546,7 +1546,7 @@ def test_alarms_on_screen(b):
     top = d.page.evaluate("document.elementFromPoint(400, 240).closest('section').id")
     assert top == "ringing", f"ringing should be on top, found {top}"
     stop_box = d.page.locator("#ringing-stop").bounding_box()
-    assert big(stop_box, w=240, h=96), stop_box
+    assert big(stop_box, w=360, h=144), stop_box
     d.shot("ringing", settle=400)
     d.tap("#snooze")
     d.tap("#ringing-stop")
@@ -1692,7 +1692,7 @@ def test_recipe(b):
     d.push({"type": "card", "card": PANCAKES})
     assert d.text("#sheet-title") == "Pancakes" and d.page.locator(".ingredients.two-col li").count() == 8
     assert not d.visible(".recipe-prev") and d.text(".recipe-next") == "Next"
-    assert big(d.page.locator(".recipe-next").bounding_box(), w=140)
+    assert big(d.page.locator(".recipe-next").bounding_box(), w=210)
     d.shot("recipe-ingredients", settle=400)
 
     # Next shows step 1 at once and tells the brain; the brain's echo changes nothing
@@ -1707,7 +1707,7 @@ def test_recipe(b):
     d.tap(".recipe-next")
     fit = d.page.evaluate("""() => { const s = document.querySelector('.step-text');
         return { fits: s.scrollHeight <= s.clientHeight + 1, size: parseFloat(getComputedStyle(s).fontSize) }; }""")
-    assert fit["fits"] and fit["size"] >= 24, fit
+    assert fit["fits"] and fit["size"] >= 36, fit
     d.shot("recipe-long-step", settle=200)
 
     # Previous goes back; Claude moving it by voice moves the screen too

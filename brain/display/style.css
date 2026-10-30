@@ -12,10 +12,10 @@
   --ember: #FF8A4C;
   --ice: #8CCBF2;              /* cooling, where ember is heating */
   --accent: var(--marigold);   /* replaced per photo by app.js */
-  --on-photo: 0 1px 12px rgba(0, 0, 0, .45);
+  --on-photo: 0 1.5px 18px rgba(0, 0, 0, .45);
   --far: "Fraunces", Georgia, serif;
   --near: "Inter", system-ui, sans-serif;
-  --edge: 30px;
+  --edge: 45px;
 }
 
 * { box-sizing: border-box; margin: 0; }
@@ -23,21 +23,21 @@ html, body { width: 100%; height: 100%; overflow: hidden; }
 body {
   background: var(--night);
   color: var(--frost);
-  font: 20px/1.4 var(--near);
+  font: 30px/1.4 var(--near);
   -webkit-font-smoothing: antialiased;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
-  cursor: none;
+  cursor: none; font-variation-settings: "opsz" 20;
 }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: none; touch-action: manipulation; }
-button:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+button:focus-visible { outline: 4.5px solid var(--accent); outline-offset: 6px; }
 svg { display: block; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 [hidden] { display: none !important; }
 /* Scrollbars: a slim frost pill that says "there's more", no track or arrows; on a touchscreen nobody drags it.
    The ::-webkit- rules draw it the same on every platform (scrollbar-color would keep the Pi's own arrows). */
-::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(238, 243, 247, .22); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: rgba(238, 243, 247, .22); border-radius: 4.5px; }
 ::-webkit-scrollbar-corner { background: transparent; }
 
 /* The room: the family's photos, crossfading, over a calm night gradient (all you see with no photos).
@@ -67,65 +67,65 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 2.2; strok
 body.talking .home { opacity: 0; pointer-events: none; }
 
 .menu {
-  position: absolute; top: 14px; left: 14px;
-  width: 64px; height: 64px; display: grid; place-items: center;
+  position: absolute; top: 21px; left: 21px;
+  width: 96px; height: 96px; display: grid; place-items: center;
   color: var(--frost); opacity: .8;  /* quiet, but it must survive a busy photo behind it */
 }
-.menu svg { position: relative; width: 22px; height: 22px; fill: currentColor; stroke: none; }
+.menu svg { position: relative; width: 33px; height: 33px; fill: currentColor; stroke: none; }
 /* A faint disc so the glyph survives a bright sky (no blur filters on the Pi) */
-.menu::before { content: ""; position: absolute; width: 46px; height: 46px; border-radius: 50%; background: rgba(19, 32, 46, .34); }
+.menu::before { content: ""; position: absolute; width: 69px; height: 69px; border-radius: 50%; background: rgba(19, 32, 46, .34); }
 
-.weather { position: absolute; top: 14px; right: calc(var(--edge) - 8px); text-shadow: var(--on-photo); }
-.weather-button { display: block; text-align: right; padding: 8px; min-width: 64px; min-height: 64px; }
+.weather { position: absolute; top: 21px; right: calc(var(--edge) - 12px); text-shadow: var(--on-photo); }
+.weather-button { display: block; text-align: right; padding: 12px; min-width: 96px; min-height: 96px; }
 .weather .temp {
   display: block;
-  font: 380 54px/1 var(--far);
+  font: 380 81px/1 var(--far);
   font-variation-settings: "opsz" 72, "SOFT" 100;
   font-feature-settings: "tnum" 1, "lnum" 1;
 }
-.weather .condition { display: block; font-size: 17px; margin-top: 4px; opacity: .92; }
+.weather .condition { display: block; font-size: 25.5px; margin-top: 6px; opacity: .92; font-variation-settings: "opsz" 17; }
 
-.clock { position: absolute; left: var(--edge); bottom: 92px; text-shadow: var(--on-photo); transition: transform .4s ease; }
+.clock { position: absolute; left: var(--edge); bottom: 138px; text-shadow: var(--on-photo); transition: transform .4s ease; }
 /* Nothing on the strip: the clock comes down into its room, the date where the strip's text would be. The night clock
    comes down the same way (below), so the two still line up at bedtime. */
-body.strip-empty .clock, body.strip-empty .night-time { transform: translateY(62px); }
+body.strip-empty .clock, body.strip-empty .night-time { transform: translateY(93px); }
 .time {
   display: block;
-  font: 330 156px/.86 var(--far);
+  font: 330 234px/.86 var(--far);
   font-variation-settings: "opsz" 144, "SOFT" 100, "WONK" 0;
   font-feature-settings: "tnum" 1, "lnum" 1;
-  letter-spacing: -2px;
+  letter-spacing: -3px;
 }
-.date { font-size: 22px; opacity: .88; margin-top: 10px; padding-left: 4px; }
+.date { font-size: 33px; opacity: .88; margin-top: 15px; padding-left: 6px; font-variation-settings: "opsz" 22; }
 
 /* Glanceable items under the date. Each is a full-height (64 px) tap target; the text sits where the
    design puts it, 30 px off the bottom edge. */
 .strip {
-  position: absolute; left: calc(var(--edge) + 4px); right: 130px; bottom: 12px;
-  display: flex; gap: 34px; align-items: baseline;
-  font-size: 18px; text-shadow: var(--on-photo); white-space: nowrap;
-  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;  /* more than fits: swipe sideways */
+  position: absolute; left: calc(var(--edge) + 6px); right: 195px; bottom: 18px;
+  display: flex; gap: 51px; align-items: baseline;
+  font-size: 27px; text-shadow: var(--on-photo); white-space: nowrap;
+  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;  /* more than fits: swipe sideways */; font-variation-settings: "opsz" 18;
 }
-.strip .item { display: flex; align-items: baseline; gap: 8px; min-height: 64px; padding: 18px 0; }
+.strip .item { display: flex; align-items: baseline; gap: 12px; min-height: 96px; padding: 27px 0; }
 .strip .num, .brief-facts .num {
-  font: 400 24px/1 var(--far);
+  font: 400 36px/1 var(--far);
   font-variation-settings: "opsz" 24, "SOFT" 100;
   font-feature-settings: "tnum" 1, "lnum" 1;
   color: var(--accent);
 }
-.strip .label { font-size: 18px; }
+.strip .label { font-size: 27px; font-variation-settings: "opsz" 18; }
 .digit { display: inline-block; width: 1ch; text-align: center; }  /* tabular digits Fraunces lacks (app.js) */
 
 .mic {
-  position: absolute; right: 26px; bottom: 22px;
-  width: 76px; height: 76px; border-radius: 50%;
+  position: absolute; right: 39px; bottom: 33px;
+  width: 114px; height: 114px; border-radius: 50%;
   background: var(--accent); color: var(--night);
   display: grid; place-items: center;
   transition: transform .12s ease;
 }
 .mic:active { transform: scale(.94); }
 body.is-offline .mic { opacity: .4; pointer-events: none; }
-.mic svg { width: 30px; height: 30px; }
+.mic svg { width: 45px; height: 45px; }
 
 /* --- Conversation overlay ------------------------------------------------------------- */
 
@@ -133,7 +133,7 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
   z-index: 10;  /* over the header */
   position: fixed; inset: 0;
   background: rgba(19, 32, 46, .9);
-  padding: 34px 36px 0;
+  padding: 51px 54px 0;
   opacity: 0; transition: opacity .2s ease;
 }
 .overlay.shown { opacity: 1; }
@@ -141,30 +141,30 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 .sheet:not([hidden]) ~ .overlay { background: var(--night); }
 
 .close {
-  position: absolute; top: 12px; right: 12px;
-  width: 64px; height: 64px; display: grid; place-items: center; opacity: .7;
+  position: absolute; top: 18px; right: 18px;
+  width: 96px; height: 96px; display: grid; place-items: center; opacity: .7;
 }
-.close svg { width: 26px; height: 26px; }
+.close svg { width: 39px; height: 39px; }
 
 .heard {
-  max-width: 640px; min-height: 28px;
-  font-size: 20px; color: var(--frost); opacity: .7;
-  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  max-width: 960px; min-height: 42px;
+  font-size: 30px; color: var(--frost); opacity: .7;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-variation-settings: "opsz" 20;
 }
 .reply {
-  margin-top: 16px; max-width: 700px; height: 300px; overflow: hidden;
-  font: 360 36px/1.26 var(--far);
+  margin-top: 24px; max-width: 1050px; height: 450px; overflow: hidden;
+  font: 360 54px/1.26 var(--far);
   font-variation-settings: "opsz" 48, "SOFT" 100;
 }
 
 /* The state light carries all conversation state: breathe (listening), sweep (thinking), pulse (speaking). */
 .light {
-  position: absolute; left: 36px; right: 168px; bottom: 58px; height: 4px;
-  border-radius: 2px; overflow: hidden;
+  position: absolute; left: 54px; right: 252px; bottom: 87px; height: 6px;
+  border-radius: 3px; overflow: hidden;
   background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 .light i {
-  position: absolute; inset: 0; border-radius: 2px;
+  position: absolute; inset: 0; border-radius: 3px;
   background: var(--accent);
   transform-origin: left center;
 }
@@ -178,11 +178,11 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 @keyframes pulse { from { opacity: .55; } to { opacity: 1; } }
 
 .stop {
-  position: absolute; right: 26px; bottom: 22px;
-  height: 76px; min-width: 112px; padding: 0 30px; border-radius: 38px;
+  position: absolute; right: 39px; bottom: 33px;
+  height: 114px; min-width: 168px; padding: 0 45px; border-radius: 57px;
   background: var(--frost); color: var(--night);
-  font-size: 22px; font-weight: 600;
-  transition: transform .12s ease;
+  font-size: 33px; font-weight: 600;
+  transition: transform .12s ease; font-variation-settings: "opsz" 22;
 }
 .stop:active { transform: scale(.95); }
 .overlay[data-state="idle"] .stop { opacity: 0; pointer-events: none; }
@@ -192,14 +192,14 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 .sheet {
   position: fixed; inset: 0;
   background: var(--night);
-  padding: 26px 36px 0;
+  padding: 39px 54px 0;
   display: flex; flex-direction: column;
   transform: translateY(100%); transition: transform .25s ease;
 }
 .sheet.shown { transform: none; }
 .sheet-title {
-  padding-right: 130px;  /* the header's time */
-  font: 380 34px/1.15 var(--far);
+  padding-right: 195px;  /* the header's time */
+  font: 380 51px/1.15 var(--far);
   font-variation-settings: "opsz" 36, "SOFT" 100;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -214,44 +214,44 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
    alarm, and the camera. */
 .header { position: fixed; pointer-events: none; opacity: 0; transition: opacity .26s ease-out; }
 .header.shown { opacity: 1; }
-.header-tabs { z-index: 4; top: 0; left: 0; right: 130px; height: 80px; }
+.header-tabs { z-index: 4; top: 0; left: 0; right: 195px; height: 120px; }
 /* The time takes you back to the dashboard (the clock): a 64 px target round the text, which sits where a title does */
 .header-time, .sheet-time {
-  font: 380 34px/1.15 var(--far);
+  font: 380 51px/1.15 var(--far);
   font-variation-settings: "opsz" 36, "SOFT" 100;
   font-feature-settings: "tnum" 1, "lnum" 1;
   color: var(--mist);
 }
-.header-time { z-index: 5; top: 14px; right: 24px; padding: 12px; min-height: 64px; }
+.header-time { z-index: 5; top: 21px; right: 36px; padding: 18px; min-height: 96px; }
 .header-time.shown { pointer-events: auto; }
 /* A sheet sliding off in a back swipe takes its own copy of the time with it; the header's goes under it, with the
    page being uncovered (app.js beginSlide) */
-.sheet-time { display: none; position: absolute; top: 26px; right: 36px; }
+.sheet-time { display: none; position: absolute; top: 39px; right: 54px; }
 .sheet.carry-time .sheet-time { display: block; }
 /* The titles fade out at either end: a mask, not night painted over them, since the dashboard's photo can be under
    them while it shrinks */
 .tabs-wrap {
-  position: absolute; top: 26px; left: 0; right: 0; height: 54px; overflow: hidden;
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 36px, #000 calc(100% - 56px), transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 36px, #000 calc(100% - 56px), transparent);
+  position: absolute; top: 39px; left: 0; right: 0; height: 81px; overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 54px, #000 calc(100% - 84px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 54px, #000 calc(100% - 84px), transparent);
 }
 .tabs {
-  display: flex; gap: 30px; padding-left: 36px; white-space: nowrap;
-  font: 380 34px/1.15 var(--far);
+  display: flex; gap: 45px; padding-left: 54px; white-space: nowrap;
+  font: 380 51px/1.15 var(--far);
   font-variation-settings: "opsz" 36, "SOFT" 100;
 }
 .tab { flex: none; opacity: .4; }
 .tabs.settling .tab { transition: opacity .22s ease-out; }
-.tab-line { position: absolute; left: 36px; top: 44px; width: 1px; height: 3px; background: var(--accent); transform-origin: left; }
+.tab-line { position: absolute; left: 54px; top: 66px; width: 1px; height: 4.5px; background: var(--accent); transform-origin: left; }
 /* Back, when this sheet opened over another (Home > Rooms > a room): a swipe in from the left edge slides this
    sheet off to the right, uncovering the one underneath. The edge strip sits inside the sheet's left padding so it
    covers nothing, and takes the whole gesture (touch-action: none) so a sideways scroller under it can't. */
-.edge { position: absolute; z-index: 1; top: 0; bottom: 0; left: 0; width: 30px; touch-action: none; }
-.edge:focus-visible { outline-offset: -4px; }
+.edge { position: absolute; z-index: 1; top: 0; bottom: 0; left: 0; width: 45px; touch-action: none; }
+.edge:focus-visible { outline-offset: -6px; }
 /* The handle that says the edge can be pulled, like a phone's home bar turned on its side; frost as faint as the scrollbars */
 .edge::after {
-  content: ""; position: absolute; left: 10px; top: 50%;
-  width: 5px; height: 64px; margin-top: -32px; border-radius: 3px;
+  content: ""; position: absolute; left: 15px; top: 50%;
+  width: 7.5px; height: 96px; margin-top: -48px; border-radius: 4.5px;
   background: rgba(238, 243, 247, .22);
 }
 /* Swiping (app.js): a top page slides over a bottom one, which is dimmed while covered */
@@ -264,12 +264,12 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
    the whole screen into its frame, uncovering the sheet's background (solid from the start, so the real photo behind
    never shows round the edges) and its title fading up; coming back, the reverse (.full). Transforms and opacity, for the Pi; the corners' radius is the one thing repainted. */
 .dashboard { position: fixed; inset: 0; }
-.dash { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 26px 36px 0; }
+.dash { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 39px 54px 0; }
 .dash-bg { position: absolute; inset: 0; background: var(--night); }
 .dash .sheet-title, .dash .sheet-body { position: relative; }  /* over the background */
 .dash .sheet-body { overflow: visible; }
 .dash-photo {
-  position: relative; height: 100%; border-radius: 14px; overflow: hidden;
+  position: relative; height: 100%; border-radius: 21px; overflow: hidden;
   transition: transform .26s ease-out, border-radius .26s ease-out;
 }
 /* The picture is the dashboard's own, screen-sized and cropped the same, scaled to cover the frame (--k); full, the
@@ -297,47 +297,47 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 .swipe-dim { position: fixed; inset: 0; background: rgba(0, 0, 0, .45); pointer-events: none; }
 /* Sideways on the dashboard and the row's pages is a swipe between them, so the browser only takes up and down */
 .home, .sheet-body { touch-action: pan-y; }
-.sheet-body { flex: 1; min-height: 0; margin-top: 16px; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 24px; }
+.sheet-body { flex: 1; min-height: 0; margin-top: 24px; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 36px; }
 .sheet-body p { margin: 0; }
 /* Empty states: say what's (not) here in the far-read voice, then how to change that. Scoped under
    .sheet-body so they outrank the margin reset above. */
-.sheet-body .quiet { font: 380 30px/1.3 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; margin-top: 18px; }
-.sheet-body .hint { color: var(--mist); font-size: 20px; margin-top: 12px; }
+.sheet-body .quiet { font: 380 45px/1.3 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; margin-top: 27px; }
+.sheet-body .hint { color: var(--mist); font-size: 30px; margin-top: 18px; font-variation-settings: "opsz" 20; }
 
 /* Weather: now is the hero; the forecast sits below a rule that separates now from later */
-.wx-now { display: flex; align-items: center; gap: 26px; padding-bottom: 22px; border-bottom: 1px solid rgba(238, 243, 247, .14); }
+.wx-now { display: flex; align-items: center; gap: 39px; padding-bottom: 33px; border-bottom: 1px solid rgba(238, 243, 247, .14); }
 .wx-temp {
-  font: 330 112px/.9 var(--far);
+  font: 330 168px/.9 var(--far);
   font-variation-settings: "opsz" 144, "SOFT" 100;
   font-feature-settings: "tnum" 1, "lnum" 1;
-  letter-spacing: -2px;
+  letter-spacing: -3px;
 }
-.wx-condition { font: 380 30px/1.2 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; }
-.wx-detail { font-size: 19px; color: var(--mist); margin-top: 6px; }
-.wx-days { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; padding-top: 20px; }
-.wx-label { font-size: 19px; color: var(--mist); }
-.wx-range { margin-top: 4px; font-feature-settings: "tnum" 1, "lnum" 1; }
-.wx-high { font: 380 36px/1.1 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; }
-.wx-low { font-size: 20px; color: var(--mist); margin-left: 8px; }
-.wx-sky { font-size: 19px; margin-top: 2px; }
-.wx-rain { font-size: 17px; color: var(--accent); margin-top: 2px; }
+.wx-condition { font: 380 45px/1.2 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; }
+.wx-detail { font-size: 28.5px; color: var(--mist); margin-top: 9px; font-variation-settings: "opsz" 19; }
+.wx-days { display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; padding-top: 30px; }
+.wx-label { font-size: 28.5px; color: var(--mist); font-variation-settings: "opsz" 19; }
+.wx-range { margin-top: 6px; font-feature-settings: "tnum" 1, "lnum" 1; }
+.wx-high { font: 380 54px/1.1 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; }
+.wx-low { font-size: 30px; color: var(--mist); margin-left: 12px; font-variation-settings: "opsz" 20; }
+.wx-sky { font-size: 28.5px; margin-top: 3px; font-variation-settings: "opsz" 19; }
+.wx-rain { font-size: 25.5px; color: var(--accent); margin-top: 3px; font-variation-settings: "opsz" 17; }
 
 /* Timers: each a dial that drains as time runs out; the arc is the sheet's one colour. A paused timer goes
    mist grey and blinks slowly, like an oven timer. One timer: a big dial, Pause and Stop stacked beside it.
    Two or more: smaller dials side by side, round Pause and Stop under each, scrolling sideways past three. */
 .timers { height: 100%; display: flex; }
 .timers.one { align-items: center; }
-.timers.one .tmr { width: 100%; display: grid; grid-template-columns: 320px 1fr; align-items: center; gap: 56px; }
-.timers.two, .timers.many { align-items: center; gap: 30px; overflow-x: auto; overscroll-behavior: contain; }
+.timers.one .tmr { width: 100%; display: grid; grid-template-columns: 480px 1fr; align-items: center; gap: 84px; }
+.timers.two, .timers.many { align-items: center; gap: 45px; overflow-x: auto; overscroll-behavior: contain; }
 /* Centered as a group; auto margins (not justify-content) so a row wider than the screen still scrolls from its start */
 .timers .tmr:first-child { margin-left: auto; }
 .timers .tmr:last-child { margin-right: auto; }
-.timers.two .tmr, .timers.many .tmr { flex: none; display: flex; flex-direction: column; align-items: center; gap: 18px; }
+.timers.two .tmr, .timers.many .tmr { flex: none; display: flex; flex-direction: column; align-items: center; gap: 27px; }
 .tmr.leaving { opacity: .35; transition: opacity .2s ease; }
 
-.dial { position: relative; width: 320px; height: 320px; }
-.timers.two .dial { width: 240px; height: 240px; }
-.timers.many .dial { width: 200px; height: 200px; }
+.dial { position: relative; width: 480px; height: 480px; }
+.timers.two .dial { width: 360px; height: 360px; }
+.timers.many .dial { width: 300px; height: 300px; }
 .dial svg { width: 100%; height: 100%; transform: rotate(-90deg); }
 .dial circle { fill: none; stroke-width: 5; }
 .dial-track { stroke: rgba(238, 243, 247, .1); }
@@ -347,201 +347,201 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
   display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
 }
 .dial-time {
-  font: 340 78px/1 var(--far);
+  font: 340 117px/1 var(--far);
   font-variation-settings: "opsz" 72, "SOFT" 100;
   font-feature-settings: "tnum" 1, "lnum" 1;
-  letter-spacing: -1px;
+  letter-spacing: -1.5px;
 }
-.dial-time.long { font-size: 58px; }
-.timers.two .dial-time { font-size: 56px; }
-.timers.two .dial-time.long { font-size: 42px; }
-.timers.many .dial-time { font-size: 46px; }
-.timers.many .dial-time.long { font-size: 34px; }
+.dial-time.long { font-size: 87px; }
+.timers.two .dial-time { font-size: 84px; }
+.timers.two .dial-time.long { font-size: 63px; }
+.timers.many .dial-time { font-size: 69px; }
+.timers.many .dial-time.long { font-size: 51px; }
 .dial-name {
-  max-width: 100%; margin-top: 10px;
-  font-size: 22px; color: var(--mist);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%; margin-top: 15px;
+  font-size: 33px; color: var(--mist);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variation-settings: "opsz" 22;
 }
-.timers.two .dial-name, .timers.many .dial-name { font-size: 18px; margin-top: 6px; }
+.timers.two .dial-name, .timers.many .dial-name { font-size: 27px; margin-top: 9px; font-variation-settings: "opsz" 18; }
 .tmr.paused .dial-arc { stroke: var(--mist); }
 .tmr.paused .dial-time { color: var(--mist); animation: paused-blink 1.4s ease-in-out infinite alternate; }
 @keyframes paused-blink { to { opacity: .3; } }
 
-.tmr-actions { display: flex; gap: 16px; }
-.timers.one .tmr-actions { flex-direction: column; gap: 18px; }
+.tmr-actions { display: flex; gap: 24px; }
+.timers.one .tmr-actions { flex-direction: column; gap: 27px; }
 .tmr-btn {
-  width: 72px; height: 72px; border-radius: 50%;
+  width: 108px; height: 108px; border-radius: 50%;
   display: grid; place-items: center;
   background: rgba(238, 243, 247, .12); color: var(--frost);
 }
 .tmr-btn.tmr-main { background: var(--accent); color: var(--night); }
-.tmr-btn svg { width: 26px; height: 26px; fill: currentColor; stroke: none; }
+.tmr-btn svg { width: 39px; height: 39px; fill: currentColor; stroke: none; }
 .tmr-btn:active { transform: scale(.94); }
 .timers.one .tmr-btn {
-  width: 100%; max-width: 300px; height: 96px; border-radius: 48px;
-  display: flex; justify-content: center; gap: 14px;
-  font-size: 26px; font-weight: 600;
+  width: 100%; max-width: 450px; height: 144px; border-radius: 72px;
+  display: flex; justify-content: center; gap: 21px;
+  font-size: 39px; font-weight: 600; font-variation-settings: "opsz" 26;
 }
-.timers.one .tmr-btn svg { width: 28px; height: 28px; }
+.timers.one .tmr-btn svg { width: 42px; height: 42px; }
 .strip .timer.paused .num { color: var(--mist); }
 .pill {
-  min-height: 64px; min-width: 112px; padding: 0 26px; border-radius: 32px;
-  background: rgba(238, 243, 247, .12); color: var(--frost); font-size: 20px; font-weight: 500;
+  min-height: 96px; min-width: 168px; padding: 0 39px; border-radius: 48px;
+  background: rgba(238, 243, 247, .12); color: var(--frost); font-size: 30px; font-weight: 500; font-variation-settings: "opsz" 20;
 }
 .pill:active { background: rgba(238, 243, 247, .22); }
 
 /* Shopping list: tall rows you can hit with a wet finger; checked items strike through, with Undo */
 .shop-list { list-style: none; padding: 0; margin: 0; }
-.shop-row { display: flex; align-items: center; min-height: 72px; border-bottom: 1px solid rgba(238, 243, 247, .1); }
-.shop-item { flex: 1; display: flex; align-items: center; gap: 20px; min-height: 72px; text-align: left; }
+.shop-row { display: flex; align-items: center; min-height: 108px; border-bottom: 1px solid rgba(238, 243, 247, .1); }
+.shop-item { flex: 1; display: flex; align-items: center; gap: 30px; min-height: 108px; text-align: left; }
 .shop-check {
-  flex: none; width: 30px; height: 30px; border-radius: 50%;
-  border: 2px solid rgba(238, 243, 247, .55);
+  flex: none; width: 45px; height: 45px; border-radius: 50%;
+  border: 3px solid rgba(238, 243, 247, .55);
   display: grid; place-items: center;
 }
-.shop-name { font-size: 24px; }
+.shop-name { font-size: 36px; font-variation-settings: "opsz" 24; }
 .shop-undo { display: none; }
 .shop-row.done .shop-check { background: var(--accent); border-color: var(--accent); }
 .shop-row.done .shop-check::after {
-  content: ""; width: 12px; height: 7px; margin-top: -3px;
-  border: solid var(--night); border-width: 0 0 3px 3px; transform: rotate(-45deg);
+  content: ""; width: 18px; height: 10.5px; margin-top: -4.5px;
+  border: solid var(--night); border-width: 0 0 4.5px 4.5px; transform: rotate(-45deg);
 }
 .shop-row.done .shop-name { text-decoration: line-through; opacity: .45; }
 .shop-row.done .shop-undo { display: block; }
 
 /* Menu: the same row language as the sheets it opens, not a grid of tiles */
 .menu-row {
-  width: 100%; display: flex; align-items: center; gap: 22px; min-height: 62px; text-align: left;  /* all fit */
+  width: 100%; display: flex; align-items: center; gap: 33px; min-height: 93px; text-align: left;  /* all fit */
   border-bottom: 1px solid rgba(238, 243, 247, .1);
 }
-.menu-icon { flex: none; width: 34px; height: 34px; color: var(--accent); }
+.menu-icon { flex: none; width: 51px; height: 51px; color: var(--accent); }
 .menu-icon svg { width: 100%; height: 100%; }
-.menu-label { flex: 1; font: 380 30px/1.2 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; }
+.menu-label { flex: 1; font: 380 45px/1.2 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; }
 
 /* Home control: flat tiles, no shadows (the Pi). Lights is tall; while any light is on it fills with the accent,
    the way the ringing screen does, so "the lights are on" reads from across the room. */
-.house { height: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.house { height: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 21px; }
 .tile {
   min-width: 0; display: flex; flex-direction: column; text-align: left;
-  padding: 16px 18px 18px; border-radius: 14px;
+  padding: 24px 27px 27px; border-radius: 21px;
   background: rgba(238, 243, 247, .08);
   transition: transform .12s ease;
 }
 .tile:active { transform: scale(.97); }
 .tile-lights { grid-row: span 2; }
-.tile-head { display: flex; align-items: center; gap: 10px; font-size: 20px; }
-.tile-icon { flex: none; width: 26px; height: 26px; color: var(--accent); }
+.tile-head { display: flex; align-items: center; gap: 15px; font-size: 30px; font-variation-settings: "opsz" 20; }
+.tile-icon { flex: none; width: 39px; height: 39px; color: var(--accent); }
 .tile-icon svg { width: 100%; height: 100%; }
-.tile-state { margin-top: auto; display: flex; align-items: baseline; gap: 8px; }
+.tile-state { margin-top: auto; display: flex; align-items: baseline; gap: 12px; }
 .tile-num {
-  font: 340 58px/1 var(--far);
+  font: 340 87px/1 var(--far);
   font-variation-settings: "opsz" 72, "SOFT" 100;
   font-feature-settings: "tnum" 1, "lnum" 1;
-  letter-spacing: -1px;
+  letter-spacing: -1.5px;
 }
-.tile-lights .tile-num { font-size: 144px; line-height: .86; font-variation-settings: "opsz" 144, "SOFT" 100; letter-spacing: -3px; }
-.tile-lights .tile-num.word { font-size: 58px; line-height: 1; font-variation-settings: "opsz" 72, "SOFT" 100; letter-spacing: -1px; }
-.tile-unit { font-size: 20px; }
-.tile-detail { margin-top: 6px; font-size: 17px; color: var(--mist); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tile-lights .tile-detail { margin-top: 12px; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tile-lights .tile-num { font-size: 216px; line-height: .86; font-variation-settings: "opsz" 144, "SOFT" 100; letter-spacing: -4.5px; }
+.tile-lights .tile-num.word { font-size: 87px; line-height: 1; font-variation-settings: "opsz" 72, "SOFT" 100; letter-spacing: -1.5px; }
+.tile-unit { font-size: 30px; font-variation-settings: "opsz" 20; }
+.tile-detail { margin-top: 9px; font-size: 25.5px; color: var(--mist); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variation-settings: "opsz" 17; }
+.tile-lights .tile-detail { margin-top: 18px; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .tile.lit { background: var(--accent); color: var(--night); }
 .tile.lit .tile-icon { color: var(--night); }
 .tile.lit .tile-detail { color: var(--night); opacity: .72; }
 
 /* Lights: rooms side by side, scrolling sideways so an up-and-down drag is free to dim. Each light is a tile that
    fills with the accent from the bottom as high as it's bright; a room with one light gets one tall tile. */
-.dev-groups { height: 100%; display: flex; gap: 28px; padding-bottom: 12px; overflow-x: auto; overscroll-behavior: contain; }  /* the scrollbar sits under the tiles */
+.dev-groups { height: 100%; display: flex; gap: 42px; padding-bottom: 18px; overflow-x: auto; overscroll-behavior: contain; }  /* the scrollbar sits under the tiles */
 .dev-group { flex: none; display: flex; flex-direction: column; }
-.sheet-body .dev-group-name { font: 500 18px/1.3 var(--near); color: var(--mist); margin: 0 0 8px; }
-.dev-grid { flex: 1; min-height: 0; display: grid; grid-template-rows: repeat(2, minmax(0, 1fr)); grid-auto-flow: column; grid-auto-columns: 150px; gap: 12px; }
+.sheet-body .dev-group-name { font: 500 27px/1.3 var(--near); color: var(--mist); margin: 0 0 12px; font-variation-settings: "opsz" 18; }
+.dev-grid { flex: 1; min-height: 0; display: grid; grid-template-rows: repeat(2, minmax(0, 1fr)); grid-auto-flow: column; grid-auto-columns: 225px; gap: 18px; }
 .dev {
   --b: 0%;
-  position: relative; overflow: hidden; border-radius: 14px;
+  position: relative; overflow: hidden; border-radius: 21px;
   background: rgba(238, 243, 247, .08); text-align: left;
   touch-action: pan-x;  /* sideways scrolls the rooms; up and down dims */
 }
 .dev:only-child { grid-row: span 2; }
-.dev-face { position: absolute; inset: 0; padding: 14px 16px 16px; display: flex; flex-direction: column; justify-content: space-between; }
+.dev-face { position: absolute; inset: 0; padding: 21px 24px 24px; display: flex; flex-direction: column; justify-content: space-between; }
 .dev-lit { background: var(--accent); color: var(--night); clip-path: inset(calc(100% - var(--b)) 0 0 0); }
-.dev-name { font-size: 18px; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dev-name { font-size: 27px; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-variation-settings: "opsz" 18; }
 .dev-level {
-  font: 340 40px/1 var(--far);
+  font: 340 60px/1 var(--far);
   font-variation-settings: "opsz" 48, "SOFT" 100;
   font-feature-settings: "tnum" 1, "lnum" 1;
-  letter-spacing: -1px;
+  letter-spacing: -1.5px;
 }
 .dev.off .dev-level { color: var(--mist); }
-.dev.wordy .dev-level { font-size: 30px; letter-spacing: 0; }
+.dev.wordy .dev-level { font-size: 45px; letter-spacing: 0; }
 /* Unavailable (Home Assistant can't reach it): a dark window. No fill, only a dashed edge, the name and the word in
    mist. It takes no taps. */
-.dev.gone, .player.gone { background: none; outline: 1.5px dashed rgba(169, 184, 198, .45); outline-offset: -1.5px; }
+.dev.gone, .player.gone { background: none; outline: 2.25px dashed rgba(169, 184, 198, .45); outline-offset: -2.25px; }
 .dev.gone .dev-name { color: var(--mist); }
-.dev.gone .dev-level { font: 500 18px/1.2 var(--near); letter-spacing: 0; color: var(--mist); }
+.dev.gone .dev-level { font: 500 27px/1.2 var(--near); letter-spacing: 0; color: var(--mist); }
 .player.gone .pl-name { color: var(--mist); }
 /* Rooms: the home tiles' look, the room's name in the far-read type, what's on in it at the bottom; lit while a
    light is on. Two rows, more rooms scrolling sideways like the lights. */
 .rooms {
-  height: 100%; display: grid; gap: 14px; padding-bottom: 12px;
-  grid-template-rows: repeat(2, minmax(0, 1fr)); grid-auto-flow: column; grid-auto-columns: calc((100% - 28px) / 3);
+  height: 100%; display: grid; gap: 21px; padding-bottom: 18px;
+  grid-template-rows: repeat(2, minmax(0, 1fr)); grid-auto-flow: column; grid-auto-columns: calc((100% - 42px) / 3);
   overflow-x: auto; overscroll-behavior: contain;
 }
 .room-name {
-  font: 380 30px/1.1 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100;
+  font: 380 45px/1.1 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .room-what { margin-top: auto; display: flex; flex-direction: column; }
-.room-what .tile-detail { margin-top: 2px; }
+.room-what .tile-detail { margin-top: 3px; }
 
 /* Climate: one thermostat a page, swiping between them. The setting is the hero; the scale under it has a dot for
    the room and a mark for the setting, the stretch between ember (heating) or ice (cooling) while it works. */
-.thermostats { height: 100%; display: flex; padding-bottom: 12px; overflow-x: auto; overscroll-behavior: contain; scroll-snap-type: x mandatory; }
+.thermostats { height: 100%; display: flex; padding-bottom: 18px; overflow-x: auto; overscroll-behavior: contain; scroll-snap-type: x mandatory; }
 .thermo { flex: 0 0 100%; scroll-snap-align: start; display: flex; flex-direction: column; }
 .th-top { display: flex; justify-content: space-between; align-items: flex-end; }
-.sheet-body .th-name { font-size: 18px; color: var(--mist); }
+.sheet-body .th-name { font-size: 27px; color: var(--mist); font-variation-settings: "opsz" 18; }
 .th-target {
-  margin-top: 4px;
-  font: 330 128px/.9 var(--far);
+  margin-top: 6px;
+  font: 330 192px/.9 var(--far);
   font-variation-settings: "opsz" 144, "SOFT" 100;
   font-feature-settings: "tnum" 1, "lnum" 1;
-  letter-spacing: -2px;
+  letter-spacing: -3px;
 }
-.sheet-body .th-status { font-size: 20px; margin-top: 10px; }
-.th-steps { display: flex; gap: 16px; margin-bottom: 10px; }
-.th-step { width: 88px; height: 88px; border-radius: 50%; display: grid; place-items: center; background: rgba(238, 243, 247, .12); }
-.th-step svg { width: 32px; height: 32px; }
+.sheet-body .th-status { font-size: 30px; margin-top: 15px; font-variation-settings: "opsz" 20; }
+.th-steps { display: flex; gap: 24px; margin-bottom: 15px; }
+.th-step { width: 132px; height: 132px; border-radius: 50%; display: grid; place-items: center; background: rgba(238, 243, 247, .12); }
+.th-step svg { width: 48px; height: 48px; }
 .th-step:active { transform: scale(.94); }
-.th-track { position: relative; height: 10px; margin-top: auto; border-radius: 5px; background: rgba(238, 243, 247, .12); }
-.th-fill { position: absolute; top: 0; bottom: 0; border-radius: 5px; display: none; }
+.th-track { position: relative; height: 15px; margin-top: auto; border-radius: 7.5px; background: rgba(238, 243, 247, .12); }
+.th-fill { position: absolute; top: 0; bottom: 0; border-radius: 7.5px; display: none; }
 .thermo.heating .th-fill { display: block; background: var(--ember); }
 .thermo.cooling .th-fill { display: block; background: var(--ice); }
-.th-now { position: absolute; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; background: var(--frost); }
-.th-set { position: absolute; top: -9px; width: 4px; height: 28px; margin-left: -2px; border-radius: 2px; background: var(--frost); }
-.th-scale { display: flex; justify-content: space-between; margin-top: 10px; font-size: 16px; color: var(--mist); }
-.th-modes { display: flex; gap: 12px; margin-top: 16px; }
+.th-now { position: absolute; top: 50%; width: 27px; height: 27px; margin: -13.5px 0 0 -13.5px; border-radius: 50%; background: var(--frost); }
+.th-set { position: absolute; top: -13.5px; width: 6px; height: 42px; margin-left: -3px; border-radius: 3px; background: var(--frost); }
+.th-scale { display: flex; justify-content: space-between; margin-top: 15px; font-size: 24px; color: var(--mist); font-variation-settings: "opsz" 16; }
+.th-modes { display: flex; gap: 18px; margin-top: 24px; }
 .th-modes .pill[aria-pressed="true"] { background: var(--accent); color: var(--night); }
 .thermo.off .th-target { color: var(--mist); }
 .thermo.off .th-steps, .thermo.off .th-set { visibility: hidden; }
-.thermo.gone .th-target { font-size: 72px; letter-spacing: -1px; color: var(--mist); }
+.thermo.gone .th-target { font-size: 108px; letter-spacing: -1.5px; color: var(--mist); }
 .thermo.gone .th-steps, .thermo.gone .th-track, .thermo.gone .th-scale, .thermo.gone .th-modes { visibility: hidden; }
 
 /* Speakers & TVs: a panel per player, three across, scrolling sideways. What's on fills the middle; volume and the
    buttons sit at the bottom where a thumb reaches. Playing, the panel is lit like the home tiles. */
-.players { height: 100%; display: flex; gap: 14px; padding-bottom: 12px; overflow-x: auto; overscroll-behavior: contain; }
+.players { height: 100%; display: flex; gap: 21px; padding-bottom: 18px; overflow-x: auto; overscroll-behavior: contain; }
 .player {
-  flex: 0 0 calc((100% - 28px) / 3); min-width: 0; display: flex; flex-direction: column;
-  padding: 16px 18px 18px; border-radius: 14px; background: rgba(238, 243, 247, .08);
+  flex: 0 0 calc((100% - 42px) / 3); min-width: 0; display: flex; flex-direction: column;
+  padding: 24px 27px 27px; border-radius: 21px; background: rgba(238, 243, 247, .08);
 }
-.sheet-body .pl-room { font-size: 17px; color: var(--mist); }
-.sheet-body .pl-name { font: 380 28px/1.15 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pl-what { flex: 1; min-height: 0; margin-top: 14px; }
-.sheet-body .pl-title { font-size: 20px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.sheet-body .pl-by { font-size: 17px; color: var(--mist); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sheet-body .pl-state { font: 340 30px/1.1 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; color: var(--mist); }
+.sheet-body .pl-room { font-size: 25.5px; color: var(--mist); font-variation-settings: "opsz" 17; }
+.sheet-body .pl-name { font: 380 42px/1.15 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-what { flex: 1; min-height: 0; margin-top: 21px; }
+.sheet-body .pl-title { font-size: 30px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-variation-settings: "opsz" 20; }
+.sheet-body .pl-by { font-size: 25.5px; color: var(--mist); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variation-settings: "opsz" 17; }
+.sheet-body .pl-state { font: 340 45px/1.1 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; color: var(--mist); }
 .pl-vol { display: flex; align-items: center; justify-content: space-between; }
-.pl-volume { font: 340 34px/1 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; font-feature-settings: "tnum" 1, "lnum" 1; }
-.pl-buttons { display: flex; gap: 14px; margin-top: 14px; }
-.pl-btn { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; background: rgba(238, 243, 247, .12); }
-.pl-btn svg { width: 26px; height: 26px; }
+.pl-volume { font: 340 51px/1 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; font-feature-settings: "tnum" 1, "lnum" 1; }
+.pl-buttons { display: flex; gap: 21px; margin-top: 21px; }
+.pl-btn { width: 96px; height: 96px; border-radius: 50%; display: grid; place-items: center; background: rgba(238, 243, 247, .12); }
+.pl-btn svg { width: 39px; height: 39px; }
 .pl-btn:active { transform: scale(.94); }
 .pl-btn.main { background: var(--accent); color: var(--night); }
 .pl-btn.main svg { fill: currentColor; stroke: none; }
@@ -551,185 +551,185 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 .player.lit .pl-btn.main { background: var(--night); color: var(--accent); }
 
 /* Automations: rows like the alarms; one that's off is dimmed */
-.auto-row { display: flex; align-items: center; gap: 18px; min-height: 84px; border-bottom: 1px solid rgba(238, 243, 247, .1); }
+.auto-row { display: flex; align-items: center; gap: 27px; min-height: 126px; border-bottom: 1px solid rgba(238, 243, 247, .1); }
 .auto-what { flex: 1; min-width: 0; }
-.sheet-body .auto-name { font-size: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sheet-body .auto-when { font-size: 17px; color: var(--mist); margin-top: 2px; }
+.sheet-body .auto-name { font-size: 33px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variation-settings: "opsz" 22; }
+.sheet-body .auto-when { font-size: 25.5px; color: var(--mist); margin-top: 3px; font-variation-settings: "opsz" 17; }
 .auto-row.off .auto-name, .auto-row.off .auto-when { opacity: .4; }
 
 /* In the title row, left of the header's time (positioned against the sheet, so it doesn't scroll with the rooms) */
-.lights-off { position: absolute; top: 14px; right: 140px; }
+.lights-off { position: absolute; top: 21px; right: 210px; }
 
 /* Text: whatever Claude wants on screen; fewer, shorter lines get bigger type */
-.text-lines p { font-size: 22px; line-height: 1.45; padding: 7px 0; max-width: 700px; }
-.text-lines.roomy p { font: 380 30px/1.3 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; padding: 6px 0; }
+.text-lines p { font-size: 33px; line-height: 1.45; padding: 10.5px 0; max-width: 1050px; font-variation-settings: "opsz" 22; }
+.text-lines.roomy p { font: 380 45px/1.3 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; padding: 9px 0; }
 
 /* Alarms in the timers sheet */
-.group-label { font-size: 18px; color: var(--mist); margin: 18px 0 2px; }
+.group-label { font-size: 27px; color: var(--mist); margin: 27px 0 3px; font-variation-settings: "opsz" 18; }
 .sheet-body .group-label:first-child { margin-top: 0; }
-.alarm-row { display: flex; align-items: center; gap: 24px; min-height: 92px; border-bottom: 1px solid rgba(238, 243, 247, .1); }
+.alarm-row { display: flex; align-items: center; gap: 36px; min-height: 138px; border-bottom: 1px solid rgba(238, 243, 247, .1); }
 .alarm-time {
-  min-width: 190px;  /* same column as the timer countdowns above, so names line up */
-  font: 340 46px/1 var(--far);
+  min-width: 285px;  /* same column as the timer countdowns above, so names line up */
+  font: 340 69px/1 var(--far);
   font-variation-settings: "opsz" 48, "SOFT" 100;
   font-feature-settings: "tnum" 1, "lnum" 1;
 }
-.ampm { font-size: .42em; margin-left: 4px; letter-spacing: 0; }
+.ampm { font-size: .42em; margin-left: 6px; letter-spacing: 0; }
 .alarm-what { flex: 1; min-width: 0; }
-.alarm-name { font-size: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.alarm-days { font-size: 18px; color: var(--mist); margin-top: 2px; }
+.alarm-name { font-size: 33px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variation-settings: "opsz" 22; }
+.alarm-days { font-size: 27px; color: var(--mist); margin-top: 3px; font-variation-settings: "opsz" 18; }
 .alarm-row.off .alarm-time, .alarm-row.off .alarm-name { opacity: .4; }
-.switch { width: 72px; height: 64px; display: grid; place-items: center; }
+.switch { width: 108px; height: 96px; display: grid; place-items: center; }
 .switch span {
-  position: relative; width: 58px; height: 34px; border-radius: 17px;
+  position: relative; width: 87px; height: 51px; border-radius: 25.5px;
   background: rgba(238, 243, 247, .18); transition: background .15s ease;
 }
 .switch span::after {
-  content: ""; position: absolute; top: 4px; left: 4px; width: 26px; height: 26px; border-radius: 50%;
+  content: ""; position: absolute; top: 6px; left: 6px; width: 39px; height: 39px; border-radius: 50%;
   background: var(--frost); transition: transform .15s ease;
 }
 .switch[aria-checked="true"] span { background: var(--accent); }
-.switch[aria-checked="true"] span::after { transform: translateX(24px); }
+.switch[aria-checked="true"] span::after { transform: translateX(36px); }
 
 /* Calendar: a day heading, then the day's events at their times; the time column lines up with the other sheets */
-.sheet-body .day-title { font: 500 18px/1.3 var(--near); color: var(--mist); margin: 20px 0 0; }  /* like .group-label */
+.sheet-body .day-title { font: 500 27px/1.3 var(--near); color: var(--mist); margin: 30px 0 0; font-variation-settings: "opsz" 18; }  /* like .group-label */
 .sheet-body .day-title:first-child { margin-top: 0; }
-.event-row { display: flex; align-items: center; gap: 24px; min-height: 76px; border-bottom: 1px solid rgba(238, 243, 247, .1); }
+.event-row { display: flex; align-items: center; gap: 36px; min-height: 114px; border-bottom: 1px solid rgba(238, 243, 247, .1); }
 .event-when {
-  flex: none; min-width: 150px;
-  font: 340 34px/1 var(--far);
+  flex: none; min-width: 225px;
+  font: 340 51px/1 var(--far);
   font-variation-settings: "opsz" 36, "SOFT" 100;
   font-feature-settings: "tnum" 1, "lnum" 1;
 }
 .event-when.next, .event-when.now { color: var(--accent); }
-.event-when.all-day { font: 500 18px/1 var(--near); color: var(--mist); }
+.event-when.all-day { font: 500 27px/1 var(--near); color: var(--mist); }
 .event-what { min-width: 0; }
-.event-title { font-size: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.event-cal { font-size: 17px; color: var(--mist); margin-top: 2px; }
-.strip .event .label { max-width: 230px; overflow: hidden; text-overflow: ellipsis; }
+.event-title { font-size: 33px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variation-settings: "opsz" 22; }
+.event-cal { font-size: 25.5px; color: var(--mist); margin-top: 3px; font-variation-settings: "opsz" 17; }
+.strip .event .label { max-width: 345px; overflow: hidden; text-overflow: ellipsis; }
 
 /* Briefing: forecast left, today right, the home strip's items along the bottom */
 .brief { height: 100%; display: flex; flex-direction: column; }
-.brief-top { flex: 1; min-height: 0; display: grid; grid-template-columns: 290px 1fr; gap: 36px; }
-.brief-date { font-size: 19px; color: var(--mist); }
+.brief-top { flex: 1; min-height: 0; display: grid; grid-template-columns: 435px 1fr; gap: 54px; }
+.brief-date { font-size: 28.5px; color: var(--mist); font-variation-settings: "opsz" 19; }
 .brief-temp {
-  margin-top: 6px;
-  font: 330 104px/.9 var(--far);
+  margin-top: 9px;
+  font: 330 156px/.9 var(--far);
   font-variation-settings: "opsz" 144, "SOFT" 100;
   font-feature-settings: "tnum" 1, "lnum" 1;
-  letter-spacing: -2px;
+  letter-spacing: -3px;
 }
-.brief-cond { font-size: 21px; margin-top: 10px; }
-.brief-rain { font-size: 18px; color: var(--accent); margin-top: 4px; }
+.brief-cond { font-size: 31.5px; margin-top: 15px; font-variation-settings: "opsz" 21; }
+.brief-rain { font-size: 27px; color: var(--accent); margin-top: 6px; font-variation-settings: "opsz" 18; }
 .brief-day { min-width: 0; }
 .sheet-body .brief-day .day-title { margin-top: 0; }
-.brief-event { display: flex; align-items: baseline; gap: 16px; padding: 9px 0; border-bottom: 1px solid rgba(238, 243, 247, .1); }
+.brief-event { display: flex; align-items: baseline; gap: 24px; padding: 13.5px 0; border-bottom: 1px solid rgba(238, 243, 247, .1); }
 .brief-when {
-  flex: none; min-width: 112px;
-  font: 340 26px/1.1 var(--far);
+  flex: none; min-width: 168px;
+  font: 340 39px/1.1 var(--far);
   font-variation-settings: "opsz" 36, "SOFT" 100;
   font-feature-settings: "tnum" 1, "lnum" 1;
 }
 .brief-when.now { color: var(--accent); }
-.brief-when.all-day { font: 500 17px/1.1 var(--near); color: var(--mist); }
-.brief-title { font-size: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.brief-more { font-size: 19px; color: var(--mist); margin-top: 8px; }
-.sheet-body .brief-free { font: 380 26px/1.25 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; margin-top: 8px; }
+.brief-when.all-day { font: 500 25.5px/1.1 var(--near); color: var(--mist); }
+.brief-title { font-size: 30px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variation-settings: "opsz" 20; }
+.brief-more { font-size: 28.5px; color: var(--mist); margin-top: 12px; font-variation-settings: "opsz" 19; }
+.sheet-body .brief-free { font: 380 39px/1.25 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100; margin-top: 12px; }
 .brief-facts {
-  display: flex; gap: 34px; align-items: baseline; flex-wrap: wrap;
-  padding-top: 14px; border-top: 1px solid rgba(238, 243, 247, .14);
+  display: flex; gap: 51px; align-items: baseline; flex-wrap: wrap;
+  padding-top: 21px; border-top: 1px solid rgba(238, 243, 247, .14);
 }
-.brief-facts .item { display: flex; align-items: baseline; gap: 8px; }
-.brief-facts .label { font-size: 18px; }
+.brief-facts .item { display: flex; align-items: baseline; gap: 12px; }
+.brief-facts .label { font-size: 27px; font-variation-settings: "opsz" 18; }
 
 /* Recipe: a true sequence, so the step number is the anchor; the step itself in the far-read type */
 .recipe { height: 100%; display: flex; flex-direction: column; }
-.ingredients { flex: 1; min-height: 0; overflow-y: auto; list-style: none; padding: 0; margin: 0; font-size: 24px; }
-.ingredients li { padding: 9px 0; border-bottom: 1px solid rgba(238, 243, 247, .1); break-inside: avoid; }
-.ingredients.two-col { columns: 2; column-gap: 44px; font-size: 21px; }
-.recipe-step { flex: 1; min-height: 0; display: flex; gap: 30px; }
-.step-num { flex: none; width: 92px; display: flex; flex-direction: column; }
+.ingredients { flex: 1; min-height: 0; overflow-y: auto; list-style: none; padding: 0; margin: 0; font-size: 36px; font-variation-settings: "opsz" 24; }
+.ingredients li { padding: 13.5px 0; border-bottom: 1px solid rgba(238, 243, 247, .1); break-inside: avoid; }
+.ingredients.two-col { columns: 2; column-gap: 66px; font-size: 31.5px; font-variation-settings: "opsz" 21; }
+.recipe-step { flex: 1; min-height: 0; display: flex; gap: 45px; }
+.step-num { flex: none; width: 138px; display: flex; flex-direction: column; }
 .step-n {
-  font: 330 96px/.9 var(--far);
+  font: 330 144px/.9 var(--far);
   font-variation-settings: "opsz" 144, "SOFT" 100;
   font-feature-settings: "tnum" 1, "lnum" 1;
   color: var(--accent);
 }
-.step-of { font-size: 18px; color: var(--mist); margin-top: 8px; padding-left: 4px; }
+.step-of { font-size: 27px; color: var(--mist); margin-top: 12px; padding-left: 6px; font-variation-settings: "opsz" 18; }
 .sheet-body .step-text {
-  flex: 1; min-width: 0; max-width: 600px; height: 100%; overflow: hidden;
-  font: 360 34px/1.3 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100;
+  flex: 1; min-width: 0; max-width: 900px; height: 100%; overflow: hidden;
+  font: 360 51px/1.3 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100;
   text-wrap: pretty;  /* no lone last word */
 }
-.recipe-nav { display: flex; justify-content: flex-end; gap: 16px; padding-top: 12px; }
-.recipe-next { min-width: 150px; background: var(--accent); color: var(--night); font-weight: 600; }
+.recipe-nav { display: flex; justify-content: flex-end; gap: 24px; padding-top: 18px; }
+.recipe-next { min-width: 225px; background: var(--accent); color: var(--night); font-weight: 600; }
 .recipe-next:active { background: var(--accent); opacity: .85; }
 
 /* Music: album art as the one picture, the title in the far-read type, controls bottom-right */
-.np { height: 100%; display: grid; grid-template-columns: 280px 1fr; gap: 32px; }
-.np-art { width: 280px; height: 280px; border-radius: 6px; overflow: hidden; background: rgba(238, 243, 247, .08); }
+.np { height: 100%; display: grid; grid-template-columns: 420px 1fr; gap: 48px; }
+.np-art { width: 420px; height: 420px; border-radius: 9px; overflow: hidden; background: rgba(238, 243, 247, .08); }
 .np-art img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .np-info { min-width: 0; display: flex; flex-direction: column; }
 .np-title {
-  font: 380 34px/1.15 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100;
+  font: 380 51px/1.15 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .np-artist, .np-album { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.np-artist { font-size: 22px; margin-top: 8px; }
-.np-album { font-size: 18px; color: var(--mist); margin-top: 2px; }
+.np-artist { font-size: 33px; margin-top: 12px; font-variation-settings: "opsz" 22; }
+.np-album { font-size: 27px; color: var(--mist); margin-top: 3px; font-variation-settings: "opsz" 18; }
 .np-progress { margin-top: auto; }
-.np-bar { height: 4px; border-radius: 2px; overflow: hidden; background: rgba(238, 243, 247, .16); }
+.np-bar { height: 6px; border-radius: 3px; overflow: hidden; background: rgba(238, 243, 247, .16); }
 .np-bar i { display: block; height: 100%; background: var(--accent); transform-origin: left center; transform: scaleX(0); }
-.np-times { display: flex; justify-content: space-between; margin-top: 6px; font-size: 16px; color: var(--mist); font-feature-settings: "tnum" 1; }
-.np-controls { display: flex; justify-content: flex-end; align-items: center; gap: 16px; margin-top: 12px; }
-.np-btn { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; background: rgba(238, 243, 247, .12); }
-.np-btn.main { width: 76px; height: 76px; background: var(--accent); color: var(--night); }
-.np-btn svg { width: 26px; height: 26px; fill: currentColor; stroke: none; }
+.np-times { display: flex; justify-content: space-between; margin-top: 9px; font-size: 24px; color: var(--mist); font-feature-settings: "tnum" 1; font-variation-settings: "opsz" 16; }
+.np-controls { display: flex; justify-content: flex-end; align-items: center; gap: 24px; margin-top: 18px; }
+.np-btn { width: 96px; height: 96px; border-radius: 50%; display: grid; place-items: center; background: rgba(238, 243, 247, .12); }
+.np-btn.main { width: 114px; height: 114px; background: var(--accent); color: var(--night); }
+.np-btn svg { width: 39px; height: 39px; fill: currentColor; stroke: none; }
 .np-btn:active { transform: scale(.94); }
-.strip .np-thumb { width: 28px; height: 28px; border-radius: 3px; object-fit: cover; align-self: center; }
+.strip .np-thumb { width: 42px; height: 42px; border-radius: 4.5px; object-fit: cover; align-self: center; }
 
 /* Volume: a bar swiped up from the bottom edge, floating over whatever's showing (in a sheet's margins): the speaker
    on the left, the slider across the middle, the level on the right. The edge has a faint handle, like a phone's home
    bar, matching the one on a subpage's side. Above the sheets and their header, under the conversation, the ringing
    alarm, and the camera. */
-.vol-edge { position: fixed; z-index: 6; left: 0; right: 0; bottom: 0; height: 18px; touch-action: none; }
+.vol-edge { position: fixed; z-index: 6; left: 0; right: 0; bottom: 0; height: 27px; touch-action: none; }
 .vol-edge::after {
-  content: ""; position: absolute; left: 50%; bottom: 6px;
-  width: 64px; height: 5px; margin-left: -32px; border-radius: 3px;
+  content: ""; position: absolute; left: 50%; bottom: 9px;
+  width: 96px; height: 7.5px; margin-left: -48px; border-radius: 4.5px;
   background: rgba(238, 243, 247, .22);
 }
-.vol-edge:focus-visible { outline-offset: -4px; }
+.vol-edge:focus-visible { outline-offset: -6px; }
 body.is-night .vol-edge { display: none; }
 .vol-bar {
-  position: fixed; z-index: 7; left: 36px; right: 36px; bottom: 24px; height: 88px; padding: 0 26px;
-  display: flex; align-items: center; gap: 22px;
-  border-radius: 18px; background: #1c2b3b; border: 1px solid rgba(238, 243, 247, .1);
+  position: fixed; z-index: 7; left: 54px; right: 54px; bottom: 36px; height: 132px; padding: 0 39px;
+  display: flex; align-items: center; gap: 33px;
+  border-radius: 27px; background: #1c2b3b; border: 1px solid rgba(238, 243, 247, .1);
 }
-.vol-icon { flex: none; width: 34px; height: 34px; color: var(--mist); }
+.vol-icon { flex: none; width: 51px; height: 51px; color: var(--mist); }
 .vol-icon svg { width: 100%; height: 100%; }
 .vol-level {
   flex: none; min-width: 2.4ch; text-align: right;
-  font: 340 40px/1 var(--far);
+  font: 340 60px/1 var(--far);
   font-variation-settings: "opsz" 48, "SOFT" 100;
   font-feature-settings: "tnum" 1, "lnum" 1;
 }
-.vol-none { flex: 1; margin: 0; font-size: 20px; color: var(--mist); }
+.vol-none { flex: 1; margin: 0; font-size: 30px; color: var(--mist); font-variation-settings: "opsz" 20; }
 .vol-slider {
   --fill: 50%;
-  flex: 1; height: 80px; margin: 0; background: none;
+  flex: 1; height: 120px; margin: 0; background: none;
   -webkit-appearance: none; appearance: none; touch-action: none; cursor: none;
 }
 .vol-slider::-webkit-slider-runnable-track {
-  height: 14px; border-radius: 7px;
+  height: 21px; border-radius: 10.5px;
   background: linear-gradient(90deg, var(--accent) var(--fill), rgba(238, 243, 247, .16) var(--fill));
 }
 .vol-slider::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
-  width: 48px; height: 48px; margin-top: -17px; border-radius: 50%;
+  width: 72px; height: 72px; margin-top: -25.5px; border-radius: 50%;
   background: var(--frost);
 }
 .vol-slider:active::-webkit-slider-thumb { transform: scale(1.08); }
-.vol-slider:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+.vol-slider:focus-visible { outline: 4.5px solid var(--accent); outline-offset: 6px; }
 
 /* --- Ringing: the one screen that should be seen from across the room --------------------------- */
 
@@ -737,7 +737,7 @@ body.is-night .vol-edge { display: none; }
   z-index: 10;
   position: fixed; inset: 0;
   background: var(--marigold); color: var(--night);
-  padding: 44px 40px;
+  padding: 66px 60px;
 }
 .ringing-pulse {
   position: absolute; inset: 0; background: #fff; opacity: 0;
@@ -746,24 +746,24 @@ body.is-night .vol-edge { display: none; }
 @keyframes ring-pulse { to { opacity: .16; } }
 .ringing-time {
   position: relative;
-  font: 330 150px/.9 var(--far);
+  font: 330 225px/.9 var(--far);
   font-variation-settings: "opsz" 144, "SOFT" 100;
   font-feature-settings: "tnum" 1, "lnum" 1;
-  letter-spacing: -2px;
+  letter-spacing: -3px;
 }
-.ringing-time .ampm { font-size: 44px; margin-left: 10px; }
+.ringing-time .ampm { font-size: 66px; margin-left: 15px; }
 .ringing-label {
-  position: relative; margin-top: 16px; max-width: 700px;
-  font: 380 38px/1.2 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100;
+  position: relative; margin-top: 24px; max-width: 1050px;
+  font: 380 57px/1.2 var(--far); font-variation-settings: "opsz" 36, "SOFT" 100;
 }
-.ringing-actions { position: absolute; right: 28px; bottom: 28px; display: flex; gap: 18px; }
+.ringing-actions { position: absolute; right: 42px; bottom: 42px; display: flex; gap: 27px; }
 .ringing-stop {
-  height: 104px; min-width: 270px; border-radius: 52px;
-  background: var(--night); color: var(--frost); font-size: 36px; font-weight: 600;
+  height: 156px; min-width: 405px; border-radius: 78px;
+  background: var(--night); color: var(--frost); font-size: 54px; font-weight: 600; font-variation-settings: "opsz" 36;
 }
 .snooze {
-  height: 104px; padding: 0 40px; border-radius: 52px;
-  border: 3px solid var(--night); color: var(--night); font-size: 28px; font-weight: 600;
+  height: 156px; padding: 0 60px; border-radius: 78px;
+  border: 4.5px solid var(--night); color: var(--night); font-size: 42px; font-weight: 600; font-variation-settings: "opsz" 28;
 }
 .ringing-stop:active, .snooze:active { transform: scale(.96); }
 
@@ -774,11 +774,11 @@ body.is-night .vol-edge { display: none; }
 body.is-night .night { display: block; }
 body.is-night .photo, body.is-night .scrim, body.is-night .home, body.is-night .offline { display: none; }
 .night-time {
-  position: absolute; left: var(--edge); bottom: 132px;
-  font: 330 156px/.86 var(--far);
+  position: absolute; left: var(--edge); bottom: 198px;
+  font: 330 234px/.86 var(--far);
   font-variation-settings: "opsz" 144, "SOFT" 100, "WONK" 0;
   font-feature-settings: "tnum" 1, "lnum" 1;
-  letter-spacing: -2px;
+  letter-spacing: -3px;
   color: var(--ember); opacity: .35;
   transition: opacity .6s ease, transform .4s ease;  /* comes up slowly, out of the dark */
 }
@@ -787,16 +787,16 @@ body.is-night .photo, body.is-night .scrim, body.is-night .home, body.is-night .
 .night.peek { display: block; }
 .night.peek .night-time { opacity: 0; }
 .edge.bare::after { display: none; }
-#dash-edge { top: 92px; }
+#dash-edge { top: 138px; }
 
 /* --- Offline note ------------------------------------------------------------------------ */
 
 .offline {
   z-index: 10;
-  position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
-  padding: 10px 20px; border-radius: 22px;
+  position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
+  padding: 15px 30px; border-radius: 33px;
   background: rgba(19, 32, 46, .92); color: var(--frost);
-  font-size: 16px;
+  font-size: 24px; font-variation-settings: "opsz" 16;
 }
 
 /* --- Camera: a live view filling the screen, its name over the top ----------------------------- */
@@ -804,15 +804,15 @@ body.is-night .photo, body.is-night .scrim, body.is-night .home, body.is-night .
 .camera { position: fixed; z-index: 10; inset: 0; background: #000; }
 .camera video { width: 100%; height: 100%; object-fit: contain; }
 .camera-name {
-  position: absolute; top: 20px; left: var(--edge); right: 90px;
-  font: 380 28px/1.15 var(--far);
+  position: absolute; top: 30px; left: var(--edge); right: 135px;
+  font: 380 42px/1.15 var(--far);
   font-variation-settings: "opsz" 36, "SOFT" 100;
   text-shadow: var(--on-photo);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .camera-note { position: absolute; inset: 0; display: grid; place-items: center; color: var(--mist); }
 .camera-note:empty { display: none; }
-.camera .close { opacity: .9; filter: drop-shadow(0 1px 4px rgba(0, 0, 0, .6)); }
+.camera .close { opacity: .9; filter: drop-shadow(0 1.5px 6px rgba(0, 0, 0, .6)); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after, .settling { animation: none !important; transition: none !important; }
