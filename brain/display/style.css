@@ -98,13 +98,13 @@ body.strip-empty .clock, body.strip-empty .night-time { transform: translateY(93
 }
 .date { font-size: 33px; opacity: .88; margin-top: 15px; padding-left: 6px; font-variation-settings: "opsz" 22; }
 
-/* Glanceable items under the date. Each is a full-height (64 px) tap target; the text sits where the
-   design puts it, 30 px off the bottom edge. */
+/* Glanceable items under the date. Each is a full-height (96 px) tap target; the text sits where the
+   design puts it, 45 px off the bottom edge. */
 .strip {
   position: absolute; left: calc(var(--edge) + 6px); right: 195px; bottom: 18px;
   display: flex; gap: 51px; align-items: baseline;
-  font-size: 27px; text-shadow: var(--on-photo); white-space: nowrap;
-  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;  /* more than fits: swipe sideways */; font-variation-settings: "opsz" 18;
+  font-size: 27px; font-variation-settings: "opsz" 18; text-shadow: var(--on-photo); white-space: nowrap;
+  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;  /* more than fits: swipe sideways */
 }
 .strip .item { display: flex; align-items: baseline; gap: 12px; min-height: 96px; padding: 27px 0; }
 .strip .num, .brief-facts .num {
