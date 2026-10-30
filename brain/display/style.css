@@ -215,7 +215,7 @@ body.is-offline .mic { opacity: .4; pointer-events: none; }
 .header { position: fixed; pointer-events: none; opacity: 0; transition: opacity .26s ease-out; }
 .header.shown { opacity: 1; }
 .header-tabs { z-index: 4; top: 0; left: 0; right: 195px; height: 120px; }
-/* The time takes you back to the dashboard (the clock): a 64 px target round the text, which sits where a title does */
+/* The time takes you back to the dashboard (the clock): a 96 px target round the text, which sits where a title does */
 .header-time, .sheet-time {
   font: 380 51px/1.15 var(--far);
   font-variation-settings: "opsz" 36, "SOFT" 100;
