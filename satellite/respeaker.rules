@@ -1,0 +1,4 @@
+# udev rule: lets the audio group (claude-pi) reach the ReSpeaker XVF3800's USB control interface, so
+# Seeed's xvf_host.py can read and set its parameters without root (see docs/pi.md, step 4).
+# Install:  sudo cp respeaker.rules /etc/udev/rules.d/99-respeaker.rules && sudo udevadm trigger
+SUBSYSTEM=="usb", ATTR{idVendor}=="2886", ATTR{idProduct}=="001a", MODE="0660", GROUP="audio"

@@ -1,0 +1,26 @@
+# systemd unit that keeps the ReSpeaker array's speaker and mic open from boot, through the same dmix and
+# dsnoop as everyone else (silence in, mic out to nowhere).
+# Install:  sudo cp array-hold.service /etc/systemd/system/
+#           sudo systemctl enable --now array-hold
+# Logs:     journalctl -u array-hold -f
+#
+# shortcut: works around the array's 48 kHz firmware (v2.1.1_48k2ch), which streams only on the first open
+# after power-up: once its audio is closed and reopened (a satellite restart), it sends nothing until it's
+# power-cycled; a USB reset doesn't help. With this holding it, the hardware never closes. Drop it if a
+# firmware fixes that. The dmix string must match asound.conf's, or this opens a second, separate mix.
+
+[Unit]
+Description=Keep the ReSpeaker array's audio open
+After=sound.target
+Before=claude-home-satellite.service raspotify.service
+
+[Service]
+User=claude-pi
+ExecStart=/bin/sh -c 'aplay -q -D "dmix:CARD=Array,DEV=0,FORMAT=S16_LE,RATE=48000,CHANNELS=2" \
+    -t raw -f S16_LE -r 48000 -c 2 /dev/zero & \
+    exec arecord -q -D "dsnoop:CARD=Array" -t raw -f S16_LE -r 48000 -c 2 /dev/null'
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

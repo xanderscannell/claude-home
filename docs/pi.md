@@ -27,6 +27,8 @@ collects what the unit files' headers and the scripts say, in one place and in o
 | `kiosk.html` or `claude-home-display.service` | Copy, `sudo systemctl daemon-reload` if the unit changed, then `sudo systemctl restart claude-home-display` |
 | `asound.conf` | Copy to `/etc/asound.conf`, then restart the satellite and raspotify |
 | `touch-rotate.rules` | Copy to `/etc/udev/rules.d/99-touch-rotate.rules`, `sudo udevadm trigger`, then restart `claude-home-display` |
+| `respeaker.rules` | Copy to `/etc/udev/rules.d/99-respeaker.rules`, then `sudo udevadm trigger` |
+| `array-hold.service` | Copy, `sudo systemctl daemon-reload`, then reboot: it must open the array before anything else does |
 
 When killing a process over SSH, bracket the first letter (`pkill -f "[p]ython satellite.py"`); a
 bare pattern also matches the SSH shell running it.
@@ -66,7 +68,25 @@ Once the cause is found and fixed, take the logging out of the unit and delete t
 2. **Files.** Copy `satellite/` to `~/claude-home/satellite/`.
 3. **uv** in `~/.local/bin/uv`. The satellite needs Python 3.11 (openWakeWord's `tflite-runtime` has
    no newer builds), and uv installs it on first run.
-4. **Audio.** Load the loopback card (it holds the volume controls) as `bt-speaker.service`'s header says,
+4. **Audio.** Flash the array with Seeed's 48 kHz USB firmware, which `asound.conf` expects (the stock 16 kHz
+   firmware muffles music): download `respeaker_xvf3800_usb_dfu_firmware_v2.1.1_48k2ch.bin` from
+   [`xmos_firmwares/usb`](https://github.com/respeaker/reSpeaker_XVF3800_USB_4MIC_ARRAY/tree/master/xmos_firmwares/usb),
+   `sudo apt install dfu-util`, stop anything using the array, then
+   `sudo dfu-util -R -e -a 1 -D <file>`. `/proc/asound/Array/stream0` should list `Rates: 48000` for both
+   directions. If the array stops showing up, Safe Mode reflashes it: unplug it, hold Mute while plugging it
+   back in, and let go when the red LED blinks.
+   Install `respeaker.rules` as its header says, so `claude-pi` can reach the array's controls, and set the
+   ASR output's gain with Seeed's [`python_control/xvf_host.py`](https://github.com/respeaker/reSpeaker_XVF3800_USB_4MIC_ARRAY/tree/master/python_control)
+   (kept in `~/claude-home/xvf/`, run as
+   `uv run --no-project --with pyusb --with libusb-package python xvf_host.py <PARAM> [--values ...]`):
+   `AEC_ASROUTGAIN --values 2.0`, then `SAVE_CONFIGURATION --values 1` to keep it across power cycles
+   (`CLEAR_CONFIGURATION --values 1` goes back to the defaults). The mic is the right channel, the ASR
+   output (`AUDIO_MGR_OP_R` `7 3` with `AEC_ASROUTONOFF 1`, Seeed's defaults); asound.conf's header says
+   why. Install `array-hold.service` as its header says: with this firmware the array stops streaming once
+   its audio is closed and reopened, until it's power-cycled, and the service keeps it open from boot.
+   If the satellite keeps exiting with "no audio from the mic", that has happened anyway: power-cycle
+   the Pi (a USB reset isn't enough; the Pi stopped noticing the array being unplugged).
+   Then load the loopback card (it holds the volume controls) as `bt-speaker.service`'s header says,
    then `sudo cp asound.conf /etc/asound.conf`. It names the mic array's card `Array`; check with
    `arecord -l` and change it if yours differs. Raise the array's own volume, which is too quiet to hear
    at its default: `amixer -c Array sset PCM,0 100%`, `amixer -c Array sset PCM,1 100%`, then
