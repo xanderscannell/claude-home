@@ -1,6 +1,6 @@
 """A fake brain for designing the display: the real display/ files, canned data, no Claude, no Pi.
 
-Run: uv run python fake_brain.py   (then open http://localhost:8001/ at 800x480)
+Run: uv run python fake_brain.py   (then open http://localhost:8001/ at 1280x720)
 Scenes: GET /scene lists them, GET /scene/<name> pushes one to every open screen.
 Taps the page sends are printed; opening a sheet answers with its canned card, the way the brain would.
 To prototype a feature the brain can't do yet, add a scene that sends the new message, then build it in app.js.

@@ -1,4 +1,4 @@
-/* Claude Home display. 800x480 kitchen screen; photos are the room, the interface is a caption.
+/* Claude Home display. 1280x720 kitchen screen (Touch Display 2); photos are the room, the interface is a caption.
    Pi 3 GPU: animate only opacity and transform; no backdrop-filter, blur, or large shadows. */
 
 @font-face { font-family: "Fraunces"; src: url("fonts/Fraunces.ttf") format("truetype"); font-weight: 100 900; font-display: block; }

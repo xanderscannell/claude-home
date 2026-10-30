@@ -60,12 +60,12 @@ On the Pi, the satellite's unit file sets `BRAIN_URL`, `DEVICE`, `AUDIO_IN`, and
 Home pages (`"source": "screen"`).
 
 **Tests** (from `brain/`): `uv run python test_brain.py`, `test_server.py`, and `test_display.py`
-(Playwright, 800x480 with touch); from `satellite/`: `uv run python test_satellite.py`. They use canned
+(Playwright, 1280x720 with touch); from `satellite/`: `uv run python test_satellite.py`. They use canned
 Claude replies (`CLAUDE_HOME_FAKE_LLM=1`) and a temporary database. `persona_eval.py` is not a test: it runs real
 Claude on the home tools with fake backends and prints each reply, to judge a persona change by (see its header).
 
 **Display work without the Pi or Claude** (from `brain/`): `uv run python fake_brain.py`, then open
-http://localhost:8001/ at 800x480. It serves the real `display/` files with canned data and shows the mouse
+http://localhost:8001/ at 1280x720. It serves the real `display/` files with canned data and shows the mouse
 cursor. Visit `/scene/<name>` to push a screen to the page (`/scene` lists them: replies, every sheet, ringing,
 night, and more). To design a screen the brain can't drive yet, add a scene that sends the new message, then
 build it in `app.js`.
@@ -146,7 +146,7 @@ Done when it does everything above and can hear the wake word over its own music
 
 #### Phase 3 progress
 
-Built on the hardware at hand (the Pi 3, a 5" 800x480 HDMI touchscreen, a USB headset) rather
+Built on the hardware at hand (the Pi 3, a 7" Touch Display 2 at 1280x720, a USB headset) rather
 than the Pi 5 build, with the brain on the PC:
 
 - **Home screen:** a large clock over a slideshow of the household's photos (the accent color
